@@ -809,7 +809,13 @@ function adminApi_sendDailyReminders() {
             sendEmailWithRetry_(dhEmail,
               '[ACTION REQUIRED] Division Head review pending (' + dhSid + ')',
               'Dear Division Head,\n\nA Privacy Impact Assessment escalation (' + dhSid + ') is awaiting your review.\n\nPlease log in to the Data Privacy System to make your decision.\n\n— Data Privacy Admin System',
-              { replyTo: Session.getActiveUser().getEmail() });
+              { htmlBody: buildAdminEmailHtml_({
+                  heading: 'Action Required — Division Head Review',
+                  intro: 'Dear Division Head,',
+                  bodyHtml: 'A Privacy Impact Assessment escalation is awaiting your review.',
+                  detailRows: [['Session ID', dhSid]],
+                  ctaText: 'Open the System', ctaUrl: getOptionalUrl_('WEB_APP_URL')
+                }), replyTo: Session.getActiveUser().getEmail() });
             notified++;
             logAuditTrail(dhSid, 'Approval Reminder Sent (Division Head)', { recipient: dhEmail, type: 'reminder' });
           } catch (e) {}
@@ -833,7 +839,13 @@ function adminApi_sendDailyReminders() {
             sendEmailWithRetry_(immEmail,
               '[ACTION REQUIRED] DCS request ' + reqId + ' pending your approval',
               'Dear Immediate Head,\n\nA Data Collection System request (' + reqId + ') is awaiting your approval.\n\nPlease log in to the DCS to review and approve.\n\n— Data Privacy Admin System',
-              { replyTo: Session.getActiveUser().getEmail() });
+              { htmlBody: buildAdminEmailHtml_({
+                  heading: 'Action Required — DCS Approval',
+                  intro: 'Dear Immediate Head,',
+                  bodyHtml: 'A Data Collection System request is awaiting your approval.',
+                  detailRows: [['Request ID', reqId]],
+                  ctaText: 'Open the DCS', ctaUrl: getOptionalUrl_('DCS_WEB_APP_URL')
+                }), replyTo: Session.getActiveUser().getEmail() });
             notified++;
             logAuditTrail(reqId, 'Approval Reminder Sent (DCS Immediate Head)', { recipient: immEmail, type: 'reminder' });
           } catch (e) {}
@@ -1551,7 +1563,13 @@ function deleteEntry(reqId, logId, sessionId, sendEmail, ismComment) {
           (ismComment ? '\nISM Comment: ' + ismComment + '\n' : '') +
           '\nIf you have questions, please contact the ISM team at ' + adminEmail + '.\n\n' +
           '— Data Privacy Admin System';
-        sendEmailWithRetry_(requestorEmail, subject, body, { replyTo: adminEmail });
+        sendEmailWithRetry_(requestorEmail, subject, body, { htmlBody: buildAdminEmailHtml_({
+          heading: 'Entry Deleted', accent: '#b46d14',
+          intro: 'Dear User,',
+          bodyHtml: 'The following entry has been removed from the Data Privacy System.',
+          detailRows: [['Entry', (entryName || 'ReqID ' + reqId)], ['ReqID', reqId], ['LogID', logId], ['Deleted by', adminEmail], ['Date/Time', new Date().toLocaleString('en-PH')]].concat(ismComment ? [['ISM Comment', ismComment]] : []),
+          footerNote: 'If you have questions, please contact the ISM team at ' + adminEmail + '.'
+        }), replyTo: adminEmail });
         emailSent = true;
       } catch (e) {
         Logger.log('[ADMIN] Failed to send deletion email to ' + requestorEmail + ': ' + e.toString());
@@ -1755,14 +1773,30 @@ function saveConfigData(sysUpdates, infoUpdates) {
       var valIdx = sysHeader.indexOf('Value');
       if (keyIdx !== -1 && valIdx !== -1) {
         var sysChanged = false;
+        var existingSysKeys = {};
         for (var i = 1; i < sysData.length; i++) {
           var k = sysData[i][keyIdx];
+          existingSysKeys[k] = true;
           if (sysUpdates[k] !== undefined) {
             sysData[i][valIdx] = sysUpdates[k];
             sysChanged = true;
           }
         }
         if (sysChanged) sysSheet.getDataRange().setValues(sysData);
+        // Append any NEW config keys that don't have a row yet (e.g. a newly-added LINK_*
+        // template link set from Admin → Settings). Only non-empty values are appended.
+        for (var uk in sysUpdates) {
+          if (!existingSysKeys[uk] && sysUpdates[uk] !== undefined && String(sysUpdates[uk]).trim() !== '') {
+            var newSysRow = [];
+            for (var c = 0; c < sysHeader.length; c++) {
+              if (c === keyIdx) newSysRow.push(uk);
+              else if (c === valIdx) newSysRow.push(sysUpdates[uk]);
+              else if (sysHeader[c] === 'Description') newSysRow.push('Added via Admin Settings');
+              else newSysRow.push('');
+            }
+            sysSheet.appendRow(newSysRow);
+          }
+        }
       }
     }
     
@@ -2816,6 +2850,45 @@ function apiAdmin_DownloadCertificate(sessionId) {
  * Shared helper: Build the certificate HTML body from gathered data.
  * Used by both RerouteApprovedRequest and DownloadCertificate.
  */
+/**
+ * buildAdminEmailHtml_ — shared professional HTML shell for ALL Admin-sent emails.
+ * Matches the navy style of buildCertificateHtml_. Pass the result as options.htmlBody to
+ * sendEmailWithRetry_, keeping a plain-text body as the fallback for non-HTML clients.
+ * opts: { heading, accent, intro, bodyHtml, detailRows:[[label,value]...], ctaText, ctaUrl, footerNote }
+ */
+function buildAdminEmailHtml_(opts) {
+  opts = opts || {};
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  var accent = opts.accent || '#2a5285';
+  var rows = (opts.detailRows || []).map(function(r){
+    return '<tr><td style="padding:6px 14px 6px 0;font-weight:600;color:#6b7280;white-space:nowrap;vertical-align:top;">' + esc(r[0]) +
+           '</td><td style="padding:6px 0;color:#1a3a5c;word-break:break-word;">' + esc(r[1]) + '</td></tr>';
+  }).join('');
+  var cta = (opts.ctaText && opts.ctaUrl) ?
+    '<div style="margin:22px 0 4px;"><a href="' + esc(opts.ctaUrl) + '" style="display:inline-block;background:' + accent +
+    ';color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:11px 24px;border-radius:6px;">' + esc(opts.ctaText) + '</a></div>' : '';
+  var footer = opts.footerNote || 'This is an automated message from the Megaworld Data Privacy System. Please do not reply to this email.';
+  return '<div style="font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;background:#f9fafb;padding:24px;color:#333;line-height:1.6;">' +
+    '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.08);overflow:hidden;">' +
+      '<div style="background:' + accent + ';padding:18px 28px;">' +
+        '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld Data Privacy System</div>' +
+        '<div style="color:#ffffff;font-size:20px;font-weight:700;margin-top:4px;">' + esc(opts.heading || 'Notification') + '</div>' +
+      '</div>' +
+      '<div style="padding:28px;">' +
+        '<p style="margin:0 0 14px;font-size:14px;">' + esc(opts.intro || 'Hello,') + '</p>' +
+        (opts.bodyHtml ? '<p style="margin:0 0 16px;font-size:14px;">' + opts.bodyHtml + '</p>' : '') +
+        (rows ? '<table style="width:100%;border-collapse:collapse;font-size:13px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;margin:4px 0;"><tbody>' + rows + '</tbody></table>' : '') +
+        cta +
+      '</div>' +
+      '<div style="padding:16px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;font-size:11.5px;color:#9ca3af;">' + esc(footer) + '</div>' +
+    '</div></div>';
+}
+
+/** Reads an optional URL script property (for email CTA buttons); '' if unset — so the button is simply omitted. */
+function getOptionalUrl_(key) {
+  try { return PropertiesService.getScriptProperties().getProperty(key) || ''; } catch (e) { return ''; }
+}
+
 function buildCertificateHtml_(sessionId, pia1, linkedReqId, applicantEmail,
   requestorName, department, accessNeeded, iHelpReference, accountableRowsHtml,
   metadataAgency, headApproversHtml, ismApproversHtml, nowStr) {
@@ -2981,9 +3054,16 @@ function notifyApprover(sessionId, stepIndex) {
       '— Data Privacy Admin System';
 
     var flags = { recipient: approverEmail, type: 'approver', attempts: 1, error: null };
+    var htmlBody = buildAdminEmailHtml_({
+      heading: 'Action Required — Approval',
+      intro: 'Dear ' + approverName + ',',
+      bodyHtml: 'You have a <strong>pending approval</strong> awaiting your decision.',
+      detailRows: [['Program', programName], ['Session ID', sessionId], ['Step', (currentStep || stepIndex + 1)]],
+      ctaText: 'Open the System', ctaUrl: getOptionalUrl_('WEB_APP_URL')
+    });
 
     try {
-      sendEmailWithRetry_(approverEmail, subject, body, { replyTo: Session.getActiveUser().getEmail() });
+      sendEmailWithRetry_(approverEmail, subject, body, { htmlBody: htmlBody, replyTo: Session.getActiveUser().getEmail() });
       logAuditTrail(sessionId, 'Email Sent', flags);
       return { success: true };
     } catch (sendErr) {
@@ -3028,9 +3108,20 @@ function notifyApplicant(sessionId, currentStatus) {
       '— Data Privacy Admin System';
 
     var flags = { recipient: applicantEmail, type: 'applicant', attempts: 1, error: null };
+    var sLower = String(statusDisplay).toLowerCase();
+    var statusAccent = (sLower.indexOf('approv') !== -1 || sLower.indexOf('complet') !== -1) ? '#1D9E75'
+                     : (sLower.indexOf('deni') !== -1 || sLower.indexOf('reject') !== -1) ? '#A22D2D'
+                     : (sLower.indexOf('return') !== -1) ? '#b46d14' : '#2a5285';
+    var htmlBody = buildAdminEmailHtml_({
+      heading: 'Application Status Update', accent: statusAccent,
+      intro: 'Dear Applicant,',
+      bodyHtml: 'Your request status is now <strong>' + statusDisplay + '</strong>.',
+      detailRows: [['Program', programName], ['Session ID', sessionId], ['Status', statusDisplay]],
+      ctaText: 'View Details', ctaUrl: getOptionalUrl_('WEB_APP_URL')
+    });
 
     try {
-      sendEmailWithRetry_(applicantEmail, subject, body, { replyTo: Session.getActiveUser().getEmail() });
+      sendEmailWithRetry_(applicantEmail, subject, body, { htmlBody: htmlBody, replyTo: Session.getActiveUser().getEmail() });
       logAuditTrail(sessionId, 'Email Sent', flags);
       return { success: true };
     } catch (sendErr) {
@@ -3094,9 +3185,16 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
       '— Data Privacy Admin System';
 
     var flags = { recipient: ismEmail, type: 'ism', attempts: 1, error: null };
+    var htmlBody = buildAdminEmailHtml_({
+      heading: 'ISM Action Required',
+      intro: 'Dear ' + ismName + ',',
+      bodyHtml: 'You have a <strong>pending ISM review</strong> awaiting your decision.',
+      detailRows: [['Program', programName], ['Session ID', sessionId], ['Step', stepNumber]],
+      ctaText: 'Open the System', ctaUrl: getOptionalUrl_('WEB_APP_URL')
+    });
 
     try {
-      sendEmailWithRetry_(ismEmail, subject, body, { replyTo: Session.getActiveUser().getEmail() });
+      sendEmailWithRetry_(ismEmail, subject, body, { htmlBody: htmlBody, replyTo: Session.getActiveUser().getEmail() });
       logAuditTrail(sessionId, 'Email Sent', flags);
       return { success: true };
     } catch (sendErr) {

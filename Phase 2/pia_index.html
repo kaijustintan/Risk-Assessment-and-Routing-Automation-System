@@ -2509,6 +2509,10 @@ function renderPIA3() {
     ? `<button class="btn btn-sm" type="button" onclick="addStakeholderField('p3-ext')" style="margin-top:4px">+ Add External Stakeholder</button>` 
     : `<div style="font-size:12px; color:var(--text3); margin-top:4px;">Maximum of 5 external stakeholders reached.</div>`;
 
+  // When the linked DCS request is Internal, hide the External Stakeholders card entirely
+  // (access type carries over from DCS via state.dcsData.access).
+  const internalOnly = String((state.dcsData && state.dcsData.access) || '').toLowerCase() === 'internal';
+
   document.getElementById('screen-pia3').innerHTML = `
     <div class="form-layout">
       ${renderSidebarTracker(5)}
@@ -2519,7 +2523,7 @@ function renderPIA3() {
             ${getModeBadge()}
           </div>
           <h1>Stakeholder Identification</h1>
-          <p>Identify the internal and external stakeholders involved in this program.</p>
+          <p>${internalOnly ? 'Identify the internal stakeholders involved in this program.' : 'Identify the internal and external stakeholders involved in this program.'}</p>
         </div>
         <div class="card ${getFlagClass('PIA 3 - Internal Stakeholders')}" style="position:relative;">
           <div class="card-title">Internal stakeholders${infoTip('Individuals or roles within your organization who are involved in or affected by this data processing activity.')}</div>
@@ -2535,6 +2539,7 @@ function renderPIA3() {
             </div>
           </div>
         </div>
+        ${internalOnly ? '' : `
         <div class="card ${getFlagClass('PIA 3 - External Stakeholders')}" style="position:relative;">
           <div class="card-title">External stakeholders${infoTip('Third-party individuals, vendors, or organizations outside your company who interact with or receive this data.')}</div>
           ${getFlagIconHtml('PIA 3 - External Stakeholders')}
@@ -2548,7 +2553,7 @@ function renderPIA3() {
               ${getFlagIconHtml('PIA 3 - External Notes')}
             </div>
           </div>
-        </div>
+        </div>`}
         <div class="btn-row spread">
           <button class="btn" onclick="goBack('pia2')">← Back</button>
           <button class="btn btn-primary" onclick="savePIA3()">Next: Information Flow →</button>
@@ -2560,11 +2565,13 @@ function renderPIA3() {
 
 function savePIA3() {
   syncPIA3State();
-  // Validate that at least one stakeholder (internal or external) has a name filled in
+  // When the DCS request is Internal the External card is hidden — require at least one
+  // INTERNAL stakeholder; otherwise accept either internal or external.
+  const internalOnly = String((state.dcsData && state.dcsData.access) || '').toLowerCase() === 'internal';
   const hasInternal = state.pia3.intStakeholders.some(s => s.name && s.name.trim());
   const hasExternal = state.pia3.extStakeholders.some(s => s.name && s.name.trim());
-  if (!hasInternal && !hasExternal) {
-    showError('Please add at least one internal or external stakeholder with a name before proceeding.');
+  if (internalOnly ? !hasInternal : (!hasInternal && !hasExternal)) {
+    showError(internalOnly ? 'Please add at least one internal stakeholder with a name before proceeding.' : 'Please add at least one internal or external stakeholder with a name before proceeding.');
     return;
   }
   // Validate email fields if provided
