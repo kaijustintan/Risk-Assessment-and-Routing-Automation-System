@@ -1192,18 +1192,24 @@ function submitDCS(payload, sessionId = '') {
   try {
     if (payload.agencyData) {
       const ad = payload.agencyData;
-      // Validate required agency fields
-      if (!ad.agencyName || String(ad.agencyName).trim() === '') {
-        return { success: false, error: 'Agency Name is required.' };
-      }
-      if (!ad.agencyPersonnel || String(ad.agencyPersonnel).trim() === '') {
-        return { success: false, error: 'Agency Personnel is required.' };
-      }
-      if (ad.immHeadRecoveryEmail && !isValidEmail(ad.immHeadRecoveryEmail)) {
-        return { success: false, error: 'Invalid Immediate Head Recovery Email.' };
+      // 'OJT' and 'AGENCY' both upload a Confidentiality Undertaking + Endorsement Letter.
+      // Only AGENCY requires the agency detail fields; OJT needs just the endorsement letter.
+      const involvementType = String(ad.type || 'AGENCY').toUpperCase();
+
+      if (involvementType !== 'OJT') {
+        // Validate required agency fields
+        if (!ad.agencyName || String(ad.agencyName).trim() === '') {
+          return { success: false, error: 'Agency Name is required.' };
+        }
+        if (!ad.agencyPersonnel || String(ad.agencyPersonnel).trim() === '') {
+          return { success: false, error: 'Agency Personnel is required.' };
+        }
+        if (ad.immHeadRecoveryEmail && !isValidEmail(ad.immHeadRecoveryEmail)) {
+          return { success: false, error: 'Invalid Immediate Head Recovery Email.' };
+        }
       }
 
-      // Upload endorsement letter if provided
+      // Upload endorsement letter if provided (both AGENCY and OJT)
       let endorsementFile = null;
       if (ad.endorsementLetterFile && ad.endorsementLetterFile.base64) {
         const eId = uploadProxy(ad.endorsementLetterFile.base64, ad.endorsementLetterFile.fileName, 'ENDORSEMENT', ad.endorsementLetterFile.mimeType, reqId);
@@ -1213,15 +1219,24 @@ function submitDCS(payload, sessionId = '') {
         endorsementFile = { id: eId, name: ad.endorsementLetterFile.fileName };
       }
 
-      agencyJson = JSON.stringify({
-        agencyName: String(ad.agencyName || '').trim(),
-        agencyPersonnel: String(ad.agencyPersonnel || '').trim(),
-        contractStartDate: ad.contractStartDate || '',
-        endorsementLetter: endorsementFile,
-        networkDrive: String(ad.networkDrive || '').trim(),
-        immHeadRecoveryEmail: String(ad.immHeadRecoveryEmail || '').trim(),
-        immHeadRecoveryNumber: String(ad.immHeadRecoveryNumber || '').trim()
-      });
+      if (involvementType === 'OJT') {
+        // OJT: store only the type marker + endorsement letter (no agency detail fields).
+        agencyJson = JSON.stringify({
+          type: 'OJT',
+          endorsementLetter: endorsementFile
+        });
+      } else {
+        // AGENCY: full detail record (unchanged shape, kept backward-compatible).
+        agencyJson = JSON.stringify({
+          agencyName: String(ad.agencyName || '').trim(),
+          agencyPersonnel: String(ad.agencyPersonnel || '').trim(),
+          contractStartDate: ad.contractStartDate || '',
+          endorsementLetter: endorsementFile,
+          networkDrive: String(ad.networkDrive || '').trim(),
+          immHeadRecoveryEmail: String(ad.immHeadRecoveryEmail || '').trim(),
+          immHeadRecoveryNumber: String(ad.immHeadRecoveryNumber || '').trim()
+        });
+      }
     }
   } catch (err) {
     return { success: false, error: 'Agency file upload failed: ' + err.message };

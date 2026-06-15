@@ -4852,7 +4852,6 @@ function loadEmailQueue() {
       renderQueueTable();
       // Also load configs in background
       loadNotificationConfig();
-      loadReminderConfig();
       // Badge
       var badge = document.getElementById('queueTabBadge');
       if (badge) {
@@ -5222,57 +5221,6 @@ function saveNotificationConfig() {
     })
     .withFailureHandler(function(err) { showToast('Save error: ' + String(err), 'error'); })
     .adminApi_setNotificationConfig(config);
-}
-
-// ════════════════════════════
-// REMINDER CONFIG
-// ════════════════════════════
-function loadReminderConfig() {
-  google.script.run
-    .withSuccessHandler(function(result) {
-      if (!result || !result.success) return;
-      var cfg = result.data;
-      var enEl  = document.getElementById('cfgReminderEnabled');
-      var hrEl  = document.getElementById('cfgReminderHour');
-      var stEl  = document.getElementById('cfgReminderStatus');
-      var lrEl  = document.getElementById('cfgReminderLastRun');
-      if (enEl) enEl.checked = !!cfg.enabled;
-      if (hrEl) hrEl.value = cfg.hour || 9;
-      if (stEl) stEl.textContent = cfg.triggerActive ? '✅ Active at ' + (cfg.hour || 9) + ':00' : '⚠️ No trigger configured';
-      if (lrEl) lrEl.textContent = cfg.lastRun ? formatDate(cfg.lastRun) : 'Never';
-    })
-    .adminApi_getReminderConfig();
-}
-
-function saveReminderConfig() {
-  var config = {
-    enabled: document.getElementById('cfgReminderEnabled').checked,
-    hour: parseInt(document.getElementById('cfgReminderHour').value, 10) || 9,
-    timezone: 'Asia/Manila'
-  };
-  google.script.run
-    .withSuccessHandler(function(result) {
-      if (result && result.success) showToast('Reminder settings saved.', 'success');
-      else showToast('Save failed: ' + (result ? result.error : 'Unknown error'), 'error');
-      loadReminderConfig();
-    })
-    .withFailureHandler(function(err) { showToast('Save error: ' + String(err), 'error'); })
-    .adminApi_setReminderConfig(config);
-}
-
-function setupReminderTrigger() {
-  showToast('Setting up reminder trigger…', 'info');
-  google.script.run
-    .withSuccessHandler(function(result) {
-      if (result && result.success) {
-        showToast(result.message || 'Trigger created.', 'success');
-        loadReminderConfig();
-      } else {
-        showToast('Setup failed: ' + (result ? result.error : 'Unknown error'), 'error');
-      }
-    })
-    .withFailureHandler(function(err) { showToast('Setup error: ' + String(err), 'error'); })
-    .adminApi_setupReminderTrigger();
 }
 
 // ════════════════════════════

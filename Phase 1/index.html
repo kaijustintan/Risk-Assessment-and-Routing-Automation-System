@@ -1525,6 +1525,7 @@ const state = {
   dcs: {
     name: '', location: '', locationOther: '', dept: '', access: '', ihelp: '',
     isAgency: false,
+    isOJT: false,
     immHeadName: '', immHeadEmail: '',
     deptHeadName: '', deptHeadEmail: '',
     divHeadName: '', divHeadEmail: '',
@@ -1555,17 +1556,15 @@ function deriveFirstName(email) {
 }
 
 /*
-  greetingLine — renders a personalized "Hi <Name>," line using the standard navy type
-  scale. Returns '' until the signed-in identity has loaded (so it never flashes blank).
-  scale: 'hero' (large, landing page) | 'form' (compact, request form header).
+  greetingLine — renders a prominent, headline-scale personalized "Hi <Name>," line (navy,
+  bold) so it's clearly noticeable at the top of a screen. Returns '' until the signed-in
+  identity has loaded (so it never flashes blank). The `scale` arg is accepted for backward
+  compatibility but the styling is now uniform across all pages.
 */
 function greetingLine(scale) {
   if (!state.userEmail) return '';
   const name = escapeHtml(deriveFirstName(state.userEmail));
-  const fontSize = scale === 'hero'
-    ? 'clamp(1.05rem, 0.9rem + 0.6vw, 1.3rem)'
-    : '14px';
-  return `<p style="font-size:${fontSize};font-weight:600;color:var(--navy);margin:0 0 6px;letter-spacing:-0.01em;">Hi ${name},</p>`;
+  return `<p style="font-size:clamp(1.35rem, 1.1rem + 1.1vw, 1.9rem);font-weight:700;color:var(--navy);margin:0 0 6px;letter-spacing:-0.02em;line-height:1.2;">Hi ${name},</p>`;
 }
 
 // --- Custom Modals ---------------------------------
@@ -2608,7 +2607,7 @@ function resetDraftState() {
   state.approverFlags = {};
   state.dcs = {
     name: '', location: '', locationOther: '', dept: '', access: '', ihelp: '',
-    isAgency: false, _hadFiles: false,
+    isAgency: false, isOJT: false, _hadFiles: false,
     immHeadName: '', immHeadEmail: '',
     deptHeadName: '', deptHeadEmail: '',
     divHeadName: '', divHeadEmail: '',
@@ -2973,6 +2972,7 @@ function renderDrafts(draftList = [], fromScreen = 'landing') {
   document.getElementById('screen-drafts').innerHTML = `
     <div class="page-content">
       <div class="page-header">
+        ${greetingLine()}
         <h1>Resume or Start New?</h1>
         <p>You have ${sorted.length} incomplete application(s) from the last 7 days.</p>
       </div>
@@ -3107,6 +3107,7 @@ function renderGuide() {
   ${renderSidebarTracker(1)}
   <div class="page-content">
   <div class="page-header">
+    ${greetingLine()}
     <span class="step-badge">DCS Section 1: Guidelines</span>
     <h1>Privacy Assessment Instructions</h1>
     <p>Please review the following guidelines and terms before submitting your data collection request.</p>
@@ -3241,17 +3242,18 @@ function renderForm() {
   const s = Object.fromEntries(Object.entries(state.dcs).map(([k,v]) => [k, escapeHtml(v || '')]));
   const currentDCSId = state.sessionId || 'Loading...';
   const isAgency = state.dcs.isAgency || false;
+  const isOJT = state.dcs.isOJT || false;
   const accessVal = state.dcs.access || '';
   let mainUploadLabel = 'Upload NDA';
   let mainUploadGuide = 'Upload your signed Non-Disclosure Agreement (PDF, DOC, DOCX up to 10MB)';
-  if (isAgency) {
+  if (isAgency || isOJT) {
     mainUploadLabel = 'Upload Confidential Undertaking';
     mainUploadGuide = 'Upload your signed Confidential Undertaking (PDF, DOC, DOCX up to 10MB)';
   } else if (accessVal === 'Internal') {
     mainUploadLabel = 'Upload Data Protection Agreement (DPA)';
     mainUploadGuide = 'Upload your signed Data Protection Agreement (PDF, DOC, DOCX up to 10MB)';
   }
-  const mainUploadType = isAgency ? 'CU' : (accessVal === 'Internal' ? 'DPA' : 'NDA');
+  const mainUploadType = (isAgency || isOJT) ? 'CU' : (accessVal === 'Internal' ? 'DPA' : 'NDA');
 
   // --- Revision mode: compute per-file status for the attachment cards ---
   const isRevision = state.isEditing;
@@ -3365,9 +3367,16 @@ function renderForm() {
           </div>
         </div>
       </div>
-      <div style="margin-top:12px; display:flex; align-items:center; gap:10px;">
-        <input type="checkbox" id="dcs-is-agency" ${isAgency?'checked':''} style="width:18px; height:18px; flex-shrink:0; min-width:18px;">
-        <label for="dcs-is-agency" style="margin:0; font-size:13px; font-weight:600; color:var(--navy-text); cursor:pointer; user-select:none;">This request involves an Agency ${infoTip('Check this if the request is on behalf of an external agency. This will add a separate Agency Information section.')}</label>
+      <div style="margin-top:12px;">
+        <label for="dcs-involvement" style="margin:0 0 5px; display:block; font-size:13px; font-weight:600; color:var(--navy-text);">Does this request involve an Agency or OJT? ${infoTip('Agency: on behalf of an external agency (adds an Agency Information section). OJT: on-the-job trainee — requires a Confidentiality Undertaking and an Endorsement Letter.')}</label>
+        <div class="select-wrap" style="max-width:340px;">
+          <select id="dcs-involvement">
+            <option value="" ${(!isAgency && !isOJT) ? 'selected' : ''}>No — standard request</option>
+            <option value="agency" ${isAgency ? 'selected' : ''}>This request involves an Agency</option>
+            <option value="ojt" ${isOJT ? 'selected' : ''}>This request involves an OJT</option>
+          </select>
+          <svg class="select-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
       </div>
     </div>
 
@@ -3538,7 +3547,7 @@ function renderForm() {
         </div>
       </div>
 
-      <div class="field" id="agency-endorsement-wrapper" style="display:${isAgency ? 'block' : 'none'}">
+      <div class="field" id="agency-endorsement-wrapper" style="display:${(isAgency || isOJT) ? 'block' : 'none'}">
         ${endorseFileRetained ? `
         <div class="upload-success" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;padding:10px 14px;border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -3629,60 +3638,65 @@ function renderForm() {
     });
   }
 
-  // Agency checkbox + DSA toggle via access dropdown
-  const agencyCb = document.getElementById('dcs-is-agency');
+  // Involvement dropdown (None / Agency / OJT) \u2014 drives the CU label, the endorsement upload,
+  // and whether the Agency Details screen is shown.
+  const involvementSel = document.getElementById('dcs-involvement');
   const nextBtn = document.querySelector('#screen-form .btn-primary');
-  if (agencyCb) {
-    let agencyConfirmPending = false;
-    agencyCb.addEventListener('change', function() {
-      if (agencyConfirmPending) {
-        agencyConfirmPending = false;
-        return;
-      }
-      if (!this.checked && state.dcs.isAgency) {
-        // Warn user about clearing agency data
-        const checkboxRef = this;
+
+  function applyInvolvement(val) {
+    state.dcs.isAgency = (val === 'agency');
+    state.dcs.isOJT = (val === 'ojt');
+    if (val !== 'agency') {
+      // OJT keeps the endorsement letter; None clears everything. Agency detail fields are dropped.
+      const keepEndo = (val === 'ojt' && state.dcs.agency) ? (state.dcs.agency.endorsementLetter || '') : '';
+      state.dcs.agency = { agencyName: '', agencyPersonnel: '', contractStartDate: '', endorsementLetter: keepEndo, networkDrive: '', immHeadRecoveryEmail: '', immHeadRecoveryNumber: '' };
+    }
+    if (nextBtn) nextBtn.textContent = (val === 'agency') ? 'Agency Details \u2192' : 'Review Summary \u2192';
+    updateMainUploadLabel();
+    persistState();
+  }
+
+  if (involvementSel) {
+    let prevInvolvement = involvementSel.value;
+    involvementSel.addEventListener('change', function() {
+      const newVal = this.value;
+      // Confirm before discarding entered Agency details when switching away from Agency.
+      const hasAgencyData = state.dcs.agency && (state.dcs.agency.agencyName || state.dcs.agency.agencyPersonnel || state.dcs.agency.networkDrive);
+      if (prevInvolvement === 'agency' && newVal !== 'agency' && hasAgencyData) {
         showCustomConfirm(
-          'If you uncheck "This request involves an Agency", all agency-related fields and uploaded files will be cleared. Proceed?',
+          'Changing this will clear all Agency details and uploaded files you\'ve entered. Proceed?',
           function() {
             if (typeof google !== 'undefined' && state.sessionId) {
               google.script.run.apiDeleteDraft(state.sessionId);
             }
-            state.dcs.agency = { agencyName: '', agencyPersonnel: '', contractStartDate: '', endorsementLetter: '', networkDrive: '', immHeadRecoveryEmail: '', immHeadRecoveryNumber: '' };
-            state.dcs.isAgency = false;
-            if (nextBtn) nextBtn.textContent = 'Review Summary \u2192';
-            // Now actually uncheck the checkbox
-            checkboxRef.checked = false;
-            agencyConfirmPending = true;
-            // Dispatch a new change event so the handler can process the unchecked state properly
-            checkboxRef.dispatchEvent(new Event('change'));
+            prevInvolvement = newVal;
+            applyInvolvement(newVal);
           },
           'warn'
         );
-        // Re-check the checkbox since the user hasn't confirmed yet
-        this.checked = true;
+        this.value = prevInvolvement; // revert until confirmed
         return;
-      } else if (this.checked) {
-        state.dcs.isAgency = true;
-        if (nextBtn) nextBtn.textContent = 'Agency Details \u2192';
       }
+      prevInvolvement = newVal;
+      applyInvolvement(newVal);
     });
   }
 
   // Update upload label text + endorsement wrapper visibility dynamically
   function updateMainUploadLabel() {
     const labelEl = document.getElementById('dcs-main-upload-label');
-    const isAg = document.getElementById('dcs-is-agency')?.checked || false;
+    const involve = document.getElementById('dcs-involvement')?.value || '';
+    const isCU = (involve === 'agency' || involve === 'ojt');
     const accVal = document.getElementById('dcs-access')?.value || '';
     if (labelEl) {
-      if (isAg) labelEl.textContent = 'Upload Confidential Undertaking';
+      if (isCU) labelEl.textContent = 'Upload Confidential Undertaking';
       else if (accVal === 'Internal') labelEl.textContent = 'Upload Data Protection Agreement (DPA)';
       else labelEl.textContent = 'Upload NDA';
     }
-    // Toggle endorsement wrapper visibility
+    // Toggle endorsement wrapper visibility (shown for Agency and OJT)
     const endorseWrapper = document.getElementById('agency-endorsement-wrapper');
     if (endorseWrapper) {
-      endorseWrapper.style.display = isAg ? 'block' : 'none';
+      endorseWrapper.style.display = isCU ? 'block' : 'none';
     }
   }
 
@@ -3696,12 +3710,7 @@ function renderForm() {
     });
   }
 
-  // Also update upload label + endorsement wrapper when agency checkbox toggles
-  if (agencyCb) {
-    agencyCb.addEventListener('change', updateMainUploadLabel);
-  }
-
-  // Ensure correct initial state for endorsement wrapper after DOM is built
+  // Ensure correct initial state for label + endorsement wrapper after DOM is built
   updateMainUploadLabel();
 
   // Restore previously uploaded file reference if coming back from summary
@@ -3798,9 +3807,11 @@ function syncDCSState() {
     state.dcs.accountable[`accountableEmail${i+1}`] = (row.querySelector('.acc-email').value || '').trim();
   });
 
-  // Agency checkbox
-  const agencyCb = document.getElementById('dcs-is-agency');
-  state.dcs.isAgency = agencyCb ? agencyCb.checked : false;
+  // Involvement dropdown (None / Agency / OJT)
+  const involvementSel = document.getElementById('dcs-involvement');
+  const involveVal = involvementSel ? involvementSel.value : '';
+  state.dcs.isAgency = (involveVal === 'agency');
+  state.dcs.isOJT = (involveVal === 'ojt');
 
   // Use variables already declared above for _hadFiles check
   if (ndaInput?.files?.length) state.dcs.nda = sanitizeText(ndaInput.files[0].name, CONFIG.MAX_NAME_LENGTH);
@@ -3916,8 +3927,8 @@ function validateFileUploads() {
         return false;
       }
     }
-    // Endorsement: required only if flagged AND is Agency
-    if (state.dcs.isAgency && isFileFlaggedForRevision('dcs-agency-endorsement')) {
+    // Endorsement: required only if flagged AND is Agency or OJT
+    if ((state.dcs.isAgency || state.dcs.isOJT) && isFileFlaggedForRevision('dcs-agency-endorsement')) {
       if (!endorseInput || !endorseInput.files || endorseInput.files.length === 0) {
         showCustomAlert('The Endorsement Letter was flagged by the approver. Please re-upload a corrected version.', 'danger');
         endorseInput?.closest('.upload-card')?.focus();
@@ -3944,10 +3955,10 @@ function validateFileUploads() {
     }
   }
 
-  // Endorsement Letter is required if it's an Agency request
-  if (state.dcs.isAgency) {
+  // Endorsement Letter is required for Agency or OJT requests
+  if (state.dcs.isAgency || state.dcs.isOJT) {
     if (!endorseInput || !endorseInput.files || endorseInput.files.length === 0) {
-      showCustomAlert('Please upload the Endorsement Letter for agency requests.', 'danger');
+      showCustomAlert('Please upload the Endorsement Letter for ' + (state.dcs.isOJT ? 'OJT' : 'agency') + ' requests.', 'danger');
       endorseInput?.closest('.upload-card')?.focus();
       return false;
     }
@@ -4154,6 +4165,7 @@ function renderSummary() {
   `;
 
   const isAgency = state.dcs.isAgency;
+  const isOJT = state.dcs.isOJT;
   const ag = state.dcs.agency || {};
 
   document.getElementById('screen-summary').innerHTML = `
@@ -4164,6 +4176,7 @@ function renderSummary() {
       <span class="step-badge">DCS Section 3: Review</span>
       <div class="app-id">${escapeHtml(currentDCSId)}</div>
       ${isAgency ? `<span class="step-badge" style="background:var(--warn);color:var(--warn-text);border-color:rgba(180,109,20,0.2);margin-bottom:8px;">Agency Request</span>` : ''}
+      ${isOJT ? `<span class="step-badge" style="background:var(--navy-tint);color:var(--navy-text);border-color:var(--navy-border);margin-bottom:8px;">OJT Request</span>` : ''}
       <h1>Review & Submit</h1>
       <p>Please double check your inputs and review the next steps before submitting.</p>
     </div>
@@ -4235,7 +4248,7 @@ function renderSummary() {
         ` : ''}
         ${(() => {
           let docLabel = 'NDA';
-          if (state.dcs.isAgency) docLabel = 'Confidential Undertaking';
+          if (state.dcs.isAgency || state.dcs.isOJT) docLabel = 'Confidential Undertaking';
           else if (state.dcs.access === 'Internal') docLabel = 'DPA';
 
           const fileName = state.dcs.nda || '';
@@ -4256,6 +4269,7 @@ function renderSummary() {
           }
           return summaryRow('DSA', dsaName || 'Not attached');
         })()}
+        ${state.dcs.isOJT ? summaryRow('Endorsement Letter', (state.dcs.agency && state.dcs.agency.endorsementLetter) || 'Not attached') : ''}
       </div>
     </div>
 
@@ -4339,9 +4353,11 @@ async function submitRequest() {
       }
     }
 
-    // Include agency data if agency checkbox was checked
-    if (state.dcs.isAgency && state.dcs.agency) {
-      payload.agencyData = { ...state.dcs.agency };
+    // Include agency/OJT data. Agency → full detail fields; OJT → only the type marker.
+    if (state.dcs.isAgency || state.dcs.isOJT) {
+      payload.agencyData = state.dcs.isOJT
+        ? { type: 'OJT' }
+        : { ...state.dcs.agency, type: 'AGENCY' };
       const endorseInput = document.getElementById('dcs-agency-endorsement');
       if (endorseInput?.files?.length) {
         try {
@@ -4504,6 +4520,7 @@ function renderRequests() {
       ${legendHtml}
       <div class="page-content">
         <div class="page-header">
+          ${greetingLine()}
           <h1>Application Requests</h1>
           <p>This section allows you to review and track your submitted application requests. Each progress update will be reflected here and to your email used to login to Google Workplace.</p>
         </div>
@@ -4747,6 +4764,7 @@ function editReturnedApplication(reqId) {
           state.dcs = draftRes.state.dcs;
           if (!state.dcs.agency) state.dcs.agency = { agencyName: '', agencyPersonnel: '', contractStartDate: '', endorsementLetter: '', networkDrive: '', immHeadRecoveryEmail: '', immHeadRecoveryNumber: '' };
           if (state.dcs.isAgency === undefined) state.dcs.isAgency = !!(state.dcs.agency && state.dcs.agency.agencyName);
+          if (state.dcs.isOJT === undefined) state.dcs.isOJT = !!(state.dcs.agency && state.dcs.agency.type === 'OJT');
           
           // Load approver flags FIRST — needed for per-file revision checks below
           state.approverFlags = draftRes.state.approverFlags || {};
@@ -4849,11 +4867,12 @@ function fetchReturnedApplicationFromDB(reqId) {
           divHeadName: s.divHeadName || '',
           divHeadEmail: s.divHeadEmail || '',
           accountable: s.accountable || {},
-          isAgency: !!(s.agency || (res.application.metadataAgency && res.application.metadataAgency.agencyName)),
+          isAgency: !!(res.application.metadataAgency && res.application.metadataAgency.agencyName),
+          isOJT: !!(res.application.metadataAgency && res.application.metadataAgency.type === 'OJT'),
           _hadFiles: false, // Revision mode: no global re-upload block; per-file flags handle this
           nda: mainFileName,   // Preserved — will be cleared below only if flagged
           dsa: dsaFileName,
-          agency: (res.application.metadataAgency && res.application.metadataAgency.agencyName) ? res.application.metadataAgency : {
+          agency: (res.application.metadataAgency && (res.application.metadataAgency.agencyName || res.application.metadataAgency.type === 'OJT')) ? res.application.metadataAgency : {
             agencyName: '', agencyPersonnel: '', contractStartDate: '',
             endorsementLetter: endorseFileName, // Preserved — will be cleared below only if flagged
             networkDrive: '',

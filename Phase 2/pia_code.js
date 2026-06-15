@@ -4426,26 +4426,19 @@ function buildReminderEmail(sessionId, approverEmail, approverName, stepInfo) {
 
     var subject = 'Reminder: Review pending for ' + sessionId;
 
-    var htmlBody = '<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">' +
-      '<p>This is a friendly reminder that your review is still pending for the following Privacy Impact Assessment.</p>' +
-      '<div style="background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 16px;">' +
-      '<div style="background: #fff8e1; color: #b46d14; border: 1px solid rgba(180,109,20,0.2); padding: 10px 14px; border-radius: 6px; font-size: 12px; margin-bottom: 16px;">' +
-      '⏳ <strong>Pending Review</strong> — ' + escapeHtml(stepInfo || 'Awaiting your action') + '</div>' +
-      '<div style="background: #E6F1FB; color: #0C447C; border: 1px solid rgba(24,95,165,0.2); padding: 12px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px;">' +
-      'Pending review by: <strong>' + escapeHtml(approverName) + '</strong><br><br>' +
-      '<strong>App ID:</strong> ' + escapeHtml(sessionId) + '<br>' +
-      '<strong>Program:</strong> ' + escapeHtml(appData.pia1?.program || '—') + '<br>' +
-      '<strong>Submitted by:</strong> ' + escapeHtml(appData.applicantEmail || '—') + '</div>' +
-      '<p style="font-size: 13px; color: #666; margin-bottom: 16px;">Please review this application at your earliest convenience.</p>' +
-      '<div style="margin-top: 16px;">' +
-      '<a href="' + reviewUrl + '" style="display: inline-block; padding: 10px 18px; background-color: #185FA5; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bold;">' +
-      'Review Access Request →</a></div>' +
-      '<div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 12px; color: #92400e;">' +
-      '<div style="display: flex; align-items: flex-start; gap: 8px;">' +
-      '<span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>' +
-      '<div><strong>⚠️ CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. You must use the <strong>Review button</strong> above to take action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>' +
-      '</div></div></div>' +
-      '<p style="font-size: 12px; color: #999; margin-top: 24px;">You will receive a reminder daily until you take action on this application.</p></div>';
+    var htmlBody = buildPiaEmailHtml_({
+      heading: 'Reminder — Review Pending',
+      contentHtml: '' +
+        '<p style="margin:0 0 14px;font-size:14px;">This is a friendly reminder that your review is still pending for the following Privacy Impact Assessment.</p>' +
+        '<div style="background:#fff8e1;color:#b46d14;border:1px solid rgba(180,109,20,0.2);padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:16px;">⏳ <strong>Pending Review</strong> — ' + escapeHtml(stepInfo || 'Awaiting your action') + '</div>' +
+        '<div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">' +
+        'Pending review by: <strong>' + escapeHtml(approverName) + '</strong><br><br>' +
+        '<strong>App ID:</strong> ' + escapeHtml(sessionId) + '<br>' +
+        '<strong>Program:</strong> ' + escapeHtml(appData.pia1?.program || '—') + '<br>' +
+        '<strong>Submitted by:</strong> ' + escapeHtml(appData.applicantEmail || '—') + '</div>' +
+        '<div><a href="' + reviewUrl + '" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>' +
+        '<p style="font-size:12px;color:#9ca3af;margin-top:16px;">You will receive a reminder daily until you take action on this application.</p>'
+    });
 
     // Queue via existing email infrastructure — use 'reminder' type for all
     queueEmail(sessionId, approverEmail, subject,
@@ -4475,6 +4468,27 @@ function getReminderConfig() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 📧 EMAIL NOTIFICATIONS  (now queue-based — see Email Queue above)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * buildPiaEmailHtml_ — shared navy email shell for ALL PIA notifications, matching the
+ * Admin/DCS template (navy #2a5285 header bar, Helvetica, white card, standard do-not-reply
+ * footer baked in). Pass the inner content via opts.contentHtml; preserve all action links.
+ */
+function buildPiaEmailHtml_(opts) {
+  opts = opts || {};
+  var accent = opts.accent || '#2a5285';
+  var heading = opts.heading || 'Notification';
+  var content = opts.contentHtml || '';
+  return '<div style="font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;background:#f9fafb;padding:24px;color:#333;line-height:1.6;">' +
+    '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.08);overflow:hidden;">' +
+      '<div style="background:' + accent + ';padding:18px 28px;">' +
+        '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld Data Privacy System</div>' +
+        '<div style="color:#ffffff;font-size:20px;font-weight:700;margin-top:4px;">' + heading + '</div>' +
+      '</div>' +
+      '<div style="padding:28px;">' + content + '</div>' +
+      '<div style="padding:14px 28px;border-top:1px solid #e5e7eb;background:#fff8e1;font-size:12px;color:#92400e;"><strong>Do NOT reply to this email.</strong> Replies are not monitored. Use the button above to take action. For help, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>' +
+    '</div></div>';
+}
 
 function notifyApprover(sessionId, approverIndex) {
   // FAILSAFE: Email failures must never crash the caller (DB already updated)
@@ -4529,40 +4543,19 @@ function notifyApprover(sessionId, approverIndex) {
     
     const subject = `Action Required: Review ${sessionId}`;
 
-    const htmlBody = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-        <p>A new Privacy Impact Assessment (PIA) requires your review.</p>
-        
-        <div style="background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 16px;">
-          <div style="font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px;">
-            Approval chain — step ${stepCount} of ${totalSteps}
-          </div>
-          
-          <div style="background: #E6F1FB; color: #0C447C; border: 1px solid rgba(24,95,165,0.2); padding: 12px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px;">
-            Pending review by: <strong>${escapeHtml(approver.name)}</strong><br><br>
-            <strong>App ID:</strong> ${escapeHtml(sessionId)}<br>
-            <strong>Program:</strong> ${escapeHtml(appData.pia1?.program || '—')}<br>
-            <strong>Submitted by:</strong> ${escapeHtml(appData.applicantEmail || '—')}
-          </div>
-          
-          <p style="font-size: 13px; color: #666; margin-bottom: 16px;"><strong>Record your decision below:</strong></p>
-
-          <!-- Single Review Button -->
-          <div style="margin-top: 16px;">
-            <a href="${reviewUrl}" style="display: inline-block; padding: 10px 18px; background-color: #185FA5; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bold; margin-bottom: 8px;">
-              Review Access Request →
-            </a>
-          </div>
-
-          <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 12px; color: #92400e;">
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-              <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
-              <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. You must use the <strong>Review button</strong> above to take action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
-            </div>
-          </div>
+    const htmlBody = buildPiaEmailHtml_({
+      heading: 'Action Required — Review',
+      contentHtml: `
+        <p style="margin:0 0 14px;font-size:14px;">A new Privacy Impact Assessment (PIA) requires your review.</p>
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Approval chain — step ${stepCount} of ${totalSteps}</div>
+        <div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">
+          Pending review by: <strong>${escapeHtml(approver.name)}</strong><br><br>
+          <strong>App ID:</strong> ${escapeHtml(sessionId)}<br>
+          <strong>Program:</strong> ${escapeHtml(appData.pia1?.program || '—')}<br>
+          <strong>Submitted by:</strong> ${escapeHtml(appData.applicantEmail || '—')}
         </div>
-      </div>
-    `;
+        <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
+    });
 
     // Queue email for deferred reliable delivery (avoids Gmail throttling in-request)
     queueEmail(sessionId, approver.email, subject, "Please view this email in an HTML-compatible client.", 'approver', htmlBody);
@@ -4662,34 +4655,17 @@ function notifyApplicant(sessionId, status) {
     }
   }
 
-  const htmlBody = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-      <p style="margin-bottom: 16px;">Hello,</p>
+  const htmlBody = buildPiaEmailHtml_({
+    heading: 'Application Status Update',
+    contentHtml: `
+      <p style="margin:0 0 14px;font-size:14px;">Hello,</p>
       ${statusMessage}
-      <!-- Reviewer Feedback Card -->
-      <div style="background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 16px;">
-        <div style="font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">
-          Review Status
-        </div>
-        
+      <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>
         ${decisionsHTML}
       </div>
-
-      <!-- Action Buttons -->
-      <div style="margin-top: 16px;">
-        <a href="${actionUrl}" style="display: inline-block; padding: 8px 16px; background-color: #f5f5f5; color: #333; text-decoration: none; border: 1px solid #dcdcdc; border-radius: 6px; font-size: 14px; font-weight: 500; margin-right: 8px;">
-          ${buttonText}
-        </a>
-      </div>
-
-      <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 16px; font-size: 12px; color: #92400e;">
-        <div style="display: flex; align-items: flex-start; gap: 8px;">
-          <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
-          <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. Use the <strong>button above</strong> to view your application status. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
-        </div>
-      </div>
-    </div>
-  `;
+      <div><a href="${actionUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">${buttonText}</a></div>`
+  });
 
   // Queue email for deferred reliable delivery (avoids Gmail throttling in-request)
   queueEmail(sessionId, appData.applicantEmail, subject, "Please view this email in an HTML-compatible client.", 'applicant', htmlBody);
@@ -6430,36 +6406,19 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
           const reviewUrl = `${baseUrl}&action=Review&approverType=divhead`;
           
           const subject = `Action Required: Division Head Review for ${sessionId}`;
-          const htmlBody = `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-              <p>A Privacy Impact Assessment requires your review as Division Head following an InfoSec escalation.</p>
-              
-              <div style="background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 16px;">
-                <div style="font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px;">
-                  Division Head Escalation
-                </div>
-                
-                <div style="background: #E6F1FB; color: #0C447C; border: 1px solid rgba(24,95,165,0.2); padding: 12px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px;">
-                  <strong>App ID:</strong> ${sessionId}<br>
-                  <strong>Program:</strong> ${escapeHtml(programName)}<br>
-                  <strong>Division Head:</strong> ${escapeHtml(divHeadName)}<br>
-                  <strong>Submitted by:</strong> ${escapeHtml(applicantEmail)}
-                </div>
-                <div style="margin-top: 16px;">
-                  <a href="${reviewUrl}" style="display: inline-block; padding: 10px 18px; background-color: #185FA5; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bold;">
-                    Review Access Request →
-                  </a>
-                </div>
-
-                <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 12px; color: #92400e;">
-                  <div style="display: flex; align-items: flex-start; gap: 8px;">
-                    <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
-                    <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. You must use the <strong>Review button</strong> above to take action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
-                  </div>
-                </div>
+          const htmlBody = buildPiaEmailHtml_({
+            heading: 'Action Required — Division Head Review',
+            contentHtml: `
+              <p style="margin:0 0 14px;font-size:14px;">A Privacy Impact Assessment requires your review as Division Head following an InfoSec escalation.</p>
+              <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Division Head Escalation</div>
+              <div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">
+                <strong>App ID:</strong> ${sessionId}<br>
+                <strong>Program:</strong> ${escapeHtml(programName)}<br>
+                <strong>Division Head:</strong> ${escapeHtml(divHeadName)}<br>
+                <strong>Submitted by:</strong> ${escapeHtml(applicantEmail)}
               </div>
-            </div>
-          `;
+              <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
+          });
           queueEmail(sessionId, divHeadEmail, subject, "Please view this email in an HTML-compatible client.", 'divhead', htmlBody);
         } catch(e) {
           Logger.log('Error queuing Div Head notification: ' + e);
@@ -6538,37 +6497,19 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
 
     const appData = getApplicationData(sessionId);
     const subject = `ISM InfoSec Review Required: ${sessionId}`;
-    const htmlBody = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-        <p>An access request requires your InfoSec review.</p>
-        
-        <div style="background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 16px;">
-          <div style="font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px;">
-            ISM InfoSec Approval — step ${stepNumber} of 2
-          </div>
-          
-          <div style="background: #E6F1FB; color: #0C447C; border: 1px solid rgba(24,95,165,0.2); padding: 12px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px;">
-            <strong>App ID:</strong> ${sessionId}<br>
-            <strong>Program:</strong> ${appData?.pia1?.program || '—'}<br>
-            <strong>Department:</strong> ${appData?.pia1?.dept || '—'}<br>
-            <strong>Submitted by:</strong> ${appData?.applicantEmail || '—'}
-          </div>
-
-          <div style="margin-top: 16px;">
-            <a href="${reviewUrl}" style="display: inline-block; padding: 10px 18px; background-color: #185FA5; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bold;">
-              Review Access Request →
-            </a>
-          </div>
-
-          <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 12px; color: #92400e;">
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-              <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
-              <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. You must use the <strong>Review button</strong> above to take action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
-            </div>
-          </div>
+    const htmlBody = buildPiaEmailHtml_({
+      heading: 'ISM InfoSec Review Required',
+      contentHtml: `
+        <p style="margin:0 0 14px;font-size:14px;">An access request requires your InfoSec review.</p>
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">ISM InfoSec Approval — step ${stepNumber} of 2</div>
+        <div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">
+          <strong>App ID:</strong> ${sessionId}<br>
+          <strong>Program:</strong> ${appData?.pia1?.program || '—'}<br>
+          <strong>Department:</strong> ${appData?.pia1?.dept || '—'}<br>
+          <strong>Submitted by:</strong> ${appData?.applicantEmail || '—'}
         </div>
-      </div>
-    `;
+        <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
+    });
 
     // Queue for deferred delivery (avoids Gmail throttling in-request)
     queueEmail(sessionId, ismMember.email, subject, "Please view this email in an HTML-compatible client.", 'ism', htmlBody);
@@ -6754,9 +6695,9 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
         <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 40px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
           
           <!-- Header -->
-          <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #185FA5; padding-bottom: 20px;">
+          <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #2a5285; padding-bottom: 20px;">
             <img src="https://upload.wikimedia.org/wikipedia/commons/e/e2/Megaworld_logo_and_wordmark.svg" alt="Megaworld Logo" height="28" style="margin-bottom: 15px;">
-            <h1 style="color: #185FA5; margin: 0; font-size: 28px; letter-spacing: -0.02em;">Certificate of Approval</h1>
+            <h1 style="color: #2a5285; margin: 0; font-size: 28px; letter-spacing: -0.02em;">Certificate of Approval</h1>
             <p style="color: #6b7280; margin: 5px 0 0 0; font-size: 14px;">Privacy Impact Assessment & Access Request</p>
           </div>
 
@@ -6865,7 +6806,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
           </div>
 
           <!-- Routing Information -->
-          <div style="margin-top: 40px; padding-top: 25px; border-top: 2px solid #185FA5; text-align: center;">
+          <div style="margin-top: 40px; padding-top: 25px; border-top: 2px solid #2a5285; text-align: center;">
             <p style="margin: 0; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Implementation Routing</p>
             <p style="margin: 5px 0 0 0; font-size: 15px; font-weight: 600; color: #1a3a5c;">Routed to: ${escapeHtml(normalizedDest)}</p>
             <p style="margin: 5px 0 0 0; font-size: 13px; color: #9ca3af;">Received at: ${escapeHtml(nowStr)}</p>
