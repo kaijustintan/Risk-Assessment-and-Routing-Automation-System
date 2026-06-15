@@ -1,0 +1,11 @@
+# Database exports — contain REAL @megaworldcorp.com names/emails (PII). Reference only.
+DPS_DB*.xlsx
+*.xlsx
+_dbtmp/
+_dbparse*.js
+_parsexlsx.js
+
+# OS / editor junk
+Thumbs.db
+.DS_Store
+*.log

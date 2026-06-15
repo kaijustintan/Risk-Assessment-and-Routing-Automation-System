@@ -1,4 +1,4 @@
-# CLAUDE.md — Megaworld DCS (Data Collection System)
+# CLAUDE.md — Megaworld RARS (DCS / PIA / Admin)
 
 > Project-specific instructions for this repo. My global preferences (tone, doc style,
 > Q&A teaching format, git rules) load separately from `~/.claude/CLAUDE.md` — this file
@@ -8,76 +8,95 @@
 
 ## 1. What this project is (Layman → Technical)
 
-**LAYMAN (Tropang Ex):** DCS is Megaworld's online "request-and-approval" portal for
-data/system access. An employee fills a form, attaches legal docs (NDA/DPA/DSA), and the
-request climbs an approval ladder (Immediate Head → Dept Head → maybe Division Head → ISM)
-until it's "Fully Certified." This repo is the **face** of that portal — the screens and
-styling the user sees. Phase 2 of the whole process is a *separate* app called **PIA**
-(Privacy Impact Assessment) that DCS links out to.
+**LAYMAN (Tropang Ex):** This is Megaworld's **RARS** (Risk Assessment & Routing System) —
+the online pipeline for requesting access to company data. It has **3 separate apps that
+work as one flow**, all sharing **one Google Sheet** as their database:
+- **Phase 1 — DCS** (Data Collection System): the request form. You apply, attach NDA/DPA/DSA.
+- **Phase 2 — PIA** (Privacy Impact Assessment): the privacy questionnaire you fill after
+  your DCS is cleared ("Proceed to Phase 2").
+- **Phase 3 — Admin**: the ISM control tower — dashboard, email routing, settings
+  (download links, reminders), oversight. Restricted to INFOSEC-001/002.
 
-**TECHNICAL:** A single-page **Google Apps Script (GAS)** web app. The entire UI — CSS,
-all 9 screens, client-side state, and validation — lives in one file: `index.html`
-(~4,900 lines). Data persistence (Sheets/Drive), email (Gmail), and the `doGet()` entry
-point live **server-side in the GAS cloud project**, NOT in this folder.
+A request climbs an approval ladder (Immediate Head → Dept Head → maybe Division Head → ISM)
+until "Fully Certified." See [docs/](docs/) for handoff specs.
+
+**TECHNICAL:** Three **independent Google Apps Script web apps**, each its own GAS project +
+deployment + `appsscript.json`. They never call each other directly — they coordinate
+**only through the shared Google Spreadsheet** (DCS reads/writes `Data_Collection`; PIA
+reads the DCS row via a `parentID`/`Linked_ReqID` and writes `Applications` + the
+`*_Approval_Workflow` sheets; Admin reads/writes everything). DCS hands off to PIA via the
+`PIA_APP_URL` stored in Script Properties. The real DB schema is in `DPS_DB*.xlsx` (gitignored).
 
 ---
 
-## 2. 🚨 CRITICAL architecture fact — read before editing
+## 2. 🚨 Architecture facts — read before editing
 
-**`Code.js` (the GAS backend, `Code.gs` in the cloud) is mirrored here for REFERENCE ONLY.
-We edit the frontend (`index.html`); the backend's live source of truth is the cloud.**
+**All three phases' full source (frontend HTML + backend `*_code.js` + manifests) now live
+in this repo, organized by folder (see §4). The live source of truth is each phase's GAS
+cloud project; this repo is where we edit, then Kai copy-pastes into the right project.**
 
 ```
-   THIS REPO                                  THEIR GAS CLOUD (live, source of truth)
-   ┌──────────────────────────┐  google.     ┌──────────────────────────────┐
-   │ index.html  ← WE EDIT THIS│  script.run  │ Code.gs  • doGet() serves HTML│
-   │   • CSS / design tokens  │  .apiXXX()   │          • apiSaveDraft, etc. │
-   │   • 9 render() screens    │ ───────────▶ │          • Sheets / Drive R/W │
-   │   • client state + valid. │ ◀─────────── │          • Gmail notifications│
-   │ appsscript.json (manifest)│   JSON       │  Google Sheets = the database │
-   │ Code.js  ← REFERENCE COPY │              │  Drive folder = file vault    │
-   └──────────────────────────┘              └──────────────────────────────┘
+   Phase 1 DCS            Phase 2 PIA              Phase 3 Admin
+   ┌─────────────┐        ┌─────────────┐         ┌─────────────┐
+   │ index.html  │        │ pia_index   │         │ adminView   │  ← frontends
+   │ Code.js     │        │ pia_code.js │         │ admin_code  │  ← backends (doGet, email, DB)
+   └──────┬──────┘        └──────┬──────┘         └──────┬──────┘
+          └───────────── ONE shared Google Spreadsheet ──┘   ← the only integration point
+                    (Data_Collection · Applications · *_Approval_Workflow ·
+                     Drafts · Risk_Audit · System_Configuration · Email_Queue · …)
 ```
 
 **Implications — enforce these:**
-- ✅ **Design/UI changes are safe and local.** CSS, layout, copy, render functions, client
-  validation — all live in `index.html`. This is the supervisor's scope.
-- 📖 **`Code.js` is a read-only reference mirror** of the cloud `Code.gs`. Use it to learn
-  exactly what shape each `apiXXX()` returns (see §6). **Do NOT change `Code.js` as part of
-  design work, and do NOT treat editing it as "shipping a backend change"** — we don't
-  deploy the backend (see §3).
-- ⛔ **Never invent, rename, or change the signature of an `api*` function** in either file.
-  If a design change needs *new* server data the backend doesn't already return, STOP and
-  flag it — that's a backend edit, done by the team that owns the cloud project, not us.
+- ✅ **Frontend/design changes are the common, low-risk work** (CSS, render functions, copy,
+  client validation). Phase 1 is the original supervisor scope.
+- ⚠️ **Backend (`*_code.js`) edits are higher-risk** — they send real emails to real people
+  and write the shared DB. When a task genuinely needs one (e.g. the approval reminder),
+  do it, but: reuse existing helpers, never weaken domain/auth checks, isolate sends in
+  try/catch, and cap blast radius. Flag it clearly.
+- ⛔ **Never break the cross-app contract:** don't rename/repurpose shared sheet columns, the
+  `parentID`/`Linked_ReqID` link, or stored URLs (`PIA_APP_URL`, `DCS_WEB_APP_URL`). A change
+  in one phase can silently break another that reads the same sheet.
+- **Manifest scopes** (`*_appsscript.json`): only add a scope when code genuinely needs it
+  (e.g. `script.scriptapp` for triggers, `script.send_mail` for `MailApp`). Flag it.
 
 ---
 
 ## 3. Our workflow & responsibility boundary
 
-- **What we do:** make design/UI adjustments to `index.html` here in VS Code.
-- **How it ships:** Kai **manually copy-pastes** the edited `index.html` into Megaworld's
-  live GAS editor (`appsscript`). The live system is preconfigured (domain-locked to
-  megaworld) and mid-migration, so this is deliberate and manual.
-- **NOT our responsibility:** deployment, `clasp push/pull`, domain config, migration. Do
-  not add deploy scripts, do not suggest `clasp`, do not touch `appsscript.json` unless a
-  design change genuinely requires a new OAuth scope (it almost never will).
-- **Git:** normal commits in this repo (reminder-only per global rules). Pushing to the
-  live system is a separate manual copy-paste, unrelated to git.
+- **What we do:** edit files in this repo (primarily Phase 1 frontend; other phases as the
+  task requires).
+- **How it ships — per phase, manual:** Kai **copy-pastes** the edited file into the
+  **matching** GAS project, then **redeploys that project** (Deploy → Manage deployments →
+  edit → New version → keeps the same `/exec` URL). Each phase deploys **independently** — a
+  change to PIA does nothing until the PIA project is redeployed.
+- **Re-auth:** adding a manifest scope forces re-authorization on next deploy/run.
+- **NOT our responsibility:** `clasp`, domain config, migration. Don't add deploy scripts.
+- **Git:** normal commits here (reminder-only per global rules). Pushing to live = the manual
+  copy-paste above, unrelated to git. `DPS_DB*.xlsx` is gitignored (real PII).
 
 ---
 
-## 4. File map
+## 4. File map (by phase)
 
-| File | Role | Touch it? |
+| Path | Role | Touch it? |
 |------|------|-----------|
-| `index.html` | **Everything frontend** — CSS, 9 screens, client JS, validation | ✅ Yes — this is the work |
-| `Code.js` | Reference mirror of the cloud `Code.gs` backend (~2,670 lines) | 📖 Read to understand contracts; ⛔ don't edit for design work |
-| `appsscript.json` | GAS manifest (timezone Asia/Manila, scopes, domain access) | ⚠️ Rarely — only for a new scope |
+| `Phase 1/index.html` | **DCS frontend** — CSS, 9 screens, client JS, validation | ✅ main work |
+| `Phase 1/Code.js` | DCS backend (~2,670 lines) — `doGet`, drafts, `submitDCS`, risk audit. **No email code.** | ⚠️ careful |
+| `Phase 2/pia_index.html` | PIA frontend — multi-section assessment wizard | ⚠️ as needed |
+| `Phase 2/pia_code.js` | PIA backend (~9,000 lines) — approval workflow, ISM, **all email** (`notifyApplicant`) | ⚠️ careful |
+| `Admin/adminView.html` | Admin frontend — dashboard, settings, email routing | ⚠️ as needed |
+| `Admin/admin_code.js` | Admin backend — config, approval reminders, `MailApp` senders | ⚠️ careful |
+| `*/…_appsscript.json` | Per-phase GAS manifest (Asia/Manila, scopes, DOMAIN access) | ⚠️ only for a new scope |
+| `docs/` | Cross-team handoff specs (e.g. category dropdown) | ✅ |
+| `DPS_DB*.xlsx` | Real DB export for schema reference — **gitignored (PII)** | 📖 read-only |
 | `CLAUDE.md` | This file | Update when facts change |
 
 ---
 
-## 5. The 9 screens (all in `index.html`, swapped by `show(name)`)
+> **§5–§8 below are Phase 1 (DCS) specifics** — `Phase 1/index.html`. PIA and Admin have
+> their own structures (see §1/§4); explore those files directly when working in them.
+
+## 5. The 9 screens (all in `Phase 1/index.html`, swapped by `show(name)`)
 
 Screen `<div>`s are **empty in the HTML** — JS fills them via `render*()` at runtime. So
 Ctrl+F for on-screen text may miss it; search the matching render function instead.
@@ -193,7 +212,14 @@ ask before inventing one — consistency with the navy system matters to the sup
 - **Downloadable templates** are driven by the `DOWNLOADABLES` array in `renderGuide()`.
   Add/remove a form by editing that array; the link itself is admin-managed via a
   `LINK_*_TEMPLATE` row in the `System_Configuration` sheet (generic config passthrough — no
-  backend code change needed). Missing row → link shows "Link not set" (`#`).
+  backend code change needed). Missing row → link shows "Link not set" (`#`). The Admin app's
+  Settings UI can edit these link rows; new keys (e.g. `LINK_OJT_NDA_TEMPLATE`) currently
+  need a direct sheet row or an Admin UI addition.
+- **Approval reminders** (Phase 3): `adminApi_sendDailyReminders()` in `Admin/admin_code.js`
+  nudges the *current pending approver* daily (DCS Immediate Head + PIA head/ISM/DivHead
+  chains), driven by a `ScriptApp` time-based trigger at `REMINDER_HOUR`. Configure via Admin
+  → Settings (needs the `script.scriptapp` scope + re-auth). It reuses `notifyApprover` /
+  `apiPhase3_NotifyISMember` / `sendEmailWithRetry_` — don't duplicate email logic.
 
 ---
 

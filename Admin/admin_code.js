@@ -712,45 +712,153 @@ function adminApi_setupReminderTrigger() {
   } catch (e) { return { success: false, error: e.toString() }; }
 }
 
+/**
+ * Daily approval reminder — nudges whoever currently OWES a decision (not the applicant).
+ * COC-style "8am everyday" reminder. Covers all four approval surfaces:
+ *   1. PIA head chain   (Approval_Workflow)            → current pending approver
+ *   2. ISM review chain (ISM_Approval_Workflow)        → current pending ISM member
+ *   3. Division Head    (DivisionHead_Approval_Workflow)→ pending escalation reviewer
+ *   4. DCS Phase 1      (Data_Collection, Status=PENDING)→ Immediate Head not yet cleared
+ * Reuses existing senders (notifyApprover / apiPhase3_NotifyISMember / sendEmailWithRetry_).
+ * Fail-safe: every send is isolated so one failure never aborts the run.
+ * Triggered daily by the time-based trigger created in adminApi_setupReminderTrigger().
+ */
 function adminApi_sendDailyReminders() {
   try {
     var ss = getSpreadsheet_();
-    // Find apps with pending approval workflow
-    var appSheet = ss.getSheetByName(SHEET_NAMES.APPLICATIONS);
-    if (!appSheet) return { success: false, error: 'Applications sheet not found.' };
-    var apps = sheetToObjects_(appSheet);
+
+    // Respect the on/off toggle so admins can pause reminders without deleting the trigger.
+    try {
+      var rc = adminApi_getReminderConfig();
+      if (rc && rc.success && rc.data && rc.data.enabled === false) {
+        return { success: true, notified: 0, message: 'Reminders are disabled (REMINDER_ENABLED != YES).' };
+      }
+    } catch (e) {}
+
     var notified = 0;
-    for (var i = 0; i < apps.length; i++) {
-      var app = apps[i];
-      var status = String(app.Status || '').toLowerCase();
-      if (status.indexOf('pending') === -1 && status.indexOf('in progress') === -1) continue;
-      var sessionId = String(app.SessionID || '');
-      if (!sessionId) continue;
-      // Notify applicant
-      try { notifyApplicant(sessionId, app.Status); notified++; } catch(e) {}
-      // Avoid quota: max 20 per run
-      if (notified >= 20) break;
+    var MAX_PER_RUN = 50; // safety cap: never blast more than this in a single run
+
+    function isDead_(st) {
+      st = String(st || '').trim().toLowerCase();
+      return st === 'returned' || st === 'denied' || st === 'rejected' || st === 'return' || st === 'deny';
     }
-    // Log last run
-    var sysSheet;
-    try { sysSheet = getSheet_(SHEET_NAMES.SYSTEM_CONFIG); } catch(e) {}
-    if (sysSheet) {
-      var data = sysSheet.getDataRange().getValues();
-      var header = data[0];
-      var keyIdx = header.indexOf('Configuration_Key');
-      var valIdx = header.indexOf('Value');
-      var found = false;
-      for (var r = 1; r < data.length; r++) {
-        if (String(data[r][keyIdx]).trim() === 'REMINDER_LAST_RUN') {
-          data[r][valIdx] = new Date().toISOString();
-          found = true;
-          break;
+    function isApproved_(st) { return String(st || '').trim().toLowerCase() === 'approved'; }
+
+    // ── 1. PIA head-approval chain (Approval_Workflow) ──
+    // Nudge only the CURRENT pending approver (first non-approved step). Skip sessions that
+    // are fully approved (already moved to ISM) or dead (returned/denied).
+    try {
+      var awSheet = ss.getSheetByName(SHEET_NAMES.APPROVAL_WORKFLOW);
+      if (awSheet) {
+        var awAll = sheetToObjects_(awSheet), awSeen = {};
+        for (var i = 0; i < awAll.length && notified < MAX_PER_RUN; i++) {
+          var sid = String(awAll[i].SessionID || '').trim();
+          if (!sid || awSeen[sid]) continue;
+          awSeen[sid] = true;
+          var rows = sheetToObjectsFiltered_(awSheet, 'SessionID', sid); // same order notifyApprover() uses
+          var dead = false, pendingIdx = -1;
+          for (var k = 0; k < rows.length; k++) {
+            if (isDead_(rows[k].Status)) { dead = true; break; }
+            if (pendingIdx === -1 && !isApproved_(rows[k].Status)) pendingIdx = k;
+          }
+          if (dead || pendingIdx === -1) continue; // dead, or fully approved → nothing to nudge
+          try {
+            var r1 = notifyApprover(sid, pendingIdx);
+            if (r1 && r1.success) { notified++; logAuditTrail(sid, 'Approval Reminder Sent (Approver)', { recipient: rows[pendingIdx].ApproverEmail, type: 'reminder' }); }
+          } catch (e) {}
         }
       }
-      if (found) sysSheet.getDataRange().setValues(data);
-      else sysSheet.appendRow(['REMINDER_LAST_RUN', new Date().toISOString()]);
-    }
-    return { success: true, notified: notified, message: 'Reminders sent to ' + notified + ' applicants.' };
+    } catch (e) {}
+
+    // ── 2. ISM review chain (ISM_Approval_Workflow) ──
+    try {
+      var ismSheet = ss.getSheetByName(SHEET_NAMES.ISM_APPROVAL);
+      if (ismSheet) {
+        var ismAll = sheetToObjects_(ismSheet), ismSeen = {};
+        for (var j = 0; j < ismAll.length && notified < MAX_PER_RUN; j++) {
+          var isid = String(ismAll[j].SessionID || '').trim();
+          if (!isid || ismSeen[isid]) continue;
+          ismSeen[isid] = true;
+          var iRows = sheetToObjectsFiltered_(ismSheet, 'SessionID', isid);
+          var iDead = false, iPend = -1;
+          for (var m = 0; m < iRows.length; m++) {
+            if (isDead_(iRows[m].Status)) { iDead = true; break; }
+            if (iPend === -1 && !isApproved_(iRows[m].Status)) iPend = m;
+          }
+          if (iDead || iPend === -1) continue;
+          var step = parseInt(String(iRows[iPend].CurrentStep || ''), 10) || (iPend + 1);
+          try {
+            var r2 = apiPhase3_NotifyISMember(isid, step);
+            if (r2 && r2.success) { notified++; logAuditTrail(isid, 'Approval Reminder Sent (ISM)', { recipient: iRows[iPend].ISM_Member_Email, type: 'reminder' }); }
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+
+    // ── 3. Division Head escalations (DivisionHead_Approval_Workflow) ──
+    try {
+      var dhSheet = ss.getSheetByName(SHEET_NAMES.DIVHEAD_APPROVAL);
+      if (dhSheet) {
+        var dhRows = sheetToObjects_(dhSheet);
+        for (var d = 0; d < dhRows.length && notified < MAX_PER_RUN; d++) {
+          var dhSid = String(dhRows[d].SessionID || '').trim();
+          if (!dhSid || isApproved_(dhRows[d].Status) || isDead_(dhRows[d].Status)) continue;
+          var dhEmail = String(dhRows[d].DivHead_Email || '').trim();
+          if (!dhEmail) continue;
+          try {
+            sendEmailWithRetry_(dhEmail,
+              '[ACTION REQUIRED] Division Head review pending (' + dhSid + ')',
+              'Dear Division Head,\n\nA Privacy Impact Assessment escalation (' + dhSid + ') is awaiting your review.\n\nPlease log in to the Data Privacy System to make your decision.\n\n— Data Privacy Admin System',
+              { replyTo: Session.getActiveUser().getEmail() });
+            notified++;
+            logAuditTrail(dhSid, 'Approval Reminder Sent (Division Head)', { recipient: dhEmail, type: 'reminder' });
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+
+    // ── 4. DCS Phase-1 requests awaiting approval (Data_Collection, Status=PENDING) ──
+    // DCS has no per-approver workflow rows; PENDING means the Immediate Head hasn't cleared
+    // it yet. Nudge that Immediate Head.
+    try {
+      var dcSheet = ss.getSheetByName(SHEET_NAMES.DATA_COLLECTION);
+      if (dcSheet) {
+        var dcRows = sheetToObjects_(dcSheet);
+        for (var c = 0; c < dcRows.length && notified < MAX_PER_RUN; c++) {
+          if (String(dcRows[c].Status || '').trim().toUpperCase() !== 'PENDING') continue;
+          var immEmail = String(dcRows[c].ImmediateHeadEmail || '').trim();
+          if (!immEmail) continue;
+          var reqId = String(dcRows[c].ReqID || '').trim();
+          try {
+            sendEmailWithRetry_(immEmail,
+              '[ACTION REQUIRED] DCS request ' + reqId + ' pending your approval',
+              'Dear Immediate Head,\n\nA Data Collection System request (' + reqId + ') is awaiting your approval.\n\nPlease log in to the DCS to review and approve.\n\n— Data Privacy Admin System',
+              { replyTo: Session.getActiveUser().getEmail() });
+            notified++;
+            logAuditTrail(reqId, 'Approval Reminder Sent (DCS Immediate Head)', { recipient: immEmail, type: 'reminder' });
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+
+    // ── Log last run timestamp (System_Configuration) ──
+    try {
+      var sysSheet = getSheet_(SHEET_NAMES.SYSTEM_CONFIG);
+      if (sysSheet) {
+        var data = sysSheet.getDataRange().getValues();
+        var header = data[0];
+        var keyIdx = header.indexOf('Configuration_Key');
+        var valIdx = header.indexOf('Value');
+        var found = false;
+        for (var r = 1; r < data.length; r++) {
+          if (String(data[r][keyIdx]).trim() === 'REMINDER_LAST_RUN') { data[r][valIdx] = new Date().toISOString(); found = true; break; }
+        }
+        if (found) sysSheet.getDataRange().setValues(data);
+        else sysSheet.appendRow(['REMINDER_LAST_RUN', new Date().toISOString()]);
+      }
+    } catch (e) {}
+
+    return { success: true, notified: notified, message: 'Approval reminders sent to ' + notified + ' pending approver(s).' };
   } catch (e) { return { success: false, error: e.toString() }; }
 }
 
