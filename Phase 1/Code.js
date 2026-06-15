@@ -1410,9 +1410,61 @@ function submitDCS(payload, sessionId = '') {
     ];
 
     logDCSAuditTrailBatch_(auditEntries);
+
+    // Notify the requester their request is submitted and cleared for Phase 2 (PIA).
+    // New submits only; failsafe so a mail error never affects the already-saved submission.
+    if (!isRevision) {
+      try {
+        notifyDcsRequester_(email, reqId, result.phase2Url);
+      } catch (mailErr) {
+        console.error('notifyDcsRequester_ failed:', mailErr.message);
+        try { logDCSAuditTrail(reqId, 'DCS Confirmation Email Failed: ' + mailErr.message, false); } catch (e) {}
+      }
+    }
   }
 
   return result;
+}
+
+/**
+ * Sends the requester a styled confirmation email after a successful DCS submission, with a
+ * "Proceed to Phase 2" button linking to the PIA app. Failsafe — the caller wraps this in
+ * try/catch so a mail failure never affects the saved submission.
+ * @param {string} toEmail   Requester email (Session active user).
+ * @param {string} reqId     DCS Request ID.
+ * @param {string} phase2Url Full PIA URL (already includes ?parentID=<reqId>).
+ * @private
+ */
+function notifyDcsRequester_(toEmail, reqId, phase2Url) {
+  if (!toEmail) return;
+  const safe = function(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
+  const accent = '#2a5285';
+  const dateStr = Utilities.formatDate(new Date(), 'Asia/Manila', "MMMM d, yyyy 'at' h:mm a");
+  const subject = '[Megaworld] DCS request ' + reqId + ' submitted — Proceed to Phase 2';
+  const plain = 'Dear Requester,\n\n' +
+    'Your Data Collection request (' + reqId + ') has been submitted successfully and is cleared to proceed to Phase 2 (Privacy Impact Assessment).\n\n' +
+    'Proceed to Phase 2: ' + (phase2Url || '(open the DCS app)') + '\n\n' +
+    'Submitted: ' + dateStr + '\n\n' +
+    '— Megaworld Data Privacy System';
+  const html =
+    '<div style="font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;background:#f9fafb;padding:24px;color:#333;line-height:1.6;">' +
+      '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.08);overflow:hidden;">' +
+        '<div style="background:' + accent + ';padding:18px 28px;">' +
+          '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld Data Privacy System</div>' +
+          '<div style="color:#ffffff;font-size:20px;font-weight:700;margin-top:4px;">Request Submitted — Proceed to Phase 2</div>' +
+        '</div>' +
+        '<div style="padding:28px;">' +
+          '<p style="margin:0 0 14px;font-size:14px;">Dear Requester,</p>' +
+          '<p style="margin:0 0 16px;font-size:14px;">Your Data Collection request has been <strong>submitted successfully</strong> and is cleared to continue with <strong>Phase 2 (Privacy Impact Assessment)</strong>.</p>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:13px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;margin:4px 0;"><tbody>' +
+            '<tr><td style="padding:6px 14px 6px 0;font-weight:600;color:#6b7280;white-space:nowrap;vertical-align:top;">Request ID</td><td style="padding:6px 0;color:#1a3a5c;">' + safe(reqId) + '</td></tr>' +
+            '<tr><td style="padding:6px 14px 6px 0;font-weight:600;color:#6b7280;white-space:nowrap;vertical-align:top;">Submitted</td><td style="padding:6px 0;color:#1a3a5c;">' + safe(dateStr) + '</td></tr>' +
+          '</tbody></table>' +
+          '<div style="margin:22px 0 4px;"><a href="' + safe(phase2Url || '#') + '" style="display:inline-block;background:' + accent + ';color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:11px 24px;border-radius:6px;">Proceed to Phase 2 &rarr;</a></div>' +
+        '</div>' +
+        '<div style="padding:16px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;font-size:11.5px;color:#9ca3af;">This is an automated message from the Megaworld Data Privacy System. Please do not reply to this email.</div>' +
+      '</div></div>';
+  MailApp.sendEmail(toEmail, subject, plain, { htmlBody: html });
 }
 
 /**
