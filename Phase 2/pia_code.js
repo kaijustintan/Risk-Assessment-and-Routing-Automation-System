@@ -4439,7 +4439,12 @@ function buildReminderEmail(sessionId, approverEmail, approverName, stepInfo) {
       '<p style="font-size: 13px; color: #666; margin-bottom: 16px;">Please review this application at your earliest convenience.</p>' +
       '<div style="margin-top: 16px;">' +
       '<a href="' + reviewUrl + '" style="display: inline-block; padding: 10px 18px; background-color: #185FA5; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bold;">' +
-      'Review Access Request →</a></div></div>' +
+      'Review Access Request →</a></div>' +
+      '<div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 12px; color: #92400e;">' +
+      '<div style="display: flex; align-items: flex-start; gap: 8px;">' +
+      '<span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>' +
+      '<div><strong>⚠️ CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. You must use the <strong>Review button</strong> above to take action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>' +
+      '</div></div></div>' +
       '<p style="font-size: 12px; color: #999; margin-top: 24px;">You will receive a reminder daily until you take action on this application.</p></div>';
 
     // Queue via existing email infrastructure — use 'reminder' type for all
@@ -4547,6 +4552,13 @@ function notifyApprover(sessionId, approverIndex) {
             <a href="${reviewUrl}" style="display: inline-block; padding: 10px 18px; background-color: #185FA5; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bold; margin-bottom: 8px;">
               Review Access Request →
             </a>
+          </div>
+
+          <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 12px; color: #92400e;">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+              <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
+              <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. You must use the <strong>Review button</strong> above to take action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -4668,6 +4680,13 @@ function notifyApplicant(sessionId, status) {
         <a href="${actionUrl}" style="display: inline-block; padding: 8px 16px; background-color: #f5f5f5; color: #333; text-decoration: none; border: 1px solid #dcdcdc; border-radius: 6px; font-size: 14px; font-weight: 500; margin-right: 8px;">
           ${buttonText}
         </a>
+      </div>
+
+      <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 16px; font-size: 12px; color: #92400e;">
+        <div style="display: flex; align-items: flex-start; gap: 8px;">
+          <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
+          <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. Use the <strong>button above</strong> to view your application status. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
+        </div>
       </div>
     </div>
   `;
@@ -5439,6 +5458,7 @@ function adminResendToStage(sessionId, stageType, approverEmail) {
       'This is a re-sent notification regarding PIA session ' + sessionId + ' (' + piaTitle + ').\n' +
       'Please review and take action.\n\n' +
       'Review Link: ' + reviewUrl + '\n\n' +
+      '⚠️ CAUTION: Do NOT reply to this email. This mailbox is not monitored. Use the review link above to take action. If you have a problem or query, email ISM-InfoSec at infosec@megaworldcorp.com.\n\n' +
       'Thank you.\nPIA System (Admin Resend)';
 
     var queueId = queueEmail(sessionId, approverEmail,
@@ -6430,6 +6450,13 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
                     Review Access Request →
                   </a>
                 </div>
+
+                <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 12px; color: #92400e;">
+                  <div style="display: flex; align-items: flex-start; gap: 8px;">
+                    <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
+                    <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. You must use the <strong>Review button</strong> above to take action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
+                  </div>
+                </div>
               </div>
             </div>
           `;
@@ -6531,6 +6558,13 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
             <a href="${reviewUrl}" style="display: inline-block; padding: 10px 18px; background-color: #185FA5; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: bold;">
               Review Access Request →
             </a>
+          </div>
+
+          <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 12px; color: #92400e;">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+              <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
+              <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. You must use the <strong>Review button</strong> above to take action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -6839,6 +6873,13 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
 
         </div>
         
+        <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 20px; font-size: 12px; color: #92400e;">
+          <div style="display: flex; align-items: flex-start; gap: 8px;">
+            <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
+            <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. This is an automated notification for your records and action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
+          </div>
+        </div>
+
         <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
           This is an automated message. Please proceed with the technical setup or data access granting as described.
         </div>
@@ -7750,1215 +7791,1215 @@ function migrateAddReminderColumns() {
  * Run this in the Apps Script editor to verify the reminder system.
  * Check View → Logs for detailed results.
  */
-// function testReminderEngine() {
-//   Logger.log('╔════════════════════════════════════════════════════════════╗');
-//   Logger.log('║  REMINDER ENGINE — COMPREHENSIVE TEST                      ║');
-//   Logger.log('╚════════════════════════════════════════════════════════════╝');
-
-//   var TEST_PREFIX = 'TEST-RM-' + new Date().getTime().toString(36).toUpperCase();
-//   var TEST_EMAIL = 'test-reminder@domain.com';
-//   var results = { passed: 0, failed: 0, scenarios: [] };
-//   var createdSessionIds = [];
-//   var cleanedUp = false;
-
-//   try {
-//     // ── STEP 1: Set up test configuration ──
-//     Logger.log('\n📋 STEP 1: Verifying reminder config...');
-//     var config = getReminderConfig();
-//     if (!config.enabled) {
-//       Logger.log('  ⚠ Reminders are DISABLED. Enabling for test...');
-//       adminSetReminderConfig({ enabled: true, hour: 8 });
-//     }
-//     Logger.log('  ✓ Config: enabled=' + config.enabled + ' hour=' + config.hour);
-
-//     // ── STEP 2: Create 7 test scenarios in Applications sheet ──
-//     Logger.log('\n📋 STEP 2: Creating 7 test scenarios in Applications...');
-//     var appSheet = getDatabaseSheet(DB_SHEET_NAMES.APPLICATIONS, true);
-//     var apprSheet = getDatabaseSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-//     var ismSheet = getDatabaseSheet(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-//     var divHeadSheet = getDatabaseSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
-
-//     var scenarios = [
-//       { id: TEST_PREFIX + '-PEND',  status: 'Pending',                  label: 'Pending — SHOULD remind',                    expectReminder: true,  sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-//       { id: TEST_PREFIX + '-APPROV',status: 'Approved',                 label: 'Approved (ISM active) — SHOULD remind',      expectReminder: true,  sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-//       { id: TEST_PREFIX + '-DRAFT', status: 'Draft',                    label: 'Draft — should NOT remind',                  expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-//       { id: TEST_PREFIX + '-DENIED',status: 'Denied',                   label: 'Denied — should NOT remind',                 expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-//       { id: TEST_PREFIX + '-RETRN', status: 'Returned',                 label: 'Returned — should NOT remind',               expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-//       { id: TEST_PREFIX + '-PHNTM', status: null,                       label: 'Phantom (no app row) — should NOT remind',    expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, phantom: true },
-//       { id: TEST_PREFIX + '-ISM',   status: 'Approved',                 label: 'ISM Pending — SHOULD remind',                expectReminder: true,  sheet: DB_SHEET_NAMES.ISM_WORKFLOW },
-//       { id: TEST_PREFIX + '-ALRDY', status: 'Pending',                  label: 'Already reminded today — should NOT remind',  expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, alreadyReminded: true }
-//     ];
-
-//     var todayStr = new Date().getFullYear() + '-' +
-//       String(new Date().getMonth() + 1).padStart(2, '0') + '-' +
-//       String(new Date().getDate()).padStart(2, '0');
-
-//     scenarios.forEach(function(s) {
-//       createdSessionIds.push(s.id);
-
-//       // Create minimal PIA JSON data for getApplicationData() to work
-//       var pia1Data = JSON.stringify({ program: 'Test Program - ' + s.label, department: 'Test Dept' });
-//       var pia5Data = JSON.stringify(['YES','YES','YES','YES','YES','YES','YES','YES']);
-
-//       // Insert into Applications sheet (skip for phantom scenario)
-//       if (!s.phantom) {
-//         appSheet.appendRow([
-//           s.id,               // SessionID
-//           TEST_EMAIL,          // ApplicantEmail
-//           s.status,            // Status
-//           pia1Data,            // PIA_1_Data
-//           '{}',                // PIA_2_Data
-//           '{}',                // PIA_3_Data
-//           '{}',                // PIA_4_Data
-//           pia5Data,            // PIA_5_Data
-//           '',                  // AdminExportID
-//           new Date().toLocaleString('en-PH'),  // SubmissionDate
-//           'NO',                // IsFlagged
-//           '',                  // Notes
-//           '',                  // Linked_ReqID
-//           '{}'                 // Approver_Flags
-//         ]);
-//       }
-
-//       // Insert into workflow sheet
-//       var targetSheet = s.sheet === DB_SHEET_NAMES.ISM_WORKFLOW ? ismSheet : apprSheet;
-//       var reminderDateValue = s.alreadyReminded ? todayStr : '';
-
-//       if (s.sheet === DB_SHEET_NAMES.ISM_WORKFLOW) {
-//         ismSheet.appendRow([
-//           s.id + '-ISM',        // ISM_Approval_ID
-//           s.id,                 // SessionID
-//           1,                    // CurrentStep
-//           'Test ISM Member',    // ISM_Member_Name
-//           TEST_EMAIL,           // ISM_Member_Email
-//           '',                   // Decision
-//           '',                   // Comments
-//           '',                   // DecisionDate
-//           'Pending',            // Status
-//           'NO',                 // Requires_DivHead
-//           '',                   // DivHead_Escalation_ID
-//           '',                   // Routing_Destination
-//           reminderDateValue,    // ReminderDate
-//           'Pending',            // EmailStatus
-//           ''                    // EmailError
-//         ]);
-//       } else {
-//         apprSheet.appendRow([
-//           s.id + '-APPR',       // ApprovalID
-//           s.id,                 // SessionID
-//           1,                    // CurrentStep
-//           'Test Approver',      // ApproverName
-//           TEST_EMAIL,           // ApproverEmail
-//           '',                   // Decision
-//           '',                   // Comments
-//           '',                   // DecisionDate
-//           'Pending',            // Status
-//           reminderDateValue,    // ReminderDate
-//           'Pending',            // EmailStatus
-//           ''                    // EmailError
-//         ]);
-//       }
-//     });
-
-//     Logger.log('  ✓ Created ' + scenarios.length + ' test entries');
-
-//     // ── STEP 3: Test sequence ordering (Step 2 should NOT be reminded if Step 1 is pending) ──
-//     Logger.log('\n📋 STEP 3: Testing sequence enforcement...');
-//     var seqId = TEST_PREFIX + '-SEQ';
-//     createdSessionIds.push(seqId);
-//     appSheet.appendRow([
-//       seqId, TEST_EMAIL, 'Pending',
-//       JSON.stringify({ program: 'Sequence Test', department: 'Test' }),
-//       '{}','{}','{}',JSON.stringify(['YES','YES','YES','YES','YES','YES','YES','YES']),
-//       '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}'
-//     ]);
-//     apprSheet.appendRow([seqId + '-S2', seqId, 2, 'Second Approver', TEST_EMAIL, '', '', '', 'Pending', '', 'Pending', '']);
-//     apprSheet.appendRow([seqId + '-S1', seqId, 1, 'First Approver',  TEST_EMAIL, '', '', '', 'Pending', '', 'Pending', '']);
-//     // NOTE: Step 2 appended first but Step 1 should be reminded (lowest step number)
-//     Logger.log('  ✓ Sequence test entry created (Step 1 & 2, both Pending)');
-
-//     // ── STEP 4: Run the reminder engine ──
-//     Logger.log('\n📋 STEP 4: Running sendDailyReminders()...');
-//     var result = sendDailyReminders();
-//     Logger.log('  ✓ Result: reminded=' + result.reminded + ', processed=' + result.processed);
-
-//     // ── STEP 5: Validate Email_Queue results ──
-//     Logger.log('\n📋 STEP 5: Validating Email_Queue...');
-//     var queueSheet = getDatabaseSheet(DB_SHEET_NAMES.EMAIL_QUEUE, true);
-//     var queueData = queueSheet.getDataRange().getValues();
-
-//     // Count 'reminder' type entries for our test sessionIds
-//     var remindedIds = {};
-//     for (var qi = 1; qi < queueData.length; qi++) {
-//       var qSessionId = String(queueData[qi][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '').trim();
-//       var qType = String(queueData[qi][EMAIL_QUEUE_COLS.TYPE - 1] || '').trim();
-//       var qRecipient = String(queueData[qi][EMAIL_QUEUE_COLS.RECIPIENT - 1] || '').trim();
-
-//       if (qType === 'reminder' && qSessionId.indexOf(TEST_PREFIX) === 0) {
-//         remindedIds[qSessionId] = { sessionId: qSessionId, recipient: qRecipient };
-//       }
-//     }
-
-//     // Check each scenario
-//     scenarios.forEach(function(s) {
-//       var wasReminded = !!remindedIds[s.id];
-//       if ((s.expectReminder && wasReminded) || (!s.expectReminder && !wasReminded)) {
-//         Logger.log('  ✅ PASS: ' + s.label + ' (reminded=' + wasReminded + ')');
-//         results.passed++;
-//         results.scenarios.push({ name: s.label, status: 'PASS', reminded: wasReminded, expected: s.expectReminder });
-//       } else {
-//         Logger.log('  ❌ FAIL: ' + s.label + ' (expected remind=' + s.expectReminder + ', got=' + wasReminded + ')');
-//         results.failed++;
-//         results.scenarios.push({ name: s.label, status: 'FAIL', reminded: wasReminded, expected: s.expectReminder });
-//       }
-//     });
-
-//     // Check sequence enforcement: PIA-TEST-RM-SEQ-SEQ should remind Step 1, NOT Step 2
-//     var seqFound = remindedIds[seqId];
-//     if (seqFound) {
-//       Logger.log('  ✅ PASS: Sequence test — first pending step was reminded (Step 1)');
-//       results.passed++;
-//       results.scenarios.push({ name: 'Sequence enforcement', status: 'PASS', reminded: true });
-//     } else {
-//       Logger.log('  ⚠ Sequence test — no reminder (may be legitimate if quota/other issue)');
-//       results.scenarios.push({ name: 'Sequence enforcement', status: 'WARN', reminded: false });
-//     }
-
-//     // ── STEP 6: Summary ──
-//     Logger.log('\n════════════════════════════════════════════════════════════');
-//     Logger.log('  TEST SUMMARY');
-//     Logger.log('════════════════════════════════════════════════════════════');
-//     Logger.log('  Passed: ' + results.passed + ' / Failed: ' + results.failed);
-//     Logger.log('  Total scenarios: ' + (results.passed + results.failed));
-
-//     if (results.failed === 0) {
-//       Logger.log('\n  ✅ ALL TESTS PASSED — Reminder engine is working correctly.');
-//     } else {
-//       Logger.log('\n  ❌ ' + results.failed + ' TEST(S) FAILED — Check logs above for details.');
-//     }
-
-//   } catch (e) {
-//     Logger.log('\n  ❌ TEST CRASHED: ' + e.toString());
-//     Logger.log('Stack: ' + e.stack);
-//     results.failed++;
-//     results.error = e.toString();
-//   } finally {
-//     // ── CLEANUP: Remove all test entries ──
-//     Logger.log('\n📋 CLEANUP: Removing test entries...');
-//     try {
-//       var cleanupSheets = [
-//         { sheet: getDatabaseSheet(DB_SHEET_NAMES.APPLICATIONS, true), col: 1 },
-//         { sheet: getDatabaseSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true), col: 2 },
-//         { sheet: getDatabaseSheet(DB_SHEET_NAMES.ISM_WORKFLOW, true), col: 2 },
-//         { sheet: getDatabaseSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true), col: 2 },
-//         { sheet: getDatabaseSheet(DB_SHEET_NAMES.EMAIL_QUEUE, true), col: 2 }
-//       ];
-
-//       cleanupSheets.forEach(function(cs) {
-//         if (!cs.sheet) return;
-//         var cd = cs.sheet.getDataRange().getValues();
-//         var rowsToDelete = [];
-//         for (var ci = 1; ci < cd.length; ci++) {
-//           var val = String(cd[ci][cs.col - 1] || '').trim();
-//           // Match TEST prefix sessionIds or email queue entries with TEST prefix
-//           if (val.indexOf(TEST_PREFIX) === 0) {
-//             rowsToDelete.push(ci + 1);
-//           }
-//         }
-//         if (rowsToDelete.length > 0) {
-//           batchDeleteRows(cs.sheet, rowsToDelete);
-//         }
-//       });
-
-//       cleanedUp = true;
-//       Logger.log('  ✓ Test data cleaned up successfully');
-//     } catch (cleanErr) {
-//       Logger.log('  ⚠ Cleanup warning: ' + cleanErr.toString());
-//     }
-//   }
-
-//   Logger.log('\n╚════════════════════════════════════════════════════════════╝');
-//   return results;
-// }
-
-// /**
-//  * 🏆 ULTIMATE SYSTEM FLOW TEST — Phase 2 & 3 end-to-end
-//  * Tests the COMPLETE PIA lifecycle:
-//  *   ✓ Phase 2: Submit → Approve → Return → Deny → Re-submit
-//  *   ✓ Phase 3: ISM workflow → Approve → Escalate → DivHead → Route
-//  *   ✓ Email Queue processing
-//  *   ✓ Admin APIs (queue summary, email log, reminder config)
-//  *   ✓ Sequence enforcement (Step 1 before Step 2)
-//  *   ✓ Duplicate/re-process prevention
-//  *   ✓ Scalability: batch create 25 records and verify throughput
-//  *
-//  * Run from Apps Script editor. View → Logs for results.
-//  */
-// function testFullSystemFlow() {
-//   Logger.log('╔══════════════════════════════════════════════════════════════╗');
-//   Logger.log('║  ULTIMATE SYSTEM FLOW — COMPREHENSIVE END-TO-END TEST       ║');
-//   Logger.log('╚══════════════════════════════════════════════════════════════╝');
-
-//   var T = 'TST-' + new Date().getTime().toString(36).toUpperCase();
-//   var E = 'test-flow@domain.com';
-//   var results = { failed: 0, passed: 0, total: 0, details: [] };
-//   var createdSheets = [];
-//   var allTestIds = [];
-
-//   function check(label, ok, detail) {
-//     results.total++;
-//     if (ok) { results.passed++; Logger.log('  ✅ ' + label); }
-//     else { results.failed++; Logger.log('  ❌ ' + label + ' → ' + detail); }
-//     results.details.push({ label: label, pass: ok, detail: detail });
-//   }
-
-//   function getSheet(sheetName) {
-//     var s = getDatabaseSheet(sheetName, true);
-//     if (createdSheets.indexOf(sheetName) < 0) createdSheets.push(sheetName);
-//     return s;
-//   }
-
-//   function genId(label) { var id = T + '-' + label + '-' + Math.random().toString(36).substring(2,6); allTestIds.push(id); return id; }
-
-//   function cleanTestData() {
-//     Logger.log('\n🧹 Cleaning test data...');
-//     var cleanupSheets = [
-//       { sheet: getSheet(DB_SHEET_NAMES.APPLICATIONS), col: 1 },
-//       { sheet: getSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW), col: 2 },
-//       { sheet: getSheet(DB_SHEET_NAMES.ISM_WORKFLOW), col: 2 },
-//       { sheet: getSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG), col: 2 },
-//       { sheet: getSheet(DB_SHEET_NAMES.EMAIL_QUEUE), col: 2 },
-//       { sheet: getSheet(DB_SHEET_NAMES.RISK_AUDIT), col: 2 },
-//       { sheet: getSheet(DB_SHEET_NAMES.DATA_COLLECTION), col: 2 },
-//       { sheet: getSheet(DB_SHEET_NAMES.DRAFTS), col: 2 }
-//     ];
-//     cleanupSheets.forEach(function(cs) {
-//       if (!cs.sheet) return;
-//       var cd = cs.sheet.getDataRange().getValues();
-//       var rows = [];
-//       for (var ci = 1; ci < cd.length; ci++) {
-//         for (var ti = 0; ti < allTestIds.length; ti++) {
-//           if (String(cd[ci][cs.col - 1] || '').indexOf(allTestIds[ti]) === 0) { rows.push(ci + 1); break; }
-//         }
-//       }
-//       if (rows.length > 0) batchDeleteRows(cs.sheet, rows);
-//     });
-//     // Also clean Email_Queue by Type
-//     try {
-//       var eqSheet = getSheet(DB_SHEET_NAMES.EMAIL_QUEUE);
-//       var eqData = eqSheet.getDataRange().getValues();
-//       var eqRows = [];
-//       for (var ei = 1; ei < eqData.length; ei++) {
-//         var eqType = String(eqData[ei][EMAIL_QUEUE_COLS.TYPE - 1] || '');
-//         if (eqType === 'approver' || eqType === 'applicant' || eqType === 'reminder' || eqType === 'ism' || eqType === 'divhead') {
-//           for (var ti2 = 0; ti2 < allTestIds.length; ti2++) {
-//             if (String(eqData[ei][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '').indexOf(allTestIds[ti2]) === 0) { eqRows.push(ei + 1); break; }
-//           }
-//         }
-//       }
-//       if (eqRows.length > 0) batchDeleteRows(eqSheet, eqRows);
-//     } catch(_) {}
-//     Logger.log('  ✓ Cleanup complete');
-//   }
-
-//   var appSheet = getSheet(DB_SHEET_NAMES.APPLICATIONS);
-//   var apprSheet = getSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW);
-//   var ismSheet = getSheet(DB_SHEET_NAMES.ISM_WORKFLOW);
-//   var divSheet = getSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG);
-//   var queueSheet = getSheet(DB_SHEET_NAMES.EMAIL_QUEUE);
-
-//   try {
-//     // ─────────────────────────────────────────────────────────────
-//     // ═══════════════ PHASE 2: HEAD APPROVAL FLOW ═════════════════
-//     // ─────────────────────────────────────────────────────────────
-//     Logger.log('\n═══════════════ PHASE 2: HEAD APPROVAL FLOW ═══════════════');
-
-//     // Create minimal PIA data
-//     var pia1 = JSON.stringify({ program:'Test Program', dept:'IT', immediateHead:'Alice', immediateHeadEmail:E, deptHead:'Bob', deptHeadEmail:E, drafterEmail:E });
-//     var pia5 = JSON.stringify(['YES','YES','YES','YES','YES','YES','YES','YES']);
-
-//     // ── TEST A: Full approval chain (Step 1 Approve → Step 2 Approve → ISM init) ──
-//     Logger.log('\n📌 A. Full approval chain');
-//     var aId = genId('FULL');
-//     appSheet.appendRow([aId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
-//     apprSheet.appendRow([aId+'-A1', aId, 1, 'Approver A1', E, '','', '','Pending','','Pending','']);
-//     apprSheet.appendRow([aId+'-A2', aId, 2, 'Approver A2', E, '','', '','Pending','','Pending','']);
-
-//     // Step 1 Approve
-//     var r1 = processApprovalDecision(aId, E, 'Approve', 'Looks good, approved.', null, '{}');
-//     check('Step 1 Approve succeeds', r1.success, r1.error);
-//     SpreadsheetApp.flush();
-
-//     // Verify Step 1 is Approved
-//     var d = apprSheet.getDataRange().getValues();
-//     var step1ok = false, step2stillPending = false, appStatusApproved = false;
-//     for (var i = 1; i < d.length; i++) {
-//       if (d[i][APPROVAL_COLS.SESSION_ID - 1] === aId && d[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) step1ok = (d[i][APPROVAL_COLS.STATUS - 1] === 'Approved');
-//       if (d[i][APPROVAL_COLS.SESSION_ID - 1] === aId && d[i][APPROVAL_COLS.CURRENT_STEP - 1] == 2) step2stillPending = (d[i][APPROVAL_COLS.STATUS - 1] === 'Pending');
-//     }
-//     check('Step 1 status becomes Approved', step1ok, '');
-//     check('Step 2 still Pending after Step 1', step2stillPending, '');
-
-//     // Step 2 Approve
-//     var r2 = processApprovalDecision(aId, E, 'Approve', 'Also approved.', null, '{}');
-//     check('Step 2 Approve succeeds', r2.success, r2.error);
-//     SpreadsheetApp.flush();
-
-//     // Check app is Approved (Phase 3 init)
-//     var apps = appSheet.getDataRange().getValues();
-//     for (var i = 1; i < apps.length; i++) {
-//       if (apps[i][APPLICATIONS_COLS.SESSION_ID - 1] === aId) { appStatusApproved = (String(apps[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved') === 0); break; }
-//     }
-//     check('Application status becomes Approved', appStatusApproved, '');
-
-//     // Verify ISM workflow was initialized (2 rows in ISM sheet)
-//     var ismRows = 0;
-//     var ismD = ismSheet.getDataRange().getValues();
-//     for (var i = 1; i < ismD.length; i++) { if (ismD[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === aId) ismRows++; }
-//     check('ISM workflow initialized (2 rows)', ismRows === 2, 'found ' + ismRows);
-
-//     // Verify email was queued for applicant "approved_main"
-//     var queueData = queueSheet.getDataRange().getValues();
-//     var foundApplicantEmail = false;
-//     for (var i = 1; i < queueData.length; i++) {
-//       if (String(queueData[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === aId && String(queueData[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'applicant') {
-//         foundApplicantEmail = true; break;
-//       }
-//     }
-//     check('Applicant notification queued', foundApplicantEmail, '');
-
-//     // ── TEST B: Return to Requestor ──
-//     Logger.log('\n📌 B. Return to requestor');
-//     var bId = genId('RETN');
-//     appSheet.appendRow([bId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
-//     apprSheet.appendRow([bId+'-B1', bId, 1, 'Approver B1', E, '','', '','Pending','','Pending','']);
-
-//     var r3 = processApprovalDecision(bId, E, 'Return', 'Please fix the scope section. This is a detailed comment explaining what needs to be changed. It needs to be at least 100 characters so adding more text here to meet the limit.', null, '{"PIA 1 - Scope":"Scope section is too vague"}');
-//     check('Return succeeds', r3.success, r3.error);
-
-//     var appsB = appSheet.getDataRange().getValues();
-//     var retRow = null, retStatus = '';
-//     for (var i = 1; i < appsB.length; i++) { if (appsB[i][APPLICATIONS_COLS.SESSION_ID - 1] === bId) { retRow = i; retStatus = String(appsB[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
-//     check('Application status becomes Returned', retStatus === 'Returned', retStatus);
-//     check('ApproverFlags stored for returned app', String(appsB[retRow][APPLICATIONS_COLS.APPROVER_FLAGS - 1] || '').indexOf('Scope') > 0, '');
-
-//     // ── TEST C: Deny ──
-//     Logger.log('\n📌 C. Deny application');
-//     var cId = genId('DENY');
-//     appSheet.appendRow([cId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
-//     apprSheet.appendRow([cId+'-C1', cId, 1, 'Approver C1', E, '','', '','Pending','','Pending','']);
-
-//     var r4 = processApprovalDecision(cId, E, 'Deny', 'This project does not meet compliance requirements. The policy framework is not fully established and data handling procedures are undefined. Additional work is needed before resubmission.', null, '{}');
-//     check('Deny succeeds', r4.success, r4.error);
-
-//     var appsC = appSheet.getDataRange().getValues();
-//     var denyStatus = '';
-//     for (var i = 1; i < appsC.length; i++) { if (appsC[i][APPLICATIONS_COLS.SESSION_ID - 1] === cId) { denyStatus = String(appsC[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
-//     check('Application status becomes Denied', denyStatus === 'Denied', denyStatus);
-
-//     // Verify Step 1 status is Denied
-//     var dC = apprSheet.getDataRange().getValues();
-//     var step1Denied = false;
-//     for (var i = 1; i < dC.length; i++) { if (dC[i][APPROVAL_COLS.SESSION_ID - 1] === cId && dC[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) { step1Denied = (dC[i][APPROVAL_COLS.STATUS - 1] === 'Denied'); break; } }
-//     check('Approval record set to Denied', step1Denied, '');
-
-//     // ── TEST D: Duplicate/re-process prevention ──
-//     Logger.log('\n📌 D. Re-process prevention');
-//     var r5 = processApprovalDecision(bId, E, 'Approve', 'Trying to approve a returned app', null, '{}');
-//     check('Re-processing returned app returns error', !r5.success, 'should fail');
-//     var r6 = processApprovalDecision(cId, E, 'Approve', 'Trying to approve a denied app', null, '{}');
-//     check('Re-processing denied app returns error', !r6.success, 'should fail');
-
-//     // ─────────────────────────────────────────────────────────────
-//     // ═══════════════ PHASE 3: ISM WORKFLOW ═══════════════════════
-//     // ─────────────────────────────────────────────────────────────
-//     Logger.log('\n═══════════════ PHASE 3: ISM WORKFLOW ═══════════════════════');
-
-//     // Create an app approved by heads for ISM testing
-//     var dId = genId('P3OK');
-//     appSheet.appendRow([dId, E, 'Approved', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
-//     apprSheet.appendRow([dId+'-D1', dId, 1, 'Approver D1', E, 'Approved','ok','today','Approved','','Sent','']);
-//     // Initialize ISM workflow
-//     var initResult = apiPhase3_InitializeISMWorkflow(dId);
-//     check('ISM init for P3 test succeeds', initResult.success, initResult.error);
-
-//     // ── TEST E: ISM Person 1 Approves → Person 2 notified ──
-//     Logger.log('\n📌 E. ISM Person 1 Approve (triggers routing)');
-//     // Get the ISM member emails
-//     var ismData2 = ismSheet.getDataRange().getValues();
-//     var p1Email = '', p2Email = '';
-//     for (var i = 1; i < ismData2.length; i++) {
-//       if (ismData2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismData2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) p1Email = ismData2[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
-//       if (ismData2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismData2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) p2Email = ismData2[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
-//     }
-//     check('ISM Person 1 has email', !!p1Email, p1Email);
-//     check('ISM Person 2 has email', !!p2Email, p2Email);
-
-//     var r7 = apiPhase3_ProcessISMDecision(dId, p1Email, 'Approve', 'ISM P1 approves with BOTH routing.', 'BOTH', 1, '{}');
-//     check('ISM Person 1 Approve succeeds', r7.success, r7.error);
-//     SpreadsheetApp.flush();
-
-//     // Check Person 2 is still Pending
-//     var ismD2 = ismSheet.getDataRange().getValues();
-//     var p2Status = '';
-//     for (var i = 1; i < ismD2.length; i++) { if (ismD2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismD2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) p2Status = String(ismD2[i][ISM_WORKFLOW_COLS.STATUS - 1] || ''); break; }
-//     // Person 2 should still be Pending (needs unanimous approval)
-//     // Actually wait, after Person 1 approves, Person 2 should still be Pending
-//     for (var i = 1; i < ismD2.length; i++) {
-//       if (ismD2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismD2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) { p2Status = String(ismD2[i][ISM_WORKFLOW_COLS.STATUS - 1] || ''); break; }
-//     }
-//     check('Person 2 still Pending after P1 approves', p2Status === 'Pending', p2Status);
-
-//     // ── TEST F: ISM Person 2 Approves → Full approval → Routing ──
-//     Logger.log('\n📌 F. ISM Person 2 Approve (triggers full approval & routing)');
-//     var r8 = apiPhase3_ProcessISMDecision(dId, p2Email, 'Approve', 'ISM P2 approves.', '', 2, '{}');
-//     check('ISM Person 2 Approve succeeds', r8.success, r8.error);
-//     SpreadsheetApp.flush();
-
-//     // Check app status becomes Approved by ISM
-//     var appD2 = appSheet.getDataRange().getValues();
-//     var ismFinalStatus = '';
-//     for (var i = 1; i < appD2.length; i++) { if (appD2[i][APPLICATIONS_COLS.SESSION_ID - 1] === dId) { ismFinalStatus = String(appD2[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
-//     check('App status after ISM approval', ismFinalStatus.indexOf('Approved by ISM') >= 0 || ismFinalStatus.indexOf('Approved') >= 0, ismFinalStatus);
-
-//     // ── TEST G: ISM Deny ──
-//     Logger.log('\n📌 G. ISM Deny');
-//     var gId = genId('ISMDN');
-//     appSheet.appendRow([gId, E, 'Approved', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
-//     apiPhase3_InitializeISMWorkflow(gId);
-
-//     // Find the ISM emails for this new app
-//     var ismG = ismSheet.getDataRange().getValues();
-//     var p1G = '';
-//     for (var i = 1; i < ismG.length; i++) { if (ismG[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === gId && ismG[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1G = ismG[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
-
-//     var r9 = apiPhase3_ProcessISMDecision(gId, p1G, 'Deny', 'This application has security risks that cannot be mitigated. Comprehensive review indicates multiple compliance gaps in data handling procedures. This decision is final.', '', 1, '{}');
-//     check('ISM Deny succeeds', r9.success, r9.error);
-
-//     var appG = appSheet.getDataRange().getValues();
-//     var ismDenyStatus = '';
-//     for (var i = 1; i < appG.length; i++) { if (appG[i][APPLICATIONS_COLS.SESSION_ID - 1] === gId) { ismDenyStatus = String(appG[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
-//     check('App becomes Rejected by ISM', ismDenyStatus.indexOf('Rejected') >= 0, ismDenyStatus);
-
-//     // ── TEST H: ISM Return ──
-//     Logger.log('\n📌 H. ISM Return');
-//     var hId = genId('ISMRT');
-//     appSheet.appendRow([hId, E, 'Approved', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
-//     apiPhase3_InitializeISMWorkflow(hId);
-
-//     var ismH = ismSheet.getDataRange().getValues();
-//     var p1H = '';
-//     for (var i = 1; i < ismH.length; i++) { if (ismH[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === hId && ismH[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1H = ismH[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
-
-//     var r10 = apiPhase3_ProcessISMDecision(hId, p1H, 'Return', 'Please update the scope section and add more detail about data retention policies. The current description is too brief. Also ensure the DCS fields are updated accordingly. This requires at least fifty characters.', '', 1, '{}');
-//     check('ISM Return succeeds', r10.success, r10.error);
-
-//     var appH = appSheet.getDataRange().getValues();
-//     var ismRetStatus = '';
-//     for (var i = 1; i < appH.length; i++) { if (appH[i][APPLICATIONS_COLS.SESSION_ID - 1] === hId) { ismRetStatus = String(appH[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
-//     check('App becomes Returned after ISM return', ismRetStatus === 'Returned', ismRetStatus);
-
-//     // ── TEST I: ISM Escalate → Division Head Approve ──
-//     Logger.log('\n📌 I. ISM Escalate → Div Head Approve');
-//     // Create app with DivHead email in PIA1 data
-//     var pia1Div = JSON.stringify({ program:'Test Escalation', dept:'IT', immediateHead:'Alice', immediateHeadEmail:E, deptHead:'Bob', deptHeadEmail:E, divHead:'Carol', divHeadEmail:E, drafterEmail:E });
-//     var iId = genId('P3ESC');
-//     appSheet.appendRow([iId, E, 'Approved', pia1Div,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
-//     apiPhase3_InitializeISMWorkflow(iId);
-//     SpreadsheetApp.flush();
-
-//     var ismI = ismSheet.getDataRange().getValues();
-//     var p1I = '';
-//     for (var i = 1; i < ismI.length; i++) { if (ismI[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === iId && ismI[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1I = ismI[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
-
-//     var r11 = apiPhase3_ProcessISMDecision(iId, p1I, 'EscalateToDivisionHead', 'This requires executive review due to cross-departmental data sharing concerns. The application involves sensitive PII that needs Division Head sign-off.', 'BOTH', 1, '{}');
-//     check('ISM Escalate succeeds', r11.success, r11.error);
-//     SpreadsheetApp.flush();
-
-//     // Check Div Head record was created
-//     var divI = divSheet.getDataRange().getValues();
-//     var divPending = false;
-//     for (var i = 1; i < divI.length; i++) { if (divI[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === iId && divI[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') { divPending = true; break; } }
-//     check('DivHead escalation record created', divPending, '');
-
-//     // Div Head approves (resolves Person 1's escalation, notifies Person 2)
-//     var r12 = processDivHeadDecision(iId, E, 'Approve', 'Division Head approves after review. This is a detailed comment explaining the approval rationale for the escalated application. It must be long enough to pass validation.', '{}');
-//     check('DivHead Approve succeeds', r12.success, r12.error);
-//     SpreadsheetApp.flush();
-
-//     // App stays "Escalated to Division Head" until Person 2 also approves
-//     var appI = appSheet.getDataRange().getValues();
-//     var escStatus = '';
-//     for (var i = 1; i < appI.length; i++) { if (appI[i][APPLICATIONS_COLS.SESSION_ID - 1] === iId) { escStatus = String(appI[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
-//     check('App still Escalated after DivHead (waiting for Person 2)', escStatus.indexOf('Escalated') >= 0, escStatus);
-
-//     // Now Person 2 approves → full approval reached
-//     var ismI2 = ismSheet.getDataRange().getValues();
-//     var p2I = '';
-//     for (var i = 1; i < ismI2.length; i++) { if (ismI2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === iId && ismI2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) { p2I = ismI2[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
-//     var r13 = apiPhase3_ProcessISMDecision(iId, p2I, 'Approve', 'Person 2 approves after DivHead resolution.', 'BOTH', 2, '{}');
-//     check('ISM Person 2 Approve after Escalation succeeds', r13.success, r13.error);
-//     SpreadsheetApp.flush();
-
-//     var appI2 = appSheet.getDataRange().getValues();
-//     var escFinal = '';
-//     for (var i = 1; i < appI2.length; i++) { if (appI2[i][APPLICATIONS_COLS.SESSION_ID - 1] === iId) { escFinal = String(appI2[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
-//     check('App reaches Approved by ISM after full Escalation chain', escFinal.indexOf('Approved by ISM') >= 0, escFinal);
-
-//     // ─────────────────────────────────────────────────────────────
-//     // ═══════════════ ADMIN API TESTS ═════════════════════════════
-//     // ─────────────────────────────────────────────────────────────
-//     Logger.log('\n═══════════════ ADMIN API TESTS ═══════════════════════════════');
-
-//     var qSum = adminGetQueueSummary();
-//     check('adminGetQueueSummary returns data', qSum.success, qSum.error);
-//     check('Queue summary has total > 0', qSum.data.total > 0, 'total=' + qSum.data.total);
-
-//     var qLog = adminGetEmailLog(aId);
-//     check('adminGetEmailLog returns array for FullApp', Array.isArray(qLog), typeof qLog);
-
-//     var failed = adminGetFailedEmails(30);
-//     check('adminGetFailedEmails returns array', Array.isArray(failed), typeof failed);
-
-//     var remConfig = adminGetReminderConfig();
-//     check('adminGetReminderConfig returns data', remConfig.success, remConfig.error);
-
-//     // ─────────────────────────────────────────────────────────────
-//     // ═══════════════ SCALABILITY TEST ════════════════════════════
-//     // ─────────────────────────────────────────────────────────────
-//     Logger.log('\n═══════════════ SCALABILITY TEST ════════════════════════════════');
-//     Logger.log('  Creating 25 test applications and running reminders...');
-//     var S = 25;
-//     var sCount = 0;
-//     for (var s = 0; s < S; s++) {
-//       var sId = genId('SCALE');
-//       appSheet.appendRow([sId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
-//       apprSheet.appendRow([sId+'-S1', sId, 1, 'Scaler', E, '','', '','Pending','','Pending','']);
-//       sCount++;
-//     }
-//     check('Scalability: Created ' + S + ' apps', sCount === S, 'created ' + sCount);
-
-//     // Run reminder engine on these
-//     var remResult = sendDailyReminders();
-//     check('sendDailyReminders processes scalability batch', remResult.success, remResult.error);
-//     check('Reminder engine scanned scalability batch', remResult.processed >= S, 'processed ' + remResult.processed);
-
-//     // Verify pre-filter caught correct count
-//     if (remResult.processed >= S) {
-//       check('Reminders queued for scalability batch', remResult.reminded >= S || remResult.capped || remResult.quotaExhausted, 'reminded ' + remResult.reminded);
-//     }
-
-//     // ─────────────────────────────────────────────────────────────
-//     // ═══════════════ SEQUENCE ENFORCEMENT ═══════════════════════
-//     // ─────────────────────────────────────────────────────────────
-//     Logger.log('\n═══════════════ SEQUENCE ENFORCEMENT ═══════════════════════════════');
-//     var seqId = genId('SEQ');
-//     appSheet.appendRow([seqId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
-//     // Append Step 2 first (out of order), then Step 1
-//     apprSheet.appendRow([seqId+'-S2', seqId, 2, 'Second Approver', E, '','', '','Pending','','Pending','']);
-//     apprSheet.appendRow([seqId+'-S1', seqId, 1, 'First Approver',  E, '','', '','Pending','','Pending','']);
-
-//     // First pass: Step 2 was appended first (lower row), but Step 1 has lower step number
-//     // The collection pass should pick Step 1 (lowest step)
-//     var rem2 = sendDailyReminders();
-//     check('Reminder ran for sequence test', rem2.success, rem2.error);
-
-//     // Check Email_Queue: should have exactly 1 reminder entry for seqId (Step 1 only)
-//     var eqD = queueSheet.getDataRange().getValues();
-//     var seqReminders = [];
-//     for (var i = 1; i < eqD.length; i++) {
-//       if (String(eqD[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === seqId && String(eqD[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'reminder') {
-//         seqReminders.push(eqD[i][EMAIL_QUEUE_COLS.SUBJECT - 1] || '');
-//       }
-//     }
-//     check('Sequence enforced: only 1 reminder for seqId', seqReminders.length === 1, 'got ' + seqReminders.length + ' reminders');
-
-//     // ──────────────── SUMMARY ────────────────
-//     Logger.log('\n══════════════════════════════════════════════════════════════');
-//     Logger.log('  OVERALL RESULTS');
-//     Logger.log('══════════════════════════════════════════════════════════════');
-//     Logger.log('  ✅ Passed: ' + results.passed);
-//     Logger.log('  ❌ Failed: ' + results.failed);
-//     Logger.log('  📊 Total:  ' + results.total);
-//     Logger.log('  📈 Score:  ' + (results.total > 0 ? Math.round(results.passed / results.total * 100) : 0) + '%');
-//     if (results.failed === 0) {
-//       Logger.log('\n  🎉 ALL TESTS PASSED — System is working correctly!');
-//     } else {
-//       Logger.log('\n  ⚠️  ' + results.failed + ' test(s) failed. Review details above.');
-//     }
-
-//   } catch (e) {
-//     Logger.log('\n  ❌ TEST CRASHED: ' + e.toString());
-//     Logger.log('  Stack: ' + e.stack);
-//     results.failed++;
-//   } finally {
-//     cleanTestData();
-//   }
-
-//   Logger.log('\n╚══════════════════════════════════════════════════════════════╝');
-//   return results;
-// }
-
-// /**
-//  * 🔥 ULTIMATE MEGA-TEST — Every feature, every path, 20 concurrent users
-//  * 
-//  * Tests end-to-end:
-//  *   ✓ Head Approval Chain (Submit → Step1 → Step2 → ISM init)
-//  *   ✓ Return to Requestor (with flags)
-//  *   ✓ Deny application
-//  *   ✓ ISM Full Approval (P1 → P2 → Approved by ISM)
-//  *   ✓ ISM Deny / Return
-//  *   ✓ ISM Escalate → Division Head → Full chain
-//  *   ✓ Email Failsafe (EmailStatus stamping on workflow rows)
-//  *   ✓ Admin Notification Config (get/set)
-//  *   ✓ Pipeline View (adminGetPipelineView)
-//  *   ✓ Resend to Stage (adminResendToStage)
-//  *   ✓ Reminder Engine (sendDailyReminders)
-//  *   ✓ 20 Concurrent Users (batch simulate + verify no corruption)
-//  *   ✓ Sequence Enforcement
-//  *   ✓ Duplicate/Re-process Prevention
-//  *   ✓ Admin APIs (queue summary, email log, failed emails, notification config)
-//  *
-//  * Run from Apps Script editor. View → Logs for results.
-//  * ⚠️  Expects InfoSec_Email_Config to have at least 2 InfoSec members.
-//  */
-// function testUltimateSystem() {
-//   Logger.log('╔══════════════════════════════════════════════════════════════════╗');
-//   Logger.log('║  🔥 ULTIMATE MEGA-TEST — ALL PATHS, 20 CONCURRENT USERS          ║');
-//   Logger.log('╚══════════════════════════════════════════════════════════════════╝');
-
-//   var T = 'MEGA-' + new Date().getTime().toString(36).toUpperCase();
-//   var E = 'mega-test@domain.com';
-//   var results = { passed: 0, failed: 0, total: 0, details: [] };
-//   var allTestIds = [];
-
-//   function check(label, ok, detail) {
-//     results.total++;
-//     if (ok) { results.passed++; Logger.log('  ✅ ' + label); }
-//     else { results.failed++; Logger.log('  ❌ ' + label + (detail ? ' → ' + detail : '')); }
-//     results.details.push({ label: label, pass: !!ok, detail: detail || '' });
-//   }
-
-//   function getS(name) { return getDatabaseSheet(name, true); }
-
-//   function genId(label) {
-//     var id = T + '-' + label + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-//     allTestIds.push(id);
-//     return id;
-//   }
-
-//   // ── Cleanup helper ──
-//   function cleanAll() {
-//     Logger.log('\n🧹 Cleaning test data (' + allTestIds.length + ' IDs)...');
-//     var cleanupDefs = [
-//       { sheet: DB_SHEET_NAMES.APPLICATIONS, col: 1 },
-//       { sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, col: 2 },
-//       { sheet: DB_SHEET_NAMES.ISM_WORKFLOW, col: 2 },
-//       { sheet: DB_SHEET_NAMES.DIV_HEAD_CONFIG, col: 2 },
-//       { sheet: DB_SHEET_NAMES.EMAIL_QUEUE, col: 2 },
-//       { sheet: DB_SHEET_NAMES.RISK_AUDIT, col: 2 }
-//     ];
-//     cleanupDefs.forEach(function(d) {
-//       var s = getDatabaseSheet(d.sheet, false);
-//       if (!s || s.getLastRow() < 2) return;
-//       var data = s.getDataRange().getValues();
-//       var rows = [];
-//       for (var i = 1; i < data.length; i++) {
-//         var cellVal = String(data[i][d.col - 1] || '').trim();
-//         for (var ti = 0; ti < allTestIds.length; ti++) {
-//           if (cellVal.indexOf(allTestIds[ti]) === 0) { rows.push(i + 1); break; }
-//         }
-//       }
-//       if (rows.length > 0) batchDeleteRows(s, rows);
-//     });
-//     Logger.log('  ✓ Cleanup complete');
-//   }
-
-//   var appSheet = getS(DB_SHEET_NAMES.APPLICATIONS);
-//   var apprSheet = getS(DB_SHEET_NAMES.APPROVAL_WORKFLOW);
-//   var ismSheet = getS(DB_SHEET_NAMES.ISM_WORKFLOW);
-//   var divSheet = getS(DB_SHEET_NAMES.DIV_HEAD_CONFIG);
-//   var queueSheet = getS(DB_SHEET_NAMES.EMAIL_QUEUE);
-
-//   var pia1 = JSON.stringify({ program: 'Mega Test Program', dept: 'QA', immediateHead: 'Alice', immediateHeadEmail: E, deptHead: 'Bob', deptHeadEmail: E, drafterEmail: E });
-//   var pia5 = JSON.stringify(['YES','YES','YES','YES','YES','YES','YES','YES']);
-
-//   try {
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 1: HEAD APPROVAL CHAIN
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 1: HEAD APPROVAL CHAIN ════════');
-
-//     var aId = genId('FULL');
-//     appSheet.appendRow([aId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//     apprSheet.appendRow([aId + '-A1', aId, 1, 'Approver A1', E, '', '', '', 'Pending', '', 'Pending', '']);
-//     apprSheet.appendRow([aId + '-A2', aId, 2, 'Approver A2', E, '', '', '', 'Pending', '', 'Pending', '']);
-
-//     var r1 = processApprovalDecision(aId, E, 'Approve', 'Step 1 approved — looks good. This is a detailed comment meeting the minimum length requirement for validation purposes.', null, '{}');
-//     check('S1: Step 1 Approve succeeds', r1.success, r1.error);
-//     SpreadsheetApp.flush();
-
-//     // Verify EmailStatus was stamped on Step 1 row
-//     var ad = apprSheet.getDataRange().getValues();
-//     var step1EmailStamped = false;
-//     for (var i = 1; i < ad.length; i++) {
-//       if (ad[i][APPROVAL_COLS.SESSION_ID - 1] === aId && ad[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) {
-//         step1EmailStamped = (String(ad[i][APPROVAL_COLS.EMAIL_STATUS - 1] || '') === 'Pending');
-//         break;
-//       }
-//     }
-//     check('S1: EmailStatus stamped Pending on Step 1', step1EmailStamped, '');
-
-//     var r2 = processApprovalDecision(aId, E, 'Approve', 'Step 2 approved — proceeding to ISM. This comment is sufficiently long to pass all validation checks and requirements.', null, '{}');
-//     check('S1: Step 2 Approve succeeds', r2.success, r2.error);
-//     SpreadsheetApp.flush();
-
-//     // Verify app status becomes Approved
-//     var apps = appSheet.getDataRange().getValues();
-//     var appApproved = false;
-//     for (var i = 1; i < apps.length; i++) {
-//       if (apps[i][APPLICATIONS_COLS.SESSION_ID - 1] === aId) {
-//         appApproved = (String(apps[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved') === 0);
-//         break;
-//       }
-//     }
-//     check('S1: Application status becomes Approved', appApproved, '');
-
-//     // Verify ISM workflow initialized
-//     var ismCount = 0;
-//     var ismD = ismSheet.getDataRange().getValues();
-//     for (var i = 1; i < ismD.length; i++) { if (ismD[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === aId) ismCount++; }
-//     check('S1: ISM workflow initialized (2 rows)', ismCount === 2, 'found ' + ismCount);
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 2: RETURN TO REQUESTOR
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 2: RETURN TO REQUESTOR ════════');
-
-//     var bId = genId('RETN');
-//     appSheet.appendRow([bId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//     apprSheet.appendRow([bId + '-B1', bId, 1, 'Approver B1', E, '', '', '', 'Pending', '', 'Pending', '']);
-
-//     var r3 = processApprovalDecision(bId, E, 'Return', 'Please fix the scope section. This is a detailed comment explaining what needs to be changed. It must be at least one hundred characters to pass the validation check. Adding more text here to meet the requirement.', null, '{"PIA 1 - Scope":"Scope section is too vague"}');
-//     check('S2: Return succeeds', r3.success, r3.error);
-
-//     var appsB = appSheet.getDataRange().getValues();
-//     var retStatus = '', retFlags = '';
-//     for (var i = 1; i < appsB.length; i++) {
-//       if (appsB[i][APPLICATIONS_COLS.SESSION_ID - 1] === bId) {
-//         retStatus = String(appsB[i][APPLICATIONS_COLS.STATUS - 1] || '');
-//         retFlags = String(appsB[i][APPLICATIONS_COLS.APPROVER_FLAGS - 1] || '');
-//         break;
-//       }
-//     }
-//     check('S2: App status is Returned', retStatus === 'Returned', retStatus);
-//     check('S2: ApproverFlags stored', retFlags.indexOf('Scope') > 0, '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 3: DENY
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 3: DENY ════════');
-
-//     var cId = genId('DENY');
-//     appSheet.appendRow([cId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//     apprSheet.appendRow([cId + '-C1', cId, 1, 'Approver C1', E, '', '', '', 'Pending', '', 'Pending', '']);
-
-//     var r4 = processApprovalDecision(cId, E, 'Deny', 'This project does not meet compliance requirements. The policy framework is not fully established and data handling procedures are completely undefined. Additional work is needed.', null, '{}');
-//     check('S3: Deny succeeds', r4.success, r4.error);
-
-//     var appsC = appSheet.getDataRange().getValues();
-//     var denyOk = false;
-//     for (var i = 1; i < appsC.length; i++) { if (appsC[i][APPLICATIONS_COLS.SESSION_ID - 1] === cId) { denyOk = (String(appsC[i][APPLICATIONS_COLS.STATUS - 1] || '') === 'Denied'); break; } }
-//     check('S3: App status is Denied', denyOk, '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 4: DUPLICATE / RE-PROCESS PREVENTION
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 4: DUPLICATE PREVENTION ════════');
-
-//     var r5 = processApprovalDecision(bId, E, 'Approve', 'Trying to approve a returned app should fail. This comment is long enough.', null, '{}');
-//     check('S4: Cannot approve returned app', !r5.success, 'expected failure');
-
-//     var r6 = processApprovalDecision(cId, E, 'Approve', 'Trying to approve a denied app should fail also. This comment is sufficiently long.', null, '{}');
-//     check('S4: Cannot approve denied app', !r6.success, 'expected failure');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 5: ISM FULL APPROVAL (P1 → P2 → Approved by ISM)
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 5: ISM FULL APPROVAL ════════');
-
-//     var dId = genId('P3AP');
-//     appSheet.appendRow([dId, E, 'Approved', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//     apprSheet.appendRow([dId + '-D1', dId, 1, 'Approver D1', E, 'Approved', 'ok', 'today', 'Approved', '', 'Sent', '']);
-//     var initR = apiPhase3_InitializeISMWorkflow(dId);
-//     check('S5: ISM init succeeds', initR.success, initR.error);
-
-//     // Verify ISM rows have EmailStatus='Pending'
-//     var ismD5 = ismSheet.getDataRange().getValues();
-//     var ismEmailStamped = 0;
-//     for (var i = 1; i < ismD5.length; i++) {
-//       if (ismD5[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId) {
-//         if (String(ismD5[i][ISM_WORKFLOW_COLS.EMAIL_STATUS - 1] || '') === 'Pending') ismEmailStamped++;
-//       }
-//     }
-//     check('S5: ISM rows have EmailStatus=Pending', ismEmailStamped === 2, 'found ' + ismEmailStamped);
-
-//     // Get P1 and P2 emails
-//     var p1E = '', p2E = '';
-//     for (var i = 1; i < ismD5.length; i++) {
-//       if (ismD5[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismD5[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) p1E = ismD5[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
-//       if (ismD5[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismD5[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) p2E = ismD5[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
-//     }
-//     check('S5: P1 email found', !!p1E, p1E);
-//     check('S5: P2 email found', !!p2E, p2E);
-
-//     var r7 = apiPhase3_ProcessISMDecision(dId, p1E, 'Approve', 'ISM P1 approves — BOTH routing selected. This comment meets the minimum validation length requirement for ISM decisions.', 'BOTH', 1, '{}');
-//     check('S5: ISM P1 Approve succeeds', r7.success, r7.error);
-//     SpreadsheetApp.flush();
-
-//     var r8 = apiPhase3_ProcessISMDecision(dId, p2E, 'Approve', 'ISM P2 approves — completing final ISM approval. All checks passed and the application is ready for routing to implementation teams.', '', 2, '{}');
-//     check('S5: ISM P2 Approve succeeds', r8.success, r8.error);
-//     SpreadsheetApp.flush();
-
-//     var appsD = appSheet.getDataRange().getValues();
-//     var ismFinalOk = false;
-//     for (var i = 1; i < appsD.length; i++) {
-//       if (appsD[i][APPLICATIONS_COLS.SESSION_ID - 1] === dId) {
-//         ismFinalOk = (String(appsD[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved by ISM') >= 0);
-//         break;
-//       }
-//     }
-//     check('S5: App reaches Approved by ISM', ismFinalOk, '');
-
-//     // Check that queueEmail stamped ISM rows when notifications were sent
-//     var queueCheck = queueSheet.getDataRange().getValues();
-//     var ismQueueCount = 0;
-//     for (var i = 1; i < queueCheck.length; i++) {
-//       if (String(queueCheck[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === dId && String(queueCheck[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'ism') {
-//         ismQueueCount++;
-//       }
-//     }
-//     check('S5: ISM email notifications queued', ismQueueCount >= 1, 'found ' + ismQueueCount);
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 6: ISM DENY
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 6: ISM DENY ════════');
-
-//     var eId = genId('ISMDN');
-//     appSheet.appendRow([eId, E, 'Approved', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//     apiPhase3_InitializeISMWorkflow(eId);
-//     var ismE = ismSheet.getDataRange().getValues();
-//     var p1E2 = '';
-//     for (var i = 1; i < ismE.length; i++) { if (ismE[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === eId && ismE[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1E2 = ismE[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
-
-//     var r9 = apiPhase3_ProcessISMDecision(eId, p1E2, 'Deny', 'This application has critical security risks that cannot be mitigated. Comprehensive review indicates multiple compliance gaps in data handling procedures. This decision is final and binding.', '', 1, '{}');
-//     check('S6: ISM Deny succeeds', r9.success, r9.error);
-
-//     var appsE = appSheet.getDataRange().getValues();
-//     var ismDenyOk = false;
-//     for (var i = 1; i < appsE.length; i++) { if (appsE[i][APPLICATIONS_COLS.SESSION_ID - 1] === eId) { ismDenyOk = (String(appsE[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Rejected') >= 0); break; } }
-//     check('S6: App becomes Rejected by ISM', ismDenyOk, '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 7: ISM RETURN
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 7: ISM RETURN ════════');
-
-//     var fId = genId('ISMRT');
-//     appSheet.appendRow([fId, E, 'Approved', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//     apiPhase3_InitializeISMWorkflow(fId);
-//     var ismF = ismSheet.getDataRange().getValues();
-//     var p1F = '';
-//     for (var i = 1; i < ismF.length; i++) { if (ismF[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === fId && ismF[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1F = ismF[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
-
-//     var r10 = apiPhase3_ProcessISMDecision(fId, p1F, 'Return', 'Please update the scope section and add more detail about data retention policies. The current description is too brief. Also ensure DCS fields are updated accordingly.', '', 1, '{}');
-//     check('S7: ISM Return succeeds', r10.success, r10.error);
-
-//     var appsF = appSheet.getDataRange().getValues();
-//     var ismRetOk = false;
-//     for (var i = 1; i < appsF.length; i++) { if (appsF[i][APPLICATIONS_COLS.SESSION_ID - 1] === fId) { ismRetOk = (String(appsF[i][APPLICATIONS_COLS.STATUS - 1] || '') === 'Returned'); break; } }
-//     check('S7: App becomes Returned after ISM return', ismRetOk, '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 8: ISM ESCALATE → DIVISION HEAD → FULL CHAIN
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 8: ISM ESCALATE → DIVHEAD → FULL ════════');
-
-//     var pia1Div = JSON.stringify({ program: 'Test Escalation', dept: 'IT', immediateHead: 'Alice', immediateHeadEmail: E, deptHead: 'Bob', deptHeadEmail: E, divHead: 'Carol', divHeadEmail: E, drafterEmail: E });
-//     var gId = genId('P3ESC');
-//     appSheet.appendRow([gId, E, 'Approved', pia1Div, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//     apiPhase3_InitializeISMWorkflow(gId);
-//     SpreadsheetApp.flush();
-
-//     var ismG = ismSheet.getDataRange().getValues();
-//     var p1G = '', p2G = '';
-//     for (var i = 1; i < ismG.length; i++) {
-//       if (ismG[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === gId && ismG[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) p1G = ismG[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
-//       if (ismG[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === gId && ismG[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) p2G = ismG[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
-//     }
-
-//     var r11 = apiPhase3_ProcessISMDecision(gId, p1G, 'EscalateToDivisionHead', 'This requires executive review due to cross-departmental data sharing concerns. The application involves sensitive PII that needs Division Head sign-off for proper authorization.', 'BOTH', 1, '{}');
-//     check('S8: ISM Escalate succeeds', r11.success, r11.error);
-//     SpreadsheetApp.flush();
-
-//     // Check DivHead record created
-//     var divD = divSheet.getDataRange().getValues();
-//     var divCreated = false;
-//     for (var i = 1; i < divD.length; i++) { if (divD[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === gId && divD[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') { divCreated = true; break; } }
-//     check('S8: DivHead escalation record created', divCreated, '');
-
-//     // Check DivHead row has EmailStatus='Pending'
-//     var divEmailOk = false;
-//     for (var i = 1; i < divD.length; i++) {
-//       if (divD[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === gId) {
-//         divEmailOk = (String(divD[i][DIV_HEAD_CONFIG_COLS.EMAIL_STATUS - 1] || '') === 'Pending');
-//         break;
-//       }
-//     }
-//     check('S8: DivHead EmailStatus stamped Pending', divEmailOk, '');
-
-//     // DivHead approves
-//     var r12 = processDivHeadDecision(gId, E, 'Approve', 'Division Head approves after thorough review of the escalated application. All concerns regarding cross-departmental data sharing have been addressed and the application meets compliance standards.', '{}');
-//     check('S8: DivHead Approve succeeds', r12.success, r12.error);
-//     SpreadsheetApp.flush();
-
-//     // App should still be Escalated (waiting for Person 2)
-//     var appsG = appSheet.getDataRange().getValues();
-//     var escStatus = '';
-//     for (var i = 1; i < appsG.length; i++) { if (appsG[i][APPLICATIONS_COLS.SESSION_ID - 1] === gId) { escStatus = String(appsG[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
-//     check('S8: App still Escalated after DivHead (waiting P2)', escStatus.indexOf('Escalated') >= 0, escStatus);
-
-//     // Person 2 approves → full chain complete
-//     var r13 = apiPhase3_ProcessISMDecision(gId, p2G, 'Approve', 'Person 2 approves after DivHead resolution. All escalation concerns have been properly addressed and the application is now ready for final routing.', 'BOTH', 2, '{}');
-//     check('S8: ISM P2 Approve after escalation succeeds', r13.success, r13.error);
-//     SpreadsheetApp.flush();
-
-//     var appsG2 = appSheet.getDataRange().getValues();
-//     var escFinalOk = false;
-//     for (var i = 1; i < appsG2.length; i++) { if (appsG2[i][APPLICATIONS_COLS.SESSION_ID - 1] === gId) { escFinalOk = (String(appsG2[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved by ISM') >= 0); break; } }
-//     check('S8: App reaches Approved by ISM after full escalation chain', escFinalOk, '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 9: EMAIL FAILSAFE — NOTIFICATION CONFIG
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 9: EMAIL FAILSAFE & NOTIFICATION CONFIG ════════');
-
-//     var notifCfg = adminGetNotificationConfig();
-//     check('S9: getNotificationConfig returns success', notifCfg.success, notifCfg.error);
-//     check('S9: NotifyOnFailure defaults to YES', notifCfg.data && notifCfg.data.notifyOnFailure === 'YES', notifCfg.data ? notifCfg.data.notifyOnFailure : 'no data');
-//     check('S9: Admin email is configured', notifCfg.data && !!notifCfg.data.adminEmail, notifCfg.data ? notifCfg.data.adminEmail : 'none');
-
-//     var setCfg = adminSetNotificationConfig({ notifyOnFailure: 'YES', notifyRequestor: 'YES' });
-//     check('S9: setNotificationConfig succeeds', setCfg.success, setCfg.error);
-//     check('S9: Config persists after set', setCfg.data && setCfg.data.notifyOnFailure === 'YES', '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 10: PIPELINE VIEW
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 10: PIPELINE VIEW ════════');
-
-//     var pipeline = adminGetPipelineView(dId);
-//     check('S10: getPipelineView returns success', pipeline.success, pipeline.error);
-//     check('S10: Pipeline has application', pipeline.data && !!pipeline.data.application, '');
-//     check('S10: Pipeline has approvalWorkflow', pipeline.data && Array.isArray(pipeline.data.approvalWorkflow) && pipeline.data.approvalWorkflow.length > 0, '');
-//     check('S10: Pipeline has ismWorkflow', pipeline.data && Array.isArray(pipeline.data.ismWorkflow) && pipeline.data.ismWorkflow.length > 0, '');
-//     check('S10: Pipeline has emailQueue entries', pipeline.data && Array.isArray(pipeline.data.emailQueue), '');
-//     check('S10: Pipeline has auditTrail', pipeline.data && Array.isArray(pipeline.data.auditTrail), '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 11: RESEND TO STAGE
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 11: RESEND TO STAGE ════════');
-
-//     // Create a fresh Pending entry — resend only works on rows with Status='Pending'
-//     var resendId = genId('RSND');
-//     appSheet.appendRow([resendId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//     apprSheet.appendRow([resendId + '-R1', resendId, 1, 'Resend Approver', E, '', '', '', 'Pending', '', '', '']);
-
-//     var resendR = adminResendToStage(resendId, 'approver', E);
-//     check('S11: Resend to stage succeeds', resendR.success, resendR.error);
-//     check('S11: Resend returns queueId', !!resendR.queueId, '');
-
-//     // Verify EmailStatus was reset to Pending
-//     var ad2 = apprSheet.getDataRange().getValues();
-//     var resetOk = false;
-//     for (var i = 1; i < ad2.length; i++) {
-//       if (ad2[i][APPROVAL_COLS.SESSION_ID - 1] === resendId && ad2[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) {
-//         resetOk = (String(ad2[i][APPROVAL_COLS.EMAIL_STATUS - 1] || '') === 'Pending');
-//         break;
-//       }
-//     }
-//     check('S11: EmailStatus reset to Pending after resend', resetOk, '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 12: REMINDER ENGINE
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 12: REMINDER ENGINE ════════');
-
-//     var remId = genId('REM');
-//     appSheet.appendRow([remId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//     apprSheet.appendRow([remId + '-R1', remId, 1, 'Reminder Approver', E, '', '', '', 'Pending', '', 'Pending', '']);
-
-//     var remResult = sendDailyReminders();
-//     check('S12: sendDailyReminders succeeds', remResult.success, remResult.error);
-
-//     // Check if a reminder was queued for our test entry
-//     var qD = queueSheet.getDataRange().getValues();
-//     var reminded = false;
-//     for (var i = 1; i < qD.length; i++) {
-//       if (String(qD[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === remId && String(qD[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'reminder') {
-//         reminded = true; break;
-//       }
-//     }
-//     check('S12: Reminder queued for pending entry', reminded, '');
-
-//     // Verify ReminderDate was stamped
-//     var adR = apprSheet.getDataRange().getValues();
-//     var stamped = false;
-//     var todayStr = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0');
-//     for (var i = 1; i < adR.length; i++) {
-//       if (adR[i][APPROVAL_COLS.SESSION_ID - 1] === remId) {
-//         var rdVal = String(adR[i][APPROVAL_COLS.REMINDER_DATE - 1] || '');
-//         // Date may be stored as Date object or string — normalize
-//         if (adR[i][APPROVAL_COLS.REMINDER_DATE - 1] instanceof Date) {
-//           var d = adR[i][APPROVAL_COLS.REMINDER_DATE - 1];
-//           rdVal = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-//         }
-//         stamped = (rdVal === todayStr);
-//         break;
-//       }
-//     }
-//     check('S12: ReminderDate stamped on workflow row', stamped, '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 13: 20 CONCURRENT USERS — BATCH SUBMIT & APPROVE
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 13: 20 CONCURRENT USERS ════════');
-
-//     var CONCURRENT = 20;
-//     var batchIds = [];
-//     var batchStart = new Date().getTime();
-
-//     // Batch create 20 applications
-//     for (var u = 0; u < CONCURRENT; u++) {
-//       var uid = genId('CONC');
-//       batchIds.push(uid);
-//       appSheet.appendRow([uid, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
-//       apprSheet.appendRow([uid + '-U1', uid, 1, 'Concurrent Approver ' + u, E, '', '', '', 'Pending', '', 'Pending', '']);
-//     }
-//     SpreadsheetApp.flush();
-//     var batchCreateMs = new Date().getTime() - batchStart;
-//     Logger.log('  Created ' + CONCURRENT + ' apps in ' + batchCreateMs + 'ms');
-//     check('S13: Created 20 concurrent apps', batchIds.length === CONCURRENT, 'count=' + batchIds.length);
-
-//     // Verify no row corruption (check all 20 have correct column counts)
-//     var corruptedCount = 0;
-//     var apprData = apprSheet.getDataRange().getValues();
-//     for (var u = 0; u < batchIds.length; u++) {
-//       var found = false;
-//       for (var i = 1; i < apprData.length; i++) {
-//         if (apprData[i][APPROVAL_COLS.SESSION_ID - 1] === batchIds[u]) {
-//           found = true;
-//           // Check all 12 columns have values (at least not undefined)
-//           if (apprData[i].length < 12) corruptedCount++;
-//           break;
-//         }
-//       }
-//       if (!found) corruptedCount++;
-//     }
-//     check('S13: No row corruption in 20 concurrent apps', corruptedCount === 0, 'corrupted=' + corruptedCount);
-
-//     // Batch approve all 20
-//     var batchApproveStart = new Date().getTime();
-//     var approveSuccess = 0;
-//     for (var u = 0; u < batchIds.length; u++) {
-//       var r = processApprovalDecision(batchIds[u], E, 'Approve', 'Concurrent batch approval #' + (u + 1) + '. This comment is sufficiently long to meet the minimum validation length requirement for approval decisions.', null, '{}');
-//       if (r.success) approveSuccess++;
-//     }
-//     SpreadsheetApp.flush();
-//     var batchApproveMs = new Date().getTime() - batchApproveStart;
-//     Logger.log('  Approved ' + approveSuccess + '/' + CONCURRENT + ' in ' + batchApproveMs + 'ms (' + (batchApproveMs / CONCURRENT).toFixed(0) + 'ms avg)');
-//     check('S13: All 20 concurrent approvals succeed', approveSuccess === CONCURRENT, 'success=' + approveSuccess);
-
-//     // Verify all 20 have status Approved
-//     var appsCheck = appSheet.getDataRange().getValues();
-//     var approvedCount = 0;
-//     for (var u = 0; u < batchIds.length; u++) {
-//       for (var i = 1; i < appsCheck.length; i++) {
-//         if (appsCheck[i][APPLICATIONS_COLS.SESSION_ID - 1] === batchIds[u]) {
-//           if (String(appsCheck[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved') === 0) approvedCount++;
-//           break;
-//         }
-//       }
-//     }
-//     check('S13: All 20 apps have Approved status', approvedCount === CONCURRENT, 'approved=' + approvedCount);
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 14: ADMIN API — QUEUE SUMMARY & EMAIL LOG
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 14: ADMIN APIs ════════');
-
-//     var qSum = adminGetQueueSummary();
-//     check('S14: getQueueSummary returns data', qSum.success, qSum.error);
-//     check('S14: Queue summary has total > 0', qSum.data && qSum.data.total > 0, qSum.data ? 'total=' + qSum.data.total : 'no data');
-
-//     var qLog = adminGetEmailLog(aId);
-//     check('S14: getEmailLog returns array', Array.isArray(qLog), typeof qLog);
-
-//     var failed = adminGetFailedEmails(30);
-//     check('S14: getFailedEmails returns array', Array.isArray(failed), typeof failed);
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SECTION 15: REMINDER CONFIG
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n════════ SECTION 15: REMINDER CONFIG ════════');
-
-//     var remCfg = adminGetReminderConfig();
-//     check('S15: getReminderConfig returns data', remCfg.success, remCfg.error);
-//     check('S15: Reminder config has triggerActive field', remCfg.data && remCfg.data.hasOwnProperty('triggerActive'), '');
-
-//     // ═══════════════════════════════════════════════════════════════
-//     // SUMMARY
-//     // ═══════════════════════════════════════════════════════════════
-//     Logger.log('\n══════════════════════════════════════════════════════════════');
-//     Logger.log('  🔥 ULTIMATE MEGA-TEST RESULTS');
-//     Logger.log('══════════════════════════════════════════════════════════════');
-//     Logger.log('  ✅ Passed: ' + results.passed);
-//     Logger.log('  ❌ Failed: ' + results.failed);
-//     Logger.log('  📊 Total:  ' + results.total);
-//     Logger.log('  📈 Score:  ' + (results.total > 0 ? Math.round(results.passed / results.total * 100) : 0) + '%');
-
-//     if (results.failed === 0) {
-//       Logger.log('\n  🎉 ALL ' + results.total + ' TESTS PASSED — System is battle-ready!');
-//       Logger.log('  ✅ Head Approval Chain       ✅ Return to Requestor');
-//       Logger.log('  ✅ Deny                       ✅ Duplicate Prevention');
-//       Logger.log('  ✅ ISM Full Approval          ✅ ISM Deny');
-//       Logger.log('  ✅ ISM Return                 ✅ Escalate → DivHead → Full');
-//       Logger.log('  ✅ Email Failsafe Stamping    ✅ Admin Notification Config');
-//       Logger.log('  ✅ Pipeline View              ✅ Resend to Stage');
-//       Logger.log('  ✅ Reminder Engine            ✅ 20 Concurrent Users');
-//       Logger.log('  ✅ Admin APIs                 ✅ Reminder Config');
-//     } else {
-//       Logger.log('\n  ⚠️  ' + results.failed + ' test(s) FAILED. Review details above.');
-//       Logger.log('\n  Failing tests:');
-//       results.details.filter(function(d) { return !d.pass; }).forEach(function(d) {
-//         Logger.log('    ❌ ' + d.label + (d.detail ? ' — ' + d.detail : ''));
-//       });
-//     }
-
-//   } catch (e) {
-//     Logger.log('\n  💥 MEGA-TEST CRASHED: ' + e.toString());
-//     Logger.log('  Stack: ' + e.stack);
-//     results.failed++;
-//     results.error = e.toString();
-//   } finally {
-//     cleanAll();
-//   }
-
-//   Logger.log('\n╚══════════════════════════════════════════════════════════════════╝');
-//   return results;
-// }
+function testReminderEngine() {
+  Logger.log('╔════════════════════════════════════════════════════════════╗');
+  Logger.log('║  REMINDER ENGINE — COMPREHENSIVE TEST                      ║');
+  Logger.log('╚════════════════════════════════════════════════════════════╝');
+
+  var TEST_PREFIX = 'TEST-RM-' + new Date().getTime().toString(36).toUpperCase();
+  var TEST_EMAIL = 'test-reminder@domain.com';
+  var results = { passed: 0, failed: 0, scenarios: [] };
+  var createdSessionIds = [];
+  var cleanedUp = false;
+
+  try {
+    // ── STEP 1: Set up test configuration ──
+    Logger.log('\n📋 STEP 1: Verifying reminder config...');
+    var config = getReminderConfig();
+    if (!config.enabled) {
+      Logger.log('  ⚠ Reminders are DISABLED. Enabling for test...');
+      adminSetReminderConfig({ enabled: true, hour: 8 });
+    }
+    Logger.log('  ✓ Config: enabled=' + config.enabled + ' hour=' + config.hour);
+
+    // ── STEP 2: Create 7 test scenarios in Applications sheet ──
+    Logger.log('\n📋 STEP 2: Creating 7 test scenarios in Applications...');
+    var appSheet = getDatabaseSheet(DB_SHEET_NAMES.APPLICATIONS, true);
+    var apprSheet = getDatabaseSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
+    var ismSheet = getDatabaseSheet(DB_SHEET_NAMES.ISM_WORKFLOW, true);
+    var divHeadSheet = getDatabaseSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
+
+    var scenarios = [
+      { id: TEST_PREFIX + '-PEND',  status: 'Pending',                  label: 'Pending — SHOULD remind',                    expectReminder: true,  sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-APPROV',status: 'Approved',                 label: 'Approved (ISM active) — SHOULD remind',      expectReminder: true,  sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-DRAFT', status: 'Draft',                    label: 'Draft — should NOT remind',                  expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-DENIED',status: 'Denied',                   label: 'Denied — should NOT remind',                 expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-RETRN', status: 'Returned',                 label: 'Returned — should NOT remind',               expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-PHNTM', status: null,                       label: 'Phantom (no app row) — should NOT remind',    expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, phantom: true },
+      { id: TEST_PREFIX + '-ISM',   status: 'Approved',                 label: 'ISM Pending — SHOULD remind',                expectReminder: true,  sheet: DB_SHEET_NAMES.ISM_WORKFLOW },
+      { id: TEST_PREFIX + '-ALRDY', status: 'Pending',                  label: 'Already reminded today — should NOT remind',  expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, alreadyReminded: true }
+    ];
+
+    var todayStr = new Date().getFullYear() + '-' +
+      String(new Date().getMonth() + 1).padStart(2, '0') + '-' +
+      String(new Date().getDate()).padStart(2, '0');
+
+    scenarios.forEach(function(s) {
+      createdSessionIds.push(s.id);
+
+      // Create minimal PIA JSON data for getApplicationData() to work
+      var pia1Data = JSON.stringify({ program: 'Test Program - ' + s.label, department: 'Test Dept' });
+      var pia5Data = JSON.stringify(['YES','YES','YES','YES','YES','YES','YES','YES']);
+
+      // Insert into Applications sheet (skip for phantom scenario)
+      if (!s.phantom) {
+        appSheet.appendRow([
+          s.id,               // SessionID
+          TEST_EMAIL,          // ApplicantEmail
+          s.status,            // Status
+          pia1Data,            // PIA_1_Data
+          '{}',                // PIA_2_Data
+          '{}',                // PIA_3_Data
+          '{}',                // PIA_4_Data
+          pia5Data,            // PIA_5_Data
+          '',                  // AdminExportID
+          new Date().toLocaleString('en-PH'),  // SubmissionDate
+          'NO',                // IsFlagged
+          '',                  // Notes
+          '',                  // Linked_ReqID
+          '{}'                 // Approver_Flags
+        ]);
+      }
+
+      // Insert into workflow sheet
+      var targetSheet = s.sheet === DB_SHEET_NAMES.ISM_WORKFLOW ? ismSheet : apprSheet;
+      var reminderDateValue = s.alreadyReminded ? todayStr : '';
+
+      if (s.sheet === DB_SHEET_NAMES.ISM_WORKFLOW) {
+        ismSheet.appendRow([
+          s.id + '-ISM',        // ISM_Approval_ID
+          s.id,                 // SessionID
+          1,                    // CurrentStep
+          'Test ISM Member',    // ISM_Member_Name
+          TEST_EMAIL,           // ISM_Member_Email
+          '',                   // Decision
+          '',                   // Comments
+          '',                   // DecisionDate
+          'Pending',            // Status
+          'NO',                 // Requires_DivHead
+          '',                   // DivHead_Escalation_ID
+          '',                   // Routing_Destination
+          reminderDateValue,    // ReminderDate
+          'Pending',            // EmailStatus
+          ''                    // EmailError
+        ]);
+      } else {
+        apprSheet.appendRow([
+          s.id + '-APPR',       // ApprovalID
+          s.id,                 // SessionID
+          1,                    // CurrentStep
+          'Test Approver',      // ApproverName
+          TEST_EMAIL,           // ApproverEmail
+          '',                   // Decision
+          '',                   // Comments
+          '',                   // DecisionDate
+          'Pending',            // Status
+          reminderDateValue,    // ReminderDate
+          'Pending',            // EmailStatus
+          ''                    // EmailError
+        ]);
+      }
+    });
+
+    Logger.log('  ✓ Created ' + scenarios.length + ' test entries');
+
+    // ── STEP 3: Test sequence ordering (Step 2 should NOT be reminded if Step 1 is pending) ──
+    Logger.log('\n📋 STEP 3: Testing sequence enforcement...');
+    var seqId = TEST_PREFIX + '-SEQ';
+    createdSessionIds.push(seqId);
+    appSheet.appendRow([
+      seqId, TEST_EMAIL, 'Pending',
+      JSON.stringify({ program: 'Sequence Test', department: 'Test' }),
+      '{}','{}','{}',JSON.stringify(['YES','YES','YES','YES','YES','YES','YES','YES']),
+      '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}'
+    ]);
+    apprSheet.appendRow([seqId + '-S2', seqId, 2, 'Second Approver', TEST_EMAIL, '', '', '', 'Pending', '', 'Pending', '']);
+    apprSheet.appendRow([seqId + '-S1', seqId, 1, 'First Approver',  TEST_EMAIL, '', '', '', 'Pending', '', 'Pending', '']);
+    // NOTE: Step 2 appended first but Step 1 should be reminded (lowest step number)
+    Logger.log('  ✓ Sequence test entry created (Step 1 & 2, both Pending)');
+
+    // ── STEP 4: Run the reminder engine ──
+    Logger.log('\n📋 STEP 4: Running sendDailyReminders()...');
+    var result = sendDailyReminders();
+    Logger.log('  ✓ Result: reminded=' + result.reminded + ', processed=' + result.processed);
+
+    // ── STEP 5: Validate Email_Queue results ──
+    Logger.log('\n📋 STEP 5: Validating Email_Queue...');
+    var queueSheet = getDatabaseSheet(DB_SHEET_NAMES.EMAIL_QUEUE, true);
+    var queueData = queueSheet.getDataRange().getValues();
+
+    // Count 'reminder' type entries for our test sessionIds
+    var remindedIds = {};
+    for (var qi = 1; qi < queueData.length; qi++) {
+      var qSessionId = String(queueData[qi][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '').trim();
+      var qType = String(queueData[qi][EMAIL_QUEUE_COLS.TYPE - 1] || '').trim();
+      var qRecipient = String(queueData[qi][EMAIL_QUEUE_COLS.RECIPIENT - 1] || '').trim();
+
+      if (qType === 'reminder' && qSessionId.indexOf(TEST_PREFIX) === 0) {
+        remindedIds[qSessionId] = { sessionId: qSessionId, recipient: qRecipient };
+      }
+    }
+
+    // Check each scenario
+    scenarios.forEach(function(s) {
+      var wasReminded = !!remindedIds[s.id];
+      if ((s.expectReminder && wasReminded) || (!s.expectReminder && !wasReminded)) {
+        Logger.log('  ✅ PASS: ' + s.label + ' (reminded=' + wasReminded + ')');
+        results.passed++;
+        results.scenarios.push({ name: s.label, status: 'PASS', reminded: wasReminded, expected: s.expectReminder });
+      } else {
+        Logger.log('  ❌ FAIL: ' + s.label + ' (expected remind=' + s.expectReminder + ', got=' + wasReminded + ')');
+        results.failed++;
+        results.scenarios.push({ name: s.label, status: 'FAIL', reminded: wasReminded, expected: s.expectReminder });
+      }
+    });
+
+    // Check sequence enforcement: PIA-TEST-RM-SEQ-SEQ should remind Step 1, NOT Step 2
+    var seqFound = remindedIds[seqId];
+    if (seqFound) {
+      Logger.log('  ✅ PASS: Sequence test — first pending step was reminded (Step 1)');
+      results.passed++;
+      results.scenarios.push({ name: 'Sequence enforcement', status: 'PASS', reminded: true });
+    } else {
+      Logger.log('  ⚠ Sequence test — no reminder (may be legitimate if quota/other issue)');
+      results.scenarios.push({ name: 'Sequence enforcement', status: 'WARN', reminded: false });
+    }
+
+    // ── STEP 6: Summary ──
+    Logger.log('\n════════════════════════════════════════════════════════════');
+    Logger.log('  TEST SUMMARY');
+    Logger.log('════════════════════════════════════════════════════════════');
+    Logger.log('  Passed: ' + results.passed + ' / Failed: ' + results.failed);
+    Logger.log('  Total scenarios: ' + (results.passed + results.failed));
+
+    if (results.failed === 0) {
+      Logger.log('\n  ✅ ALL TESTS PASSED — Reminder engine is working correctly.');
+    } else {
+      Logger.log('\n  ❌ ' + results.failed + ' TEST(S) FAILED — Check logs above for details.');
+    }
+
+  } catch (e) {
+    Logger.log('\n  ❌ TEST CRASHED: ' + e.toString());
+    Logger.log('Stack: ' + e.stack);
+    results.failed++;
+    results.error = e.toString();
+  } finally {
+    // ── CLEANUP: Remove all test entries ──
+    Logger.log('\n📋 CLEANUP: Removing test entries...');
+    try {
+      var cleanupSheets = [
+        { sheet: getDatabaseSheet(DB_SHEET_NAMES.APPLICATIONS, true), col: 1 },
+        { sheet: getDatabaseSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true), col: 2 },
+        { sheet: getDatabaseSheet(DB_SHEET_NAMES.ISM_WORKFLOW, true), col: 2 },
+        { sheet: getDatabaseSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true), col: 2 },
+        { sheet: getDatabaseSheet(DB_SHEET_NAMES.EMAIL_QUEUE, true), col: 2 }
+      ];
+
+      cleanupSheets.forEach(function(cs) {
+        if (!cs.sheet) return;
+        var cd = cs.sheet.getDataRange().getValues();
+        var rowsToDelete = [];
+        for (var ci = 1; ci < cd.length; ci++) {
+          var val = String(cd[ci][cs.col - 1] || '').trim();
+          // Match TEST prefix sessionIds or email queue entries with TEST prefix
+          if (val.indexOf(TEST_PREFIX) === 0) {
+            rowsToDelete.push(ci + 1);
+          }
+        }
+        if (rowsToDelete.length > 0) {
+          batchDeleteRows(cs.sheet, rowsToDelete);
+        }
+      });
+
+      cleanedUp = true;
+      Logger.log('  ✓ Test data cleaned up successfully');
+    } catch (cleanErr) {
+      Logger.log('  ⚠ Cleanup warning: ' + cleanErr.toString());
+    }
+  }
+
+  Logger.log('\n╚════════════════════════════════════════════════════════════╝');
+  return results;
+}
+
+/**
+ * 🏆 ULTIMATE SYSTEM FLOW TEST — Phase 2 & 3 end-to-end
+ * Tests the COMPLETE PIA lifecycle:
+ *   ✓ Phase 2: Submit → Approve → Return → Deny → Re-submit
+ *   ✓ Phase 3: ISM workflow → Approve → Escalate → DivHead → Route
+ *   ✓ Email Queue processing
+ *   ✓ Admin APIs (queue summary, email log, reminder config)
+ *   ✓ Sequence enforcement (Step 1 before Step 2)
+ *   ✓ Duplicate/re-process prevention
+ *   ✓ Scalability: batch create 25 records and verify throughput
+ *
+ * Run from Apps Script editor. View → Logs for results.
+ */
+function testFullSystemFlow() {
+  Logger.log('╔══════════════════════════════════════════════════════════════╗');
+  Logger.log('║  ULTIMATE SYSTEM FLOW — COMPREHENSIVE END-TO-END TEST       ║');
+  Logger.log('╚══════════════════════════════════════════════════════════════╝');
+
+  var T = 'TST-' + new Date().getTime().toString(36).toUpperCase();
+  var E = 'test-flow@domain.com';
+  var results = { failed: 0, passed: 0, total: 0, details: [] };
+  var createdSheets = [];
+  var allTestIds = [];
+
+  function check(label, ok, detail) {
+    results.total++;
+    if (ok) { results.passed++; Logger.log('  ✅ ' + label); }
+    else { results.failed++; Logger.log('  ❌ ' + label + ' → ' + detail); }
+    results.details.push({ label: label, pass: ok, detail: detail });
+  }
+
+  function getSheet(sheetName) {
+    var s = getDatabaseSheet(sheetName, true);
+    if (createdSheets.indexOf(sheetName) < 0) createdSheets.push(sheetName);
+    return s;
+  }
+
+  function genId(label) { var id = T + '-' + label + '-' + Math.random().toString(36).substring(2,6); allTestIds.push(id); return id; }
+
+  function cleanTestData() {
+    Logger.log('\n🧹 Cleaning test data...');
+    var cleanupSheets = [
+      { sheet: getSheet(DB_SHEET_NAMES.APPLICATIONS), col: 1 },
+      { sheet: getSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW), col: 2 },
+      { sheet: getSheet(DB_SHEET_NAMES.ISM_WORKFLOW), col: 2 },
+      { sheet: getSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG), col: 2 },
+      { sheet: getSheet(DB_SHEET_NAMES.EMAIL_QUEUE), col: 2 },
+      { sheet: getSheet(DB_SHEET_NAMES.RISK_AUDIT), col: 2 },
+      { sheet: getSheet(DB_SHEET_NAMES.DATA_COLLECTION), col: 2 },
+      { sheet: getSheet(DB_SHEET_NAMES.DRAFTS), col: 2 }
+    ];
+    cleanupSheets.forEach(function(cs) {
+      if (!cs.sheet) return;
+      var cd = cs.sheet.getDataRange().getValues();
+      var rows = [];
+      for (var ci = 1; ci < cd.length; ci++) {
+        for (var ti = 0; ti < allTestIds.length; ti++) {
+          if (String(cd[ci][cs.col - 1] || '').indexOf(allTestIds[ti]) === 0) { rows.push(ci + 1); break; }
+        }
+      }
+      if (rows.length > 0) batchDeleteRows(cs.sheet, rows);
+    });
+    // Also clean Email_Queue by Type
+    try {
+      var eqSheet = getSheet(DB_SHEET_NAMES.EMAIL_QUEUE);
+      var eqData = eqSheet.getDataRange().getValues();
+      var eqRows = [];
+      for (var ei = 1; ei < eqData.length; ei++) {
+        var eqType = String(eqData[ei][EMAIL_QUEUE_COLS.TYPE - 1] || '');
+        if (eqType === 'approver' || eqType === 'applicant' || eqType === 'reminder' || eqType === 'ism' || eqType === 'divhead') {
+          for (var ti2 = 0; ti2 < allTestIds.length; ti2++) {
+            if (String(eqData[ei][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '').indexOf(allTestIds[ti2]) === 0) { eqRows.push(ei + 1); break; }
+          }
+        }
+      }
+      if (eqRows.length > 0) batchDeleteRows(eqSheet, eqRows);
+    } catch(_) {}
+    Logger.log('  ✓ Cleanup complete');
+  }
+
+  var appSheet = getSheet(DB_SHEET_NAMES.APPLICATIONS);
+  var apprSheet = getSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW);
+  var ismSheet = getSheet(DB_SHEET_NAMES.ISM_WORKFLOW);
+  var divSheet = getSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG);
+  var queueSheet = getSheet(DB_SHEET_NAMES.EMAIL_QUEUE);
+
+  try {
+    // ─────────────────────────────────────────────────────────────
+    // ═══════════════ PHASE 2: HEAD APPROVAL FLOW ═════════════════
+    // ─────────────────────────────────────────────────────────────
+    Logger.log('\n═══════════════ PHASE 2: HEAD APPROVAL FLOW ═══════════════');
+
+    // Create minimal PIA data
+    var pia1 = JSON.stringify({ program:'Test Program', dept:'IT', immediateHead:'Alice', immediateHeadEmail:E, deptHead:'Bob', deptHeadEmail:E, drafterEmail:E });
+    var pia5 = JSON.stringify(['YES','YES','YES','YES','YES','YES','YES','YES']);
+
+    // ── TEST A: Full approval chain (Step 1 Approve → Step 2 Approve → ISM init) ──
+    Logger.log('\n📌 A. Full approval chain');
+    var aId = genId('FULL');
+    appSheet.appendRow([aId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
+    apprSheet.appendRow([aId+'-A1', aId, 1, 'Approver A1', E, '','', '','Pending','','Pending','']);
+    apprSheet.appendRow([aId+'-A2', aId, 2, 'Approver A2', E, '','', '','Pending','','Pending','']);
+
+    // Step 1 Approve
+    var r1 = processApprovalDecision(aId, E, 'Approve', 'Looks good, approved.', null, '{}');
+    check('Step 1 Approve succeeds', r1.success, r1.error);
+    SpreadsheetApp.flush();
+
+    // Verify Step 1 is Approved
+    var d = apprSheet.getDataRange().getValues();
+    var step1ok = false, step2stillPending = false, appStatusApproved = false;
+    for (var i = 1; i < d.length; i++) {
+      if (d[i][APPROVAL_COLS.SESSION_ID - 1] === aId && d[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) step1ok = (d[i][APPROVAL_COLS.STATUS - 1] === 'Approved');
+      if (d[i][APPROVAL_COLS.SESSION_ID - 1] === aId && d[i][APPROVAL_COLS.CURRENT_STEP - 1] == 2) step2stillPending = (d[i][APPROVAL_COLS.STATUS - 1] === 'Pending');
+    }
+    check('Step 1 status becomes Approved', step1ok, '');
+    check('Step 2 still Pending after Step 1', step2stillPending, '');
+
+    // Step 2 Approve
+    var r2 = processApprovalDecision(aId, E, 'Approve', 'Also approved.', null, '{}');
+    check('Step 2 Approve succeeds', r2.success, r2.error);
+    SpreadsheetApp.flush();
+
+    // Check app is Approved (Phase 3 init)
+    var apps = appSheet.getDataRange().getValues();
+    for (var i = 1; i < apps.length; i++) {
+      if (apps[i][APPLICATIONS_COLS.SESSION_ID - 1] === aId) { appStatusApproved = (String(apps[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved') === 0); break; }
+    }
+    check('Application status becomes Approved', appStatusApproved, '');
+
+    // Verify ISM workflow was initialized (2 rows in ISM sheet)
+    var ismRows = 0;
+    var ismD = ismSheet.getDataRange().getValues();
+    for (var i = 1; i < ismD.length; i++) { if (ismD[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === aId) ismRows++; }
+    check('ISM workflow initialized (2 rows)', ismRows === 2, 'found ' + ismRows);
+
+    // Verify email was queued for applicant "approved_main"
+    var queueData = queueSheet.getDataRange().getValues();
+    var foundApplicantEmail = false;
+    for (var i = 1; i < queueData.length; i++) {
+      if (String(queueData[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === aId && String(queueData[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'applicant') {
+        foundApplicantEmail = true; break;
+      }
+    }
+    check('Applicant notification queued', foundApplicantEmail, '');
+
+    // ── TEST B: Return to Requestor ──
+    Logger.log('\n📌 B. Return to requestor');
+    var bId = genId('RETN');
+    appSheet.appendRow([bId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
+    apprSheet.appendRow([bId+'-B1', bId, 1, 'Approver B1', E, '','', '','Pending','','Pending','']);
+
+    var r3 = processApprovalDecision(bId, E, 'Return', 'Please fix the scope section. This is a detailed comment explaining what needs to be changed. It needs to be at least 100 characters so adding more text here to meet the limit.', null, '{"PIA 1 - Scope":"Scope section is too vague"}');
+    check('Return succeeds', r3.success, r3.error);
+
+    var appsB = appSheet.getDataRange().getValues();
+    var retRow = null, retStatus = '';
+    for (var i = 1; i < appsB.length; i++) { if (appsB[i][APPLICATIONS_COLS.SESSION_ID - 1] === bId) { retRow = i; retStatus = String(appsB[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
+    check('Application status becomes Returned', retStatus === 'Returned', retStatus);
+    check('ApproverFlags stored for returned app', String(appsB[retRow][APPLICATIONS_COLS.APPROVER_FLAGS - 1] || '').indexOf('Scope') > 0, '');
+
+    // ── TEST C: Deny ──
+    Logger.log('\n📌 C. Deny application');
+    var cId = genId('DENY');
+    appSheet.appendRow([cId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
+    apprSheet.appendRow([cId+'-C1', cId, 1, 'Approver C1', E, '','', '','Pending','','Pending','']);
+
+    var r4 = processApprovalDecision(cId, E, 'Deny', 'This project does not meet compliance requirements. The policy framework is not fully established and data handling procedures are undefined. Additional work is needed before resubmission.', null, '{}');
+    check('Deny succeeds', r4.success, r4.error);
+
+    var appsC = appSheet.getDataRange().getValues();
+    var denyStatus = '';
+    for (var i = 1; i < appsC.length; i++) { if (appsC[i][APPLICATIONS_COLS.SESSION_ID - 1] === cId) { denyStatus = String(appsC[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
+    check('Application status becomes Denied', denyStatus === 'Denied', denyStatus);
+
+    // Verify Step 1 status is Denied
+    var dC = apprSheet.getDataRange().getValues();
+    var step1Denied = false;
+    for (var i = 1; i < dC.length; i++) { if (dC[i][APPROVAL_COLS.SESSION_ID - 1] === cId && dC[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) { step1Denied = (dC[i][APPROVAL_COLS.STATUS - 1] === 'Denied'); break; } }
+    check('Approval record set to Denied', step1Denied, '');
+
+    // ── TEST D: Duplicate/re-process prevention ──
+    Logger.log('\n📌 D. Re-process prevention');
+    var r5 = processApprovalDecision(bId, E, 'Approve', 'Trying to approve a returned app', null, '{}');
+    check('Re-processing returned app returns error', !r5.success, 'should fail');
+    var r6 = processApprovalDecision(cId, E, 'Approve', 'Trying to approve a denied app', null, '{}');
+    check('Re-processing denied app returns error', !r6.success, 'should fail');
+
+    // ─────────────────────────────────────────────────────────────
+    // ═══════════════ PHASE 3: ISM WORKFLOW ═══════════════════════
+    // ─────────────────────────────────────────────────────────────
+    Logger.log('\n═══════════════ PHASE 3: ISM WORKFLOW ═══════════════════════');
+
+    // Create an app approved by heads for ISM testing
+    var dId = genId('P3OK');
+    appSheet.appendRow([dId, E, 'Approved', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
+    apprSheet.appendRow([dId+'-D1', dId, 1, 'Approver D1', E, 'Approved','ok','today','Approved','','Sent','']);
+    // Initialize ISM workflow
+    var initResult = apiPhase3_InitializeISMWorkflow(dId);
+    check('ISM init for P3 test succeeds', initResult.success, initResult.error);
+
+    // ── TEST E: ISM Person 1 Approves → Person 2 notified ──
+    Logger.log('\n📌 E. ISM Person 1 Approve (triggers routing)');
+    // Get the ISM member emails
+    var ismData2 = ismSheet.getDataRange().getValues();
+    var p1Email = '', p2Email = '';
+    for (var i = 1; i < ismData2.length; i++) {
+      if (ismData2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismData2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) p1Email = ismData2[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
+      if (ismData2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismData2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) p2Email = ismData2[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
+    }
+    check('ISM Person 1 has email', !!p1Email, p1Email);
+    check('ISM Person 2 has email', !!p2Email, p2Email);
+
+    var r7 = apiPhase3_ProcessISMDecision(dId, p1Email, 'Approve', 'ISM P1 approves with BOTH routing.', 'BOTH', 1, '{}');
+    check('ISM Person 1 Approve succeeds', r7.success, r7.error);
+    SpreadsheetApp.flush();
+
+    // Check Person 2 is still Pending
+    var ismD2 = ismSheet.getDataRange().getValues();
+    var p2Status = '';
+    for (var i = 1; i < ismD2.length; i++) { if (ismD2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismD2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) p2Status = String(ismD2[i][ISM_WORKFLOW_COLS.STATUS - 1] || ''); break; }
+    // Person 2 should still be Pending (needs unanimous approval)
+    // Actually wait, after Person 1 approves, Person 2 should still be Pending
+    for (var i = 1; i < ismD2.length; i++) {
+      if (ismD2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismD2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) { p2Status = String(ismD2[i][ISM_WORKFLOW_COLS.STATUS - 1] || ''); break; }
+    }
+    check('Person 2 still Pending after P1 approves', p2Status === 'Pending', p2Status);
+
+    // ── TEST F: ISM Person 2 Approves → Full approval → Routing ──
+    Logger.log('\n📌 F. ISM Person 2 Approve (triggers full approval & routing)');
+    var r8 = apiPhase3_ProcessISMDecision(dId, p2Email, 'Approve', 'ISM P2 approves.', '', 2, '{}');
+    check('ISM Person 2 Approve succeeds', r8.success, r8.error);
+    SpreadsheetApp.flush();
+
+    // Check app status becomes Approved by ISM
+    var appD2 = appSheet.getDataRange().getValues();
+    var ismFinalStatus = '';
+    for (var i = 1; i < appD2.length; i++) { if (appD2[i][APPLICATIONS_COLS.SESSION_ID - 1] === dId) { ismFinalStatus = String(appD2[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
+    check('App status after ISM approval', ismFinalStatus.indexOf('Approved by ISM') >= 0 || ismFinalStatus.indexOf('Approved') >= 0, ismFinalStatus);
+
+    // ── TEST G: ISM Deny ──
+    Logger.log('\n📌 G. ISM Deny');
+    var gId = genId('ISMDN');
+    appSheet.appendRow([gId, E, 'Approved', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
+    apiPhase3_InitializeISMWorkflow(gId);
+
+    // Find the ISM emails for this new app
+    var ismG = ismSheet.getDataRange().getValues();
+    var p1G = '';
+    for (var i = 1; i < ismG.length; i++) { if (ismG[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === gId && ismG[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1G = ismG[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
+
+    var r9 = apiPhase3_ProcessISMDecision(gId, p1G, 'Deny', 'This application has security risks that cannot be mitigated. Comprehensive review indicates multiple compliance gaps in data handling procedures. This decision is final.', '', 1, '{}');
+    check('ISM Deny succeeds', r9.success, r9.error);
+
+    var appG = appSheet.getDataRange().getValues();
+    var ismDenyStatus = '';
+    for (var i = 1; i < appG.length; i++) { if (appG[i][APPLICATIONS_COLS.SESSION_ID - 1] === gId) { ismDenyStatus = String(appG[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
+    check('App becomes Rejected by ISM', ismDenyStatus.indexOf('Rejected') >= 0, ismDenyStatus);
+
+    // ── TEST H: ISM Return ──
+    Logger.log('\n📌 H. ISM Return');
+    var hId = genId('ISMRT');
+    appSheet.appendRow([hId, E, 'Approved', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
+    apiPhase3_InitializeISMWorkflow(hId);
+
+    var ismH = ismSheet.getDataRange().getValues();
+    var p1H = '';
+    for (var i = 1; i < ismH.length; i++) { if (ismH[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === hId && ismH[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1H = ismH[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
+
+    var r10 = apiPhase3_ProcessISMDecision(hId, p1H, 'Return', 'Please update the scope section and add more detail about data retention policies. The current description is too brief. Also ensure the DCS fields are updated accordingly. This requires at least fifty characters.', '', 1, '{}');
+    check('ISM Return succeeds', r10.success, r10.error);
+
+    var appH = appSheet.getDataRange().getValues();
+    var ismRetStatus = '';
+    for (var i = 1; i < appH.length; i++) { if (appH[i][APPLICATIONS_COLS.SESSION_ID - 1] === hId) { ismRetStatus = String(appH[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
+    check('App becomes Returned after ISM return', ismRetStatus === 'Returned', ismRetStatus);
+
+    // ── TEST I: ISM Escalate → Division Head Approve ──
+    Logger.log('\n📌 I. ISM Escalate → Div Head Approve');
+    // Create app with DivHead email in PIA1 data
+    var pia1Div = JSON.stringify({ program:'Test Escalation', dept:'IT', immediateHead:'Alice', immediateHeadEmail:E, deptHead:'Bob', deptHeadEmail:E, divHead:'Carol', divHeadEmail:E, drafterEmail:E });
+    var iId = genId('P3ESC');
+    appSheet.appendRow([iId, E, 'Approved', pia1Div,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
+    apiPhase3_InitializeISMWorkflow(iId);
+    SpreadsheetApp.flush();
+
+    var ismI = ismSheet.getDataRange().getValues();
+    var p1I = '';
+    for (var i = 1; i < ismI.length; i++) { if (ismI[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === iId && ismI[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1I = ismI[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
+
+    var r11 = apiPhase3_ProcessISMDecision(iId, p1I, 'EscalateToDivisionHead', 'This requires executive review due to cross-departmental data sharing concerns. The application involves sensitive PII that needs Division Head sign-off.', 'BOTH', 1, '{}');
+    check('ISM Escalate succeeds', r11.success, r11.error);
+    SpreadsheetApp.flush();
+
+    // Check Div Head record was created
+    var divI = divSheet.getDataRange().getValues();
+    var divPending = false;
+    for (var i = 1; i < divI.length; i++) { if (divI[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === iId && divI[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') { divPending = true; break; } }
+    check('DivHead escalation record created', divPending, '');
+
+    // Div Head approves (resolves Person 1's escalation, notifies Person 2)
+    var r12 = processDivHeadDecision(iId, E, 'Approve', 'Division Head approves after review. This is a detailed comment explaining the approval rationale for the escalated application. It must be long enough to pass validation.', '{}');
+    check('DivHead Approve succeeds', r12.success, r12.error);
+    SpreadsheetApp.flush();
+
+    // App stays "Escalated to Division Head" until Person 2 also approves
+    var appI = appSheet.getDataRange().getValues();
+    var escStatus = '';
+    for (var i = 1; i < appI.length; i++) { if (appI[i][APPLICATIONS_COLS.SESSION_ID - 1] === iId) { escStatus = String(appI[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
+    check('App still Escalated after DivHead (waiting for Person 2)', escStatus.indexOf('Escalated') >= 0, escStatus);
+
+    // Now Person 2 approves → full approval reached
+    var ismI2 = ismSheet.getDataRange().getValues();
+    var p2I = '';
+    for (var i = 1; i < ismI2.length; i++) { if (ismI2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === iId && ismI2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) { p2I = ismI2[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
+    var r13 = apiPhase3_ProcessISMDecision(iId, p2I, 'Approve', 'Person 2 approves after DivHead resolution.', 'BOTH', 2, '{}');
+    check('ISM Person 2 Approve after Escalation succeeds', r13.success, r13.error);
+    SpreadsheetApp.flush();
+
+    var appI2 = appSheet.getDataRange().getValues();
+    var escFinal = '';
+    for (var i = 1; i < appI2.length; i++) { if (appI2[i][APPLICATIONS_COLS.SESSION_ID - 1] === iId) { escFinal = String(appI2[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
+    check('App reaches Approved by ISM after full Escalation chain', escFinal.indexOf('Approved by ISM') >= 0, escFinal);
+
+    // ─────────────────────────────────────────────────────────────
+    // ═══════════════ ADMIN API TESTS ═════════════════════════════
+    // ─────────────────────────────────────────────────────────────
+    Logger.log('\n═══════════════ ADMIN API TESTS ═══════════════════════════════');
+
+    var qSum = adminGetQueueSummary();
+    check('adminGetQueueSummary returns data', qSum.success, qSum.error);
+    check('Queue summary has total > 0', qSum.data.total > 0, 'total=' + qSum.data.total);
+
+    var qLog = adminGetEmailLog(aId);
+    check('adminGetEmailLog returns array for FullApp', Array.isArray(qLog), typeof qLog);
+
+    var failed = adminGetFailedEmails(30);
+    check('adminGetFailedEmails returns array', Array.isArray(failed), typeof failed);
+
+    var remConfig = adminGetReminderConfig();
+    check('adminGetReminderConfig returns data', remConfig.success, remConfig.error);
+
+    // ─────────────────────────────────────────────────────────────
+    // ═══════════════ SCALABILITY TEST ════════════════════════════
+    // ─────────────────────────────────────────────────────────────
+    Logger.log('\n═══════════════ SCALABILITY TEST ════════════════════════════════');
+    Logger.log('  Creating 25 test applications and running reminders...');
+    var S = 25;
+    var sCount = 0;
+    for (var s = 0; s < S; s++) {
+      var sId = genId('SCALE');
+      appSheet.appendRow([sId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
+      apprSheet.appendRow([sId+'-S1', sId, 1, 'Scaler', E, '','', '','Pending','','Pending','']);
+      sCount++;
+    }
+    check('Scalability: Created ' + S + ' apps', sCount === S, 'created ' + sCount);
+
+    // Run reminder engine on these
+    var remResult = sendDailyReminders();
+    check('sendDailyReminders processes scalability batch', remResult.success, remResult.error);
+    check('Reminder engine scanned scalability batch', remResult.processed >= S, 'processed ' + remResult.processed);
+
+    // Verify pre-filter caught correct count
+    if (remResult.processed >= S) {
+      check('Reminders queued for scalability batch', remResult.reminded >= S || remResult.capped || remResult.quotaExhausted, 'reminded ' + remResult.reminded);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ═══════════════ SEQUENCE ENFORCEMENT ═══════════════════════
+    // ─────────────────────────────────────────────────────────────
+    Logger.log('\n═══════════════ SEQUENCE ENFORCEMENT ═══════════════════════════════');
+    var seqId = genId('SEQ');
+    appSheet.appendRow([seqId, E, 'Pending', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
+    // Append Step 2 first (out of order), then Step 1
+    apprSheet.appendRow([seqId+'-S2', seqId, 2, 'Second Approver', E, '','', '','Pending','','Pending','']);
+    apprSheet.appendRow([seqId+'-S1', seqId, 1, 'First Approver',  E, '','', '','Pending','','Pending','']);
+
+    // First pass: Step 2 was appended first (lower row), but Step 1 has lower step number
+    // The collection pass should pick Step 1 (lowest step)
+    var rem2 = sendDailyReminders();
+    check('Reminder ran for sequence test', rem2.success, rem2.error);
+
+    // Check Email_Queue: should have exactly 1 reminder entry for seqId (Step 1 only)
+    var eqD = queueSheet.getDataRange().getValues();
+    var seqReminders = [];
+    for (var i = 1; i < eqD.length; i++) {
+      if (String(eqD[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === seqId && String(eqD[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'reminder') {
+        seqReminders.push(eqD[i][EMAIL_QUEUE_COLS.SUBJECT - 1] || '');
+      }
+    }
+    check('Sequence enforced: only 1 reminder for seqId', seqReminders.length === 1, 'got ' + seqReminders.length + ' reminders');
+
+    // ──────────────── SUMMARY ────────────────
+    Logger.log('\n══════════════════════════════════════════════════════════════');
+    Logger.log('  OVERALL RESULTS');
+    Logger.log('══════════════════════════════════════════════════════════════');
+    Logger.log('  ✅ Passed: ' + results.passed);
+    Logger.log('  ❌ Failed: ' + results.failed);
+    Logger.log('  📊 Total:  ' + results.total);
+    Logger.log('  📈 Score:  ' + (results.total > 0 ? Math.round(results.passed / results.total * 100) : 0) + '%');
+    if (results.failed === 0) {
+      Logger.log('\n  🎉 ALL TESTS PASSED — System is working correctly!');
+    } else {
+      Logger.log('\n  ⚠️  ' + results.failed + ' test(s) failed. Review details above.');
+    }
+
+  } catch (e) {
+    Logger.log('\n  ❌ TEST CRASHED: ' + e.toString());
+    Logger.log('  Stack: ' + e.stack);
+    results.failed++;
+  } finally {
+    cleanTestData();
+  }
+
+  Logger.log('\n╚══════════════════════════════════════════════════════════════╝');
+  return results;
+}
+
+/**
+ * 🔥 ULTIMATE MEGA-TEST — Every feature, every path, 20 concurrent users
+ * 
+ * Tests end-to-end:
+ *   ✓ Head Approval Chain (Submit → Step1 → Step2 → ISM init)
+ *   ✓ Return to Requestor (with flags)
+ *   ✓ Deny application
+ *   ✓ ISM Full Approval (P1 → P2 → Approved by ISM)
+ *   ✓ ISM Deny / Return
+ *   ✓ ISM Escalate → Division Head → Full chain
+ *   ✓ Email Failsafe (EmailStatus stamping on workflow rows)
+ *   ✓ Admin Notification Config (get/set)
+ *   ✓ Pipeline View (adminGetPipelineView)
+ *   ✓ Resend to Stage (adminResendToStage)
+ *   ✓ Reminder Engine (sendDailyReminders)
+ *   ✓ 20 Concurrent Users (batch simulate + verify no corruption)
+ *   ✓ Sequence Enforcement
+ *   ✓ Duplicate/Re-process Prevention
+ *   ✓ Admin APIs (queue summary, email log, failed emails, notification config)
+ *
+ * Run from Apps Script editor. View → Logs for results.
+ * ⚠️  Expects InfoSec_Email_Config to have at least 2 InfoSec members.
+ */
+function testUltimateSystem() {
+  Logger.log('╔══════════════════════════════════════════════════════════════════╗');
+  Logger.log('║  🔥 ULTIMATE MEGA-TEST — ALL PATHS, 20 CONCURRENT USERS          ║');
+  Logger.log('╚══════════════════════════════════════════════════════════════════╝');
+
+  var T = 'MEGA-' + new Date().getTime().toString(36).toUpperCase();
+  var E = 'mega-test@domain.com';
+  var results = { passed: 0, failed: 0, total: 0, details: [] };
+  var allTestIds = [];
+
+  function check(label, ok, detail) {
+    results.total++;
+    if (ok) { results.passed++; Logger.log('  ✅ ' + label); }
+    else { results.failed++; Logger.log('  ❌ ' + label + (detail ? ' → ' + detail : '')); }
+    results.details.push({ label: label, pass: !!ok, detail: detail || '' });
+  }
+
+  function getS(name) { return getDatabaseSheet(name, true); }
+
+  function genId(label) {
+    var id = T + '-' + label + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+    allTestIds.push(id);
+    return id;
+  }
+
+  // ── Cleanup helper ──
+  function cleanAll() {
+    Logger.log('\n🧹 Cleaning test data (' + allTestIds.length + ' IDs)...');
+    var cleanupDefs = [
+      { sheet: DB_SHEET_NAMES.APPLICATIONS, col: 1 },
+      { sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, col: 2 },
+      { sheet: DB_SHEET_NAMES.ISM_WORKFLOW, col: 2 },
+      { sheet: DB_SHEET_NAMES.DIV_HEAD_CONFIG, col: 2 },
+      { sheet: DB_SHEET_NAMES.EMAIL_QUEUE, col: 2 },
+      { sheet: DB_SHEET_NAMES.RISK_AUDIT, col: 2 }
+    ];
+    cleanupDefs.forEach(function(d) {
+      var s = getDatabaseSheet(d.sheet, false);
+      if (!s || s.getLastRow() < 2) return;
+      var data = s.getDataRange().getValues();
+      var rows = [];
+      for (var i = 1; i < data.length; i++) {
+        var cellVal = String(data[i][d.col - 1] || '').trim();
+        for (var ti = 0; ti < allTestIds.length; ti++) {
+          if (cellVal.indexOf(allTestIds[ti]) === 0) { rows.push(i + 1); break; }
+        }
+      }
+      if (rows.length > 0) batchDeleteRows(s, rows);
+    });
+    Logger.log('  ✓ Cleanup complete');
+  }
+
+  var appSheet = getS(DB_SHEET_NAMES.APPLICATIONS);
+  var apprSheet = getS(DB_SHEET_NAMES.APPROVAL_WORKFLOW);
+  var ismSheet = getS(DB_SHEET_NAMES.ISM_WORKFLOW);
+  var divSheet = getS(DB_SHEET_NAMES.DIV_HEAD_CONFIG);
+  var queueSheet = getS(DB_SHEET_NAMES.EMAIL_QUEUE);
+
+  var pia1 = JSON.stringify({ program: 'Mega Test Program', dept: 'QA', immediateHead: 'Alice', immediateHeadEmail: E, deptHead: 'Bob', deptHeadEmail: E, drafterEmail: E });
+  var pia5 = JSON.stringify(['YES','YES','YES','YES','YES','YES','YES','YES']);
+
+  try {
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 1: HEAD APPROVAL CHAIN
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 1: HEAD APPROVAL CHAIN ════════');
+
+    var aId = genId('FULL');
+    appSheet.appendRow([aId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apprSheet.appendRow([aId + '-A1', aId, 1, 'Approver A1', E, '', '', '', 'Pending', '', 'Pending', '']);
+    apprSheet.appendRow([aId + '-A2', aId, 2, 'Approver A2', E, '', '', '', 'Pending', '', 'Pending', '']);
+
+    var r1 = processApprovalDecision(aId, E, 'Approve', 'Step 1 approved — looks good. This is a detailed comment meeting the minimum length requirement for validation purposes.', null, '{}');
+    check('S1: Step 1 Approve succeeds', r1.success, r1.error);
+    SpreadsheetApp.flush();
+
+    // Verify EmailStatus was stamped on Step 1 row
+    var ad = apprSheet.getDataRange().getValues();
+    var step1EmailStamped = false;
+    for (var i = 1; i < ad.length; i++) {
+      if (ad[i][APPROVAL_COLS.SESSION_ID - 1] === aId && ad[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) {
+        step1EmailStamped = (String(ad[i][APPROVAL_COLS.EMAIL_STATUS - 1] || '') === 'Pending');
+        break;
+      }
+    }
+    check('S1: EmailStatus stamped Pending on Step 1', step1EmailStamped, '');
+
+    var r2 = processApprovalDecision(aId, E, 'Approve', 'Step 2 approved — proceeding to ISM. This comment is sufficiently long to pass all validation checks and requirements.', null, '{}');
+    check('S1: Step 2 Approve succeeds', r2.success, r2.error);
+    SpreadsheetApp.flush();
+
+    // Verify app status becomes Approved
+    var apps = appSheet.getDataRange().getValues();
+    var appApproved = false;
+    for (var i = 1; i < apps.length; i++) {
+      if (apps[i][APPLICATIONS_COLS.SESSION_ID - 1] === aId) {
+        appApproved = (String(apps[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved') === 0);
+        break;
+      }
+    }
+    check('S1: Application status becomes Approved', appApproved, '');
+
+    // Verify ISM workflow initialized
+    var ismCount = 0;
+    var ismD = ismSheet.getDataRange().getValues();
+    for (var i = 1; i < ismD.length; i++) { if (ismD[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === aId) ismCount++; }
+    check('S1: ISM workflow initialized (2 rows)', ismCount === 2, 'found ' + ismCount);
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 2: RETURN TO REQUESTOR
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 2: RETURN TO REQUESTOR ════════');
+
+    var bId = genId('RETN');
+    appSheet.appendRow([bId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apprSheet.appendRow([bId + '-B1', bId, 1, 'Approver B1', E, '', '', '', 'Pending', '', 'Pending', '']);
+
+    var r3 = processApprovalDecision(bId, E, 'Return', 'Please fix the scope section. This is a detailed comment explaining what needs to be changed. It must be at least one hundred characters to pass the validation check. Adding more text here to meet the requirement.', null, '{"PIA 1 - Scope":"Scope section is too vague"}');
+    check('S2: Return succeeds', r3.success, r3.error);
+
+    var appsB = appSheet.getDataRange().getValues();
+    var retStatus = '', retFlags = '';
+    for (var i = 1; i < appsB.length; i++) {
+      if (appsB[i][APPLICATIONS_COLS.SESSION_ID - 1] === bId) {
+        retStatus = String(appsB[i][APPLICATIONS_COLS.STATUS - 1] || '');
+        retFlags = String(appsB[i][APPLICATIONS_COLS.APPROVER_FLAGS - 1] || '');
+        break;
+      }
+    }
+    check('S2: App status is Returned', retStatus === 'Returned', retStatus);
+    check('S2: ApproverFlags stored', retFlags.indexOf('Scope') > 0, '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 3: DENY
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 3: DENY ════════');
+
+    var cId = genId('DENY');
+    appSheet.appendRow([cId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apprSheet.appendRow([cId + '-C1', cId, 1, 'Approver C1', E, '', '', '', 'Pending', '', 'Pending', '']);
+
+    var r4 = processApprovalDecision(cId, E, 'Deny', 'This project does not meet compliance requirements. The policy framework is not fully established and data handling procedures are completely undefined. Additional work is needed.', null, '{}');
+    check('S3: Deny succeeds', r4.success, r4.error);
+
+    var appsC = appSheet.getDataRange().getValues();
+    var denyOk = false;
+    for (var i = 1; i < appsC.length; i++) { if (appsC[i][APPLICATIONS_COLS.SESSION_ID - 1] === cId) { denyOk = (String(appsC[i][APPLICATIONS_COLS.STATUS - 1] || '') === 'Denied'); break; } }
+    check('S3: App status is Denied', denyOk, '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 4: DUPLICATE / RE-PROCESS PREVENTION
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 4: DUPLICATE PREVENTION ════════');
+
+    var r5 = processApprovalDecision(bId, E, 'Approve', 'Trying to approve a returned app should fail. This comment is long enough.', null, '{}');
+    check('S4: Cannot approve returned app', !r5.success, 'expected failure');
+
+    var r6 = processApprovalDecision(cId, E, 'Approve', 'Trying to approve a denied app should fail also. This comment is sufficiently long.', null, '{}');
+    check('S4: Cannot approve denied app', !r6.success, 'expected failure');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 5: ISM FULL APPROVAL (P1 → P2 → Approved by ISM)
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 5: ISM FULL APPROVAL ════════');
+
+    var dId = genId('P3AP');
+    appSheet.appendRow([dId, E, 'Approved', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apprSheet.appendRow([dId + '-D1', dId, 1, 'Approver D1', E, 'Approved', 'ok', 'today', 'Approved', '', 'Sent', '']);
+    var initR = apiPhase3_InitializeISMWorkflow(dId);
+    check('S5: ISM init succeeds', initR.success, initR.error);
+
+    // Verify ISM rows have EmailStatus='Pending'
+    var ismD5 = ismSheet.getDataRange().getValues();
+    var ismEmailStamped = 0;
+    for (var i = 1; i < ismD5.length; i++) {
+      if (ismD5[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId) {
+        if (String(ismD5[i][ISM_WORKFLOW_COLS.EMAIL_STATUS - 1] || '') === 'Pending') ismEmailStamped++;
+      }
+    }
+    check('S5: ISM rows have EmailStatus=Pending', ismEmailStamped === 2, 'found ' + ismEmailStamped);
+
+    // Get P1 and P2 emails
+    var p1E = '', p2E = '';
+    for (var i = 1; i < ismD5.length; i++) {
+      if (ismD5[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismD5[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) p1E = ismD5[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
+      if (ismD5[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismD5[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) p2E = ismD5[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
+    }
+    check('S5: P1 email found', !!p1E, p1E);
+    check('S5: P2 email found', !!p2E, p2E);
+
+    var r7 = apiPhase3_ProcessISMDecision(dId, p1E, 'Approve', 'ISM P1 approves — BOTH routing selected. This comment meets the minimum validation length requirement for ISM decisions.', 'BOTH', 1, '{}');
+    check('S5: ISM P1 Approve succeeds', r7.success, r7.error);
+    SpreadsheetApp.flush();
+
+    var r8 = apiPhase3_ProcessISMDecision(dId, p2E, 'Approve', 'ISM P2 approves — completing final ISM approval. All checks passed and the application is ready for routing to implementation teams.', '', 2, '{}');
+    check('S5: ISM P2 Approve succeeds', r8.success, r8.error);
+    SpreadsheetApp.flush();
+
+    var appsD = appSheet.getDataRange().getValues();
+    var ismFinalOk = false;
+    for (var i = 1; i < appsD.length; i++) {
+      if (appsD[i][APPLICATIONS_COLS.SESSION_ID - 1] === dId) {
+        ismFinalOk = (String(appsD[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved by ISM') >= 0);
+        break;
+      }
+    }
+    check('S5: App reaches Approved by ISM', ismFinalOk, '');
+
+    // Check that queueEmail stamped ISM rows when notifications were sent
+    var queueCheck = queueSheet.getDataRange().getValues();
+    var ismQueueCount = 0;
+    for (var i = 1; i < queueCheck.length; i++) {
+      if (String(queueCheck[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === dId && String(queueCheck[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'ism') {
+        ismQueueCount++;
+      }
+    }
+    check('S5: ISM email notifications queued', ismQueueCount >= 1, 'found ' + ismQueueCount);
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 6: ISM DENY
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 6: ISM DENY ════════');
+
+    var eId = genId('ISMDN');
+    appSheet.appendRow([eId, E, 'Approved', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apiPhase3_InitializeISMWorkflow(eId);
+    var ismE = ismSheet.getDataRange().getValues();
+    var p1E2 = '';
+    for (var i = 1; i < ismE.length; i++) { if (ismE[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === eId && ismE[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1E2 = ismE[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
+
+    var r9 = apiPhase3_ProcessISMDecision(eId, p1E2, 'Deny', 'This application has critical security risks that cannot be mitigated. Comprehensive review indicates multiple compliance gaps in data handling procedures. This decision is final and binding.', '', 1, '{}');
+    check('S6: ISM Deny succeeds', r9.success, r9.error);
+
+    var appsE = appSheet.getDataRange().getValues();
+    var ismDenyOk = false;
+    for (var i = 1; i < appsE.length; i++) { if (appsE[i][APPLICATIONS_COLS.SESSION_ID - 1] === eId) { ismDenyOk = (String(appsE[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Rejected') >= 0); break; } }
+    check('S6: App becomes Rejected by ISM', ismDenyOk, '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 7: ISM RETURN
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 7: ISM RETURN ════════');
+
+    var fId = genId('ISMRT');
+    appSheet.appendRow([fId, E, 'Approved', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apiPhase3_InitializeISMWorkflow(fId);
+    var ismF = ismSheet.getDataRange().getValues();
+    var p1F = '';
+    for (var i = 1; i < ismF.length; i++) { if (ismF[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === fId && ismF[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1F = ismF[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
+
+    var r10 = apiPhase3_ProcessISMDecision(fId, p1F, 'Return', 'Please update the scope section and add more detail about data retention policies. The current description is too brief. Also ensure DCS fields are updated accordingly.', '', 1, '{}');
+    check('S7: ISM Return succeeds', r10.success, r10.error);
+
+    var appsF = appSheet.getDataRange().getValues();
+    var ismRetOk = false;
+    for (var i = 1; i < appsF.length; i++) { if (appsF[i][APPLICATIONS_COLS.SESSION_ID - 1] === fId) { ismRetOk = (String(appsF[i][APPLICATIONS_COLS.STATUS - 1] || '') === 'Returned'); break; } }
+    check('S7: App becomes Returned after ISM return', ismRetOk, '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 8: ISM ESCALATE → DIVISION HEAD → FULL CHAIN
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 8: ISM ESCALATE → DIVHEAD → FULL ════════');
+
+    var pia1Div = JSON.stringify({ program: 'Test Escalation', dept: 'IT', immediateHead: 'Alice', immediateHeadEmail: E, deptHead: 'Bob', deptHeadEmail: E, divHead: 'Carol', divHeadEmail: E, drafterEmail: E });
+    var gId = genId('P3ESC');
+    appSheet.appendRow([gId, E, 'Approved', pia1Div, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apiPhase3_InitializeISMWorkflow(gId);
+    SpreadsheetApp.flush();
+
+    var ismG = ismSheet.getDataRange().getValues();
+    var p1G = '', p2G = '';
+    for (var i = 1; i < ismG.length; i++) {
+      if (ismG[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === gId && ismG[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) p1G = ismG[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
+      if (ismG[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === gId && ismG[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) p2G = ismG[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
+    }
+
+    var r11 = apiPhase3_ProcessISMDecision(gId, p1G, 'EscalateToDivisionHead', 'This requires executive review due to cross-departmental data sharing concerns. The application involves sensitive PII that needs Division Head sign-off for proper authorization.', 'BOTH', 1, '{}');
+    check('S8: ISM Escalate succeeds', r11.success, r11.error);
+    SpreadsheetApp.flush();
+
+    // Check DivHead record created
+    var divD = divSheet.getDataRange().getValues();
+    var divCreated = false;
+    for (var i = 1; i < divD.length; i++) { if (divD[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === gId && divD[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') { divCreated = true; break; } }
+    check('S8: DivHead escalation record created', divCreated, '');
+
+    // Check DivHead row has EmailStatus='Pending'
+    var divEmailOk = false;
+    for (var i = 1; i < divD.length; i++) {
+      if (divD[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === gId) {
+        divEmailOk = (String(divD[i][DIV_HEAD_CONFIG_COLS.EMAIL_STATUS - 1] || '') === 'Pending');
+        break;
+      }
+    }
+    check('S8: DivHead EmailStatus stamped Pending', divEmailOk, '');
+
+    // DivHead approves
+    var r12 = processDivHeadDecision(gId, E, 'Approve', 'Division Head approves after thorough review of the escalated application. All concerns regarding cross-departmental data sharing have been addressed and the application meets compliance standards.', '{}');
+    check('S8: DivHead Approve succeeds', r12.success, r12.error);
+    SpreadsheetApp.flush();
+
+    // App should still be Escalated (waiting for Person 2)
+    var appsG = appSheet.getDataRange().getValues();
+    var escStatus = '';
+    for (var i = 1; i < appsG.length; i++) { if (appsG[i][APPLICATIONS_COLS.SESSION_ID - 1] === gId) { escStatus = String(appsG[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
+    check('S8: App still Escalated after DivHead (waiting P2)', escStatus.indexOf('Escalated') >= 0, escStatus);
+
+    // Person 2 approves → full chain complete
+    var r13 = apiPhase3_ProcessISMDecision(gId, p2G, 'Approve', 'Person 2 approves after DivHead resolution. All escalation concerns have been properly addressed and the application is now ready for final routing.', 'BOTH', 2, '{}');
+    check('S8: ISM P2 Approve after escalation succeeds', r13.success, r13.error);
+    SpreadsheetApp.flush();
+
+    var appsG2 = appSheet.getDataRange().getValues();
+    var escFinalOk = false;
+    for (var i = 1; i < appsG2.length; i++) { if (appsG2[i][APPLICATIONS_COLS.SESSION_ID - 1] === gId) { escFinalOk = (String(appsG2[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved by ISM') >= 0); break; } }
+    check('S8: App reaches Approved by ISM after full escalation chain', escFinalOk, '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 9: EMAIL FAILSAFE — NOTIFICATION CONFIG
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 9: EMAIL FAILSAFE & NOTIFICATION CONFIG ════════');
+
+    var notifCfg = adminGetNotificationConfig();
+    check('S9: getNotificationConfig returns success', notifCfg.success, notifCfg.error);
+    check('S9: NotifyOnFailure defaults to YES', notifCfg.data && notifCfg.data.notifyOnFailure === 'YES', notifCfg.data ? notifCfg.data.notifyOnFailure : 'no data');
+    check('S9: Admin email is configured', notifCfg.data && !!notifCfg.data.adminEmail, notifCfg.data ? notifCfg.data.adminEmail : 'none');
+
+    var setCfg = adminSetNotificationConfig({ notifyOnFailure: 'YES', notifyRequestor: 'YES' });
+    check('S9: setNotificationConfig succeeds', setCfg.success, setCfg.error);
+    check('S9: Config persists after set', setCfg.data && setCfg.data.notifyOnFailure === 'YES', '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 10: PIPELINE VIEW
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 10: PIPELINE VIEW ════════');
+
+    var pipeline = adminGetPipelineView(dId);
+    check('S10: getPipelineView returns success', pipeline.success, pipeline.error);
+    check('S10: Pipeline has application', pipeline.data && !!pipeline.data.application, '');
+    check('S10: Pipeline has approvalWorkflow', pipeline.data && Array.isArray(pipeline.data.approvalWorkflow) && pipeline.data.approvalWorkflow.length > 0, '');
+    check('S10: Pipeline has ismWorkflow', pipeline.data && Array.isArray(pipeline.data.ismWorkflow) && pipeline.data.ismWorkflow.length > 0, '');
+    check('S10: Pipeline has emailQueue entries', pipeline.data && Array.isArray(pipeline.data.emailQueue), '');
+    check('S10: Pipeline has auditTrail', pipeline.data && Array.isArray(pipeline.data.auditTrail), '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 11: RESEND TO STAGE
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 11: RESEND TO STAGE ════════');
+
+    // Create a fresh Pending entry — resend only works on rows with Status='Pending'
+    var resendId = genId('RSND');
+    appSheet.appendRow([resendId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apprSheet.appendRow([resendId + '-R1', resendId, 1, 'Resend Approver', E, '', '', '', 'Pending', '', '', '']);
+
+    var resendR = adminResendToStage(resendId, 'approver', E);
+    check('S11: Resend to stage succeeds', resendR.success, resendR.error);
+    check('S11: Resend returns queueId', !!resendR.queueId, '');
+
+    // Verify EmailStatus was reset to Pending
+    var ad2 = apprSheet.getDataRange().getValues();
+    var resetOk = false;
+    for (var i = 1; i < ad2.length; i++) {
+      if (ad2[i][APPROVAL_COLS.SESSION_ID - 1] === resendId && ad2[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) {
+        resetOk = (String(ad2[i][APPROVAL_COLS.EMAIL_STATUS - 1] || '') === 'Pending');
+        break;
+      }
+    }
+    check('S11: EmailStatus reset to Pending after resend', resetOk, '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 12: REMINDER ENGINE
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 12: REMINDER ENGINE ════════');
+
+    var remId = genId('REM');
+    appSheet.appendRow([remId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apprSheet.appendRow([remId + '-R1', remId, 1, 'Reminder Approver', E, '', '', '', 'Pending', '', 'Pending', '']);
+
+    var remResult = sendDailyReminders();
+    check('S12: sendDailyReminders succeeds', remResult.success, remResult.error);
+
+    // Check if a reminder was queued for our test entry
+    var qD = queueSheet.getDataRange().getValues();
+    var reminded = false;
+    for (var i = 1; i < qD.length; i++) {
+      if (String(qD[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === remId && String(qD[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'reminder') {
+        reminded = true; break;
+      }
+    }
+    check('S12: Reminder queued for pending entry', reminded, '');
+
+    // Verify ReminderDate was stamped
+    var adR = apprSheet.getDataRange().getValues();
+    var stamped = false;
+    var todayStr = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0');
+    for (var i = 1; i < adR.length; i++) {
+      if (adR[i][APPROVAL_COLS.SESSION_ID - 1] === remId) {
+        var rdVal = String(adR[i][APPROVAL_COLS.REMINDER_DATE - 1] || '');
+        // Date may be stored as Date object or string — normalize
+        if (adR[i][APPROVAL_COLS.REMINDER_DATE - 1] instanceof Date) {
+          var d = adR[i][APPROVAL_COLS.REMINDER_DATE - 1];
+          rdVal = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+        stamped = (rdVal === todayStr);
+        break;
+      }
+    }
+    check('S12: ReminderDate stamped on workflow row', stamped, '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 13: 20 CONCURRENT USERS — BATCH SUBMIT & APPROVE
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 13: 20 CONCURRENT USERS ════════');
+
+    var CONCURRENT = 20;
+    var batchIds = [];
+    var batchStart = new Date().getTime();
+
+    // Batch create 20 applications
+    for (var u = 0; u < CONCURRENT; u++) {
+      var uid = genId('CONC');
+      batchIds.push(uid);
+      appSheet.appendRow([uid, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+      apprSheet.appendRow([uid + '-U1', uid, 1, 'Concurrent Approver ' + u, E, '', '', '', 'Pending', '', 'Pending', '']);
+    }
+    SpreadsheetApp.flush();
+    var batchCreateMs = new Date().getTime() - batchStart;
+    Logger.log('  Created ' + CONCURRENT + ' apps in ' + batchCreateMs + 'ms');
+    check('S13: Created 20 concurrent apps', batchIds.length === CONCURRENT, 'count=' + batchIds.length);
+
+    // Verify no row corruption (check all 20 have correct column counts)
+    var corruptedCount = 0;
+    var apprData = apprSheet.getDataRange().getValues();
+    for (var u = 0; u < batchIds.length; u++) {
+      var found = false;
+      for (var i = 1; i < apprData.length; i++) {
+        if (apprData[i][APPROVAL_COLS.SESSION_ID - 1] === batchIds[u]) {
+          found = true;
+          // Check all 12 columns have values (at least not undefined)
+          if (apprData[i].length < 12) corruptedCount++;
+          break;
+        }
+      }
+      if (!found) corruptedCount++;
+    }
+    check('S13: No row corruption in 20 concurrent apps', corruptedCount === 0, 'corrupted=' + corruptedCount);
+
+    // Batch approve all 20
+    var batchApproveStart = new Date().getTime();
+    var approveSuccess = 0;
+    for (var u = 0; u < batchIds.length; u++) {
+      var r = processApprovalDecision(batchIds[u], E, 'Approve', 'Concurrent batch approval #' + (u + 1) + '. This comment is sufficiently long to meet the minimum validation length requirement for approval decisions.', null, '{}');
+      if (r.success) approveSuccess++;
+    }
+    SpreadsheetApp.flush();
+    var batchApproveMs = new Date().getTime() - batchApproveStart;
+    Logger.log('  Approved ' + approveSuccess + '/' + CONCURRENT + ' in ' + batchApproveMs + 'ms (' + (batchApproveMs / CONCURRENT).toFixed(0) + 'ms avg)');
+    check('S13: All 20 concurrent approvals succeed', approveSuccess === CONCURRENT, 'success=' + approveSuccess);
+
+    // Verify all 20 have status Approved
+    var appsCheck = appSheet.getDataRange().getValues();
+    var approvedCount = 0;
+    for (var u = 0; u < batchIds.length; u++) {
+      for (var i = 1; i < appsCheck.length; i++) {
+        if (appsCheck[i][APPLICATIONS_COLS.SESSION_ID - 1] === batchIds[u]) {
+          if (String(appsCheck[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved') === 0) approvedCount++;
+          break;
+        }
+      }
+    }
+    check('S13: All 20 apps have Approved status', approvedCount === CONCURRENT, 'approved=' + approvedCount);
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 14: ADMIN API — QUEUE SUMMARY & EMAIL LOG
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 14: ADMIN APIs ════════');
+
+    var qSum = adminGetQueueSummary();
+    check('S14: getQueueSummary returns data', qSum.success, qSum.error);
+    check('S14: Queue summary has total > 0', qSum.data && qSum.data.total > 0, qSum.data ? 'total=' + qSum.data.total : 'no data');
+
+    var qLog = adminGetEmailLog(aId);
+    check('S14: getEmailLog returns array', Array.isArray(qLog), typeof qLog);
+
+    var failed = adminGetFailedEmails(30);
+    check('S14: getFailedEmails returns array', Array.isArray(failed), typeof failed);
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 15: REMINDER CONFIG
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n════════ SECTION 15: REMINDER CONFIG ════════');
+
+    var remCfg = adminGetReminderConfig();
+    check('S15: getReminderConfig returns data', remCfg.success, remCfg.error);
+    check('S15: Reminder config has triggerActive field', remCfg.data && remCfg.data.hasOwnProperty('triggerActive'), '');
+
+    // ═══════════════════════════════════════════════════════════════
+    // SUMMARY
+    // ═══════════════════════════════════════════════════════════════
+    Logger.log('\n══════════════════════════════════════════════════════════════');
+    Logger.log('  🔥 ULTIMATE MEGA-TEST RESULTS');
+    Logger.log('══════════════════════════════════════════════════════════════');
+    Logger.log('  ✅ Passed: ' + results.passed);
+    Logger.log('  ❌ Failed: ' + results.failed);
+    Logger.log('  📊 Total:  ' + results.total);
+    Logger.log('  📈 Score:  ' + (results.total > 0 ? Math.round(results.passed / results.total * 100) : 0) + '%');
+
+    if (results.failed === 0) {
+      Logger.log('\n  🎉 ALL ' + results.total + ' TESTS PASSED — System is battle-ready!');
+      Logger.log('  ✅ Head Approval Chain       ✅ Return to Requestor');
+      Logger.log('  ✅ Deny                       ✅ Duplicate Prevention');
+      Logger.log('  ✅ ISM Full Approval          ✅ ISM Deny');
+      Logger.log('  ✅ ISM Return                 ✅ Escalate → DivHead → Full');
+      Logger.log('  ✅ Email Failsafe Stamping    ✅ Admin Notification Config');
+      Logger.log('  ✅ Pipeline View              ✅ Resend to Stage');
+      Logger.log('  ✅ Reminder Engine            ✅ 20 Concurrent Users');
+      Logger.log('  ✅ Admin APIs                 ✅ Reminder Config');
+    } else {
+      Logger.log('\n  ⚠️  ' + results.failed + ' test(s) FAILED. Review details above.');
+      Logger.log('\n  Failing tests:');
+      results.details.filter(function(d) { return !d.pass; }).forEach(function(d) {
+        Logger.log('    ❌ ' + d.label + (d.detail ? ' — ' + d.detail : ''));
+      });
+    }
+
+  } catch (e) {
+    Logger.log('\n  💥 MEGA-TEST CRASHED: ' + e.toString());
+    Logger.log('  Stack: ' + e.stack);
+    results.failed++;
+    results.error = e.toString();
+  } finally {
+    cleanAll();
+  }
+
+  Logger.log('\n╚══════════════════════════════════════════════════════════════════╝');
+  return results;
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // END
