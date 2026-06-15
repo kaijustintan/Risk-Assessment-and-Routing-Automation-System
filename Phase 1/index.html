@@ -1554,6 +1554,20 @@ function deriveFirstName(email) {
   return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
 }
 
+/*
+  greetingLine — renders a personalized "Hi <Name>," line using the standard navy type
+  scale. Returns '' until the signed-in identity has loaded (so it never flashes blank).
+  scale: 'hero' (large, landing page) | 'form' (compact, request form header).
+*/
+function greetingLine(scale) {
+  if (!state.userEmail) return '';
+  const name = escapeHtml(deriveFirstName(state.userEmail));
+  const fontSize = scale === 'hero'
+    ? 'clamp(1.05rem, 0.9rem + 0.6vw, 1.3rem)'
+    : '14px';
+  return `<p style="font-size:${fontSize};font-weight:600;color:var(--navy);margin:0 0 6px;letter-spacing:-0.01em;">Hi ${name},</p>`;
+}
+
 // --- Custom Modals ---------------------------------
 let autoSaveTimeout;
 function showCustomAlert(message, type = 'danger', isAutoSave = false) {
@@ -2816,6 +2830,7 @@ function renderLanding() {
           <polyline points="10 9 9 9 8 9"></polyline>
         </svg>
       </div>
+      ${greetingLine('hero')}
       <h1 id="landing-heading">Privacy Impact Assessment</h1>
       <p>A streamlined platform for processing your data collection and system access requests.</p>
     </div>
@@ -3255,7 +3270,7 @@ function renderForm() {
       <div>
         <span class="step-badge">DCS Section 2: Details</span>
         <div class="app-id">${escapeHtml(currentDCSId)}</div>
-        ${state.userEmail ? `<p style="font-size:13.5px;color:var(--navy-bright);font-weight:600;margin:0 0 2px;">Hi ${escapeHtml(deriveFirstName(state.userEmail))} 👋</p>` : ''}
+        ${greetingLine('form')}
         <h1>${isRevision ? 'Revise Request Details' : 'Request Details'}</h1>
         <p>${isRevision ? 'Please revise your details and resubmit the application.' : 'Fill in your profile, required access parameters, and upload attachments.'}</p>
       </div>
@@ -4888,11 +4903,13 @@ function boot() {
       }
     }).apiGetSystemConfig();
 
-    // Fetch the signed-in user's identity (email only) to personalize the form greeting.
+    // Fetch the signed-in user's identity (email only) to personalize the greeting.
     google.script.run.withSuccessHandler(res => {
       if (res && res.email) {
         state.userEmail = res.email;
+        // Re-render the active screen so the greeting appears once identity loads.
         if (state.currentScreen === 'form') renderForm();
+        else if (state.currentScreen === 'landing') renderLanding();
       }
     }).getUserIdentity();
   }
