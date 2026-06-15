@@ -190,6 +190,10 @@ ask before inventing one — consistency with the navy system matters to the sup
 - **"Returned" ≠ "Denied":** returned is a fixable loop; denied/rejected is terminal.
 - **Favicon override** uses a MutationObserver + setInterval (GAS injects its own icon) —
   don't remove it thinking it's dead code.
+- **Downloadable templates** are driven by the `DOWNLOADABLES` array in `renderGuide()`.
+  Add/remove a form by editing that array; the link itself is admin-managed via a
+  `LINK_*_TEMPLATE` row in the `System_Configuration` sheet (generic config passthrough — no
+  backend code change needed). Missing row → link shows "Link not set" (`#`).
 
 ---
 

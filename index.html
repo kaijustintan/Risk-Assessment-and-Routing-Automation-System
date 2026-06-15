@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Data Collection System (DCS)</title>
+  <title>Privacy Impact Assessment</title>
   <link rel="shortcut icon" href="https://upload.wikimedia.org/wikipedia/commons/e/e2/Megaworld_logo_and_wordmark.svg" type="image/svg+xml"/>
   <link rel="icon" href="https://upload.wikimedia.org/wikipedia/commons/e/e2/Megaworld_logo_and_wordmark.svg" sizes="any" type="image/svg+xml"/>
   <link rel="apple-touch-icon" href="https://upload.wikimedia.org/wikipedia/commons/e/e2/Megaworld_logo_and_wordmark.svg"/>
@@ -1519,6 +1519,7 @@ const state = {
   lastDrafts: [],
   isSubmitting: false,
   isEditing: false,
+  userEmail: '', // Signed-in user's email (fetched at boot) — used for the "Hi <name>" greeting
   config: {}, // Store dynamic links here
   approverFlags: {},
   dcs: {
@@ -1538,6 +1539,20 @@ const state = {
     }
   }
 };
+
+/*
+  deriveFirstName — best-effort first name from a corporate email local-part.
+  e.g. "john.doe@megaworldcorp.com" -> "John". Non firstname.lastname addresses degrade
+  gracefully (e.g. "jdoe@..." -> "Jdoe"). Falls back to "there" when nothing usable.
+  Note: the backend only exposes the email (getUserIdentity), never a display name.
+*/
+function deriveFirstName(email) {
+  if (!email || typeof email !== 'string') return 'there';
+  const local = (email.split('@')[0] || '').trim();
+  const first = local.split(/[._+\-]/)[0] || '';
+  if (!first) return 'there';
+  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+}
 
 // --- Custom Modals ---------------------------------
 let autoSaveTimeout;
@@ -2097,7 +2112,7 @@ function renderPiaTimeline(data) {
   // Step 1: DCS Request
   let step1Class = 'done';
   let step1Sub = '<span class="status-badge status-approved">Completed</span>';
-  let step1Comment = 'The Data Collection System request has been completed.';
+  let step1Comment = 'The Privacy Impact Assessment request has been completed.';
 
   if (dcsLower === 'returned') {
      step1Class = 'rejected';
@@ -2792,7 +2807,7 @@ function renderLanding() {
   document.getElementById('screen-landing').innerHTML = `
     <div class="page-content" style="gap: 2rem;">
     <div class="landing-hero" role="region" aria-labelledby="landing-heading">
-      <div class="landing-logo" role="img" aria-label="Data Collection System logo">
+      <div class="landing-logo" role="img" aria-label="Privacy Impact Assessment logo">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
           <polyline points="14 2 14 8 20 8"></polyline>
@@ -2801,7 +2816,7 @@ function renderLanding() {
           <polyline points="10 9 9 9 8 9"></polyline>
         </svg>
       </div>
-      <h1 id="landing-heading">Data Collection System</h1>
+      <h1 id="landing-heading">Privacy Impact Assessment</h1>
       <p>A streamlined platform for processing your data collection and system access requests.</p>
     </div>
 
@@ -2824,7 +2839,7 @@ function renderLanding() {
 
 
     <div class="app-footer" role="contentinfo">
-      Company Workspace &nbsp;&middot;&nbsp; Data Collection System Phase 1 &nbsp;&middot;&nbsp; Build v0.0.3
+      Megaworld Corporation &nbsp;&middot;&nbsp; Privacy Impact Assessment &nbsp;&middot;&nbsp; Build v0.0.3
     </div>
     </div>
   `;
@@ -3041,10 +3056,32 @@ function deleteDraftAndRefresh(sid) {
 // GUIDE
 // ===================================================
 function renderGuide() {
-  const ndaUrl = state.config['LINK_NDA_TEMPLATE'] || '#';
-  const dpaUrl = state.config['LINK_DPA_TEMPLATE'] || '#';
-  const dsaUrl = state.config['LINK_DSA_TEMPLATE'] || '#';
-  const cuUrl = state.config['LINK_CU_TEMPLATE'] || '#';
+  /*
+    DOWNLOADABLE TEMPLATES — single source of truth for the "Downloadable Forms" list.
+    TO ADD a form    : append an entry { configKey, title, descSet, iconStyle, descStyle, icon }.
+    TO REMOVE a form : delete its entry.
+    The actual file link is ADMIN-MANAGED, not in code: an admin must add a matching row to
+    the System_Configuration sheet (e.g. key 'LINK_OJT_NDA_TEMPLATE', value = the file URL).
+    apiGetSystemConfig passes any key through, so NO backend code change is needed — just the
+    sheet row. Until that row exists the link falls back to '#' and shows "Link not set".
+  */
+  const DOWNLOADABLES = [
+    { configKey: 'LINK_NDA_TEMPLATE', title: 'Non-Disclosure Agreement', descSet: 'Click to download', descStyle: '',
+      iconStyle: 'background: #fef2f2; border-color: #fca5a5; color: #dc2626;',
+      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' },
+    { configKey: 'LINK_DPA_TEMPLATE', title: 'Data Protection Agreement', descSet: 'Click to download', descStyle: '',
+      iconStyle: 'background: #eff6ff; border-color: #93c5fd; color: #2563eb;',
+      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>' },
+    { configKey: 'LINK_DSA_TEMPLATE', title: 'Data Sharing Agreement', descSet: 'Click to download', descStyle: '',
+      iconStyle: 'background: #ecfdf5; border-color: #6ee7b7; color: #059669;',
+      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg>' },
+    { configKey: 'LINK_CU_TEMPLATE', title: 'Confidentiality Undertaking', descSet: 'View agency document', descStyle: 'color: #6b7280;',
+      iconStyle: 'background: #eff6ff; border: 1px solid #93c5fd; color: #2563eb; border-radius: 8px; padding: 6px; display: flex; justify-content: center; align-items: center;',
+      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' },
+    { configKey: 'LINK_OJT_NDA_TEMPLATE', title: 'OJT NDA', descSet: 'Click to download', descStyle: '',
+      iconStyle: 'background: #fef2f2; border-color: #fca5a5; color: #dc2626;',
+      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' },
+  ];
 
 // The TC URL is not currently used in the guide, but we define it here for future use or reference. Internal Code is going to be TC always, but change to what MEGAWORLD CORPORATION has.
   const tcUrl = state.config['LINK_TC_PAGE'] || '#';
@@ -3056,7 +3093,7 @@ function renderGuide() {
   <div class="page-content">
   <div class="page-header">
     <span class="step-badge">DCS Section 1: Guidelines</span>
-    <h1>Data Collection Guide & Terms</h1>
+    <h1>Privacy Assessment Instructions</h1>
     <p>Please review the following guidelines and terms before submitting your data collection request.</p>
   </div>
 
@@ -3087,48 +3124,19 @@ function renderGuide() {
       <div class="card" style="height: 100%; display: flex; flex-direction: column;">
         <div class="card-title">Downloadable Forms</div>
         <div class="action-cards" style="gap: 12px; display: flex; flex-direction: column; flex: 1;">
-          <a href="${ndaUrl}" target="_blank" class="action-card" style="padding: 1rem; text-decoration: none; display: flex; align-items: left; gap: 12px; flex: 1;">
-              <div class="icon" style="margin-bottom: 0; flex-shrink: 0; background: #fef2f2; border-color: #fca5a5; color: #dc2626;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          ${DOWNLOADABLES.map(function(d) {
+            const url = state.config[d.configKey] || '#';
+            return `
+          <a href="${url}" target="_blank" class="action-card" style="padding: 1rem; text-decoration: none; display: flex; align-items: left; gap: 12px; flex: 1;">
+              <div class="icon" style="margin-bottom: 0; flex-shrink: 0; ${d.iconStyle}">
+                ${d.icon}
               </div>
               <div>
-                <h3 style="font-size: 13px; margin: 0;">Non-Disclosure Agreement</h3>
-                <p style="font-size: 11.5px; margin-top: 2px;">${ndaUrl === '#' ? 'Link not set' : 'Click to download'}</p>
+                <h3 style="font-size: 13px; margin: 0;">${d.title}</h3>
+                <p style="font-size: 11.5px; margin-top: 2px; ${d.descStyle}">${url === '#' ? 'Link not set' : d.descSet}</p>
               </div>
-          </a>
-          <a href="${dpaUrl}" target="_blank" class="action-card" style="padding: 1rem; text-decoration: none; display: flex; align-items: left; gap: 12px; flex: 1;">
-              <div class="icon" style="margin-bottom: 0; flex-shrink: 0; background: #eff6ff; border-color: #93c5fd; color: #2563eb;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-              </div>
-              <div>
-                <h3 style="font-size: 13px; margin: 0;">Data Protection Agreement</h3>
-                <p style="font-size: 11.5px; margin-top: 2px;">${dpaUrl === '#' ? 'Link not set' : 'Click to download'}</p>
-              </div>
-          </a>
-          <a href="${dsaUrl}" target="_blank" class="action-card" style="padding: 1rem; text-decoration: none; display: flex; align-items: left; gap: 12px; flex: 1;">
-              <div class="icon" style="margin-bottom: 0; flex-shrink: 0; background: #ecfdf5; border-color: #6ee7b7; color: #059669;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg>
-              </div>
-              <div>
-                <h3 style="font-size: 13px; margin: 0;">Data Sharing Agreement</h3>
-                <p style="font-size: 11.5px; margin-top: 2px;">${dsaUrl === '#' ? 'Link not set' : 'Click to download'}</p>
-              </div>
-          </a>
-          <a href="${cuUrl}" target="_blank" class="action-card" style="padding: 1rem; text-decoration: none; display: flex; align-items: left; gap: 12px; flex: 1;">
-              <div class="icon" style="margin-bottom: 0; flex-shrink: 0; background: #eff6ff; border: 1px solid #93c5fd; color: #2563eb; border-radius: 8px; padding: 6px; display: flex; justify-content: center; align-items: center;">
-                <!-- Lock Icon for Confidentiality -->
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                </svg>
-              </div>
-              <div>
-                <h3 style="font-size: 13px; margin: 0; color: #111827;">Confidentiality Undertaking</h3>
-                <p style="font-size: 11.5px; margin-top: 2px; color: #6b7280;">
-                  ${cuUrl === '#' ? 'Link not set' : 'View agency document'}
-                </p>
-              </div>
-          </a>
+          </a>`;
+          }).join('')}
         </div>
       </div>
     </div>
@@ -3247,6 +3255,7 @@ function renderForm() {
       <div>
         <span class="step-badge">DCS Section 2: Details</span>
         <div class="app-id">${escapeHtml(currentDCSId)}</div>
+        ${state.userEmail ? `<p style="font-size:13.5px;color:var(--navy-bright);font-weight:600;margin:0 0 2px;">Hi ${escapeHtml(deriveFirstName(state.userEmail))} 👋</p>` : ''}
         <h1>${isRevision ? 'Revise Request Details' : 'Request Details'}</h1>
         <p>${isRevision ? 'Please revise your details and resubmit the application.' : 'Fill in your profile, required access parameters, and upload attachments.'}</p>
       </div>
@@ -4114,7 +4123,7 @@ function renderSummary() {
       <div class="timeline-dot done" aria-hidden="true"></div>
       <div class="timeline-title">DCS Request Submitted</div>
       <div class="timeline-sub"><span class="status-badge status-approved">This Step</span></div>
-      <div class="timeline-comment">You are about to complete the Data Collection System request.</div>
+      <div class="timeline-comment">You are about to complete the Privacy Impact Assessment request.</div>
     </div>
     <div class="timeline-item">
       <div class="timeline-dot active" aria-hidden="true"></div>
@@ -4384,7 +4393,7 @@ function renderSuccess(reqId = '', submittedAt = '', phase2Url = '') {
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
       </div>
       <h1>Request Submitted Successfully</h1>
-      <p>Your Data Collection System request has been successfully submitted.</p>
+      <p>Your Privacy Impact Assessment request has been successfully submitted.</p>
     </div>
 
     <div class="card" style="background:var(--navy-tint);border-color:var(--navy-border);">
@@ -4878,6 +4887,14 @@ function boot() {
         if (state.currentScreen === 'guide') renderGuide();
       }
     }).apiGetSystemConfig();
+
+    // Fetch the signed-in user's identity (email only) to personalize the form greeting.
+    google.script.run.withSuccessHandler(res => {
+      if (res && res.email) {
+        state.userEmail = res.email;
+        if (state.currentScreen === 'form') renderForm();
+      }
+    }).getUserIdentity();
   }
   state.currentScreen = 'landing';
   renderLanding();
