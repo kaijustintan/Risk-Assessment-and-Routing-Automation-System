@@ -1,0 +1,3322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Company - Privacy Impact Assessment Form (PIA)</title>
+  <style>
+  /* ═══════════════════════════════════════════════════
+     DESIGN TOKENS & RESET
+  ═══════════════════════════════════════════════════ */
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* Pass-through system tokens */
+    --bg:      var(--color-background-primary,    #ffffff);
+    --bg2:     var(--color-background-secondary,  #f7f8fa);
+    --bg3:     var(--color-background-tertiary,   #eff1f5);
+    --text:    var(--color-text-primary,          #111827);
+    --text2:   var(--color-text-secondary,        #4b5563);
+    --text3:   var(--color-text-tertiary,         #9ca3af);
+    --border:  var(--color-border-tertiary,       #e5e7eb);
+    --border2: var(--color-border-secondary,      #d1d5db);
+    --radius:  var(--border-radius-md,            6px);
+    --radius-lg: var(--border-radius-lg,          12px);
+    --font:    var(--font-sans,                   'DM Sans', system-ui, sans-serif);
+    --font-mono: var(--font-mono,                 'DM Mono', monospace);
+
+    /* success/warning/danger */
+    --success:      var(--color-background-success,  #ecfdf5);
+    --success-text: var(--color-text-success,         #065f46);
+    --danger:       var(--color-background-danger,    #fef2f2);
+    --danger-text:  #dc2626;
+    --warn:         var(--color-background-warning,   #fffbeb);
+    --warn-text:    var(--color-text-warning,         #92400e);
+
+    /* Navy blue palette */
+    --navy:         #1e3a5f;
+    --navy-mid:     #2a5285;
+    --navy-bright:  #3b76c4;
+    --navy-glow:    rgba(30, 58, 95, 0.12);
+    --navy-tint:    #f4f7fb;
+    --navy-text:    #0f2238;
+    --navy-border:  rgba(30, 58, 95, 0.18);
+
+    /* Motion */
+    --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in:   cubic-bezier(0.4, 0, 1, 1);
+    --ease:      cubic-bezier(0.4, 0, 0.2, 1);
+    --dur-fast:  140ms;
+    --dur-med:   240ms;
+    --dur-slow:  400ms;
+  }
+
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; background: var(--bg2); }
+
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    background: var(--bg2);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     LAYOUT
+  ═══════════════════════════════════════════════════ */
+  #app {
+    max-width: 980px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 0.5rem 0 3rem;
+    margin-top: 2.5em;
+    background: var(--bg2);
+  }
+
+  /* ═══════════════════════════════════════════════════
+     SIDEBAR TRACKING & FORM LAYOUT
+  ═══════════════════════════════════════════════════ */
+  .form-layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 2.5rem;
+    align-items: flex-start;
+  }
+
+  .form-sidebar {
+    background: var(--navy);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    color: white;
+    position: sticky;
+    top: 2rem;
+    box-shadow: 0 4px 20px var(--navy-glow);
+  }
+
+  .form-sidebar-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+    color: rgba(255, 255, 255, 0.7);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .sidebar-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .sidebar-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    opacity: 0.5;
+    transition: opacity var(--dur-fast) var(--ease);
+  }
+  .sidebar-step.active { opacity: 1; }
+  .sidebar-step.done { opacity: 0.85; }
+  .sidebar-step.done .sidebar-step-text { color: #81ffaf; }
+  .sidebar-step.done .sidebar-step-text span { color: #81ffaf; }
+
+  .sidebar-step-num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .sidebar-step.active .sidebar-step-num {
+    background: var(--navy-bright);
+    color: white;
+    border-color: var(--navy-bright);
+    box-shadow: 0 0 0 4px rgba(59, 118, 196, 0.3);
+  }
+  .sidebar-step.done .sidebar-step-num {
+    background: var(--success);
+    color: var(--success-text);
+    border-color: var(--success);
+  }
+  .sidebar-step.pending { opacity: 0.85; }
+  .sidebar-step.pending .sidebar-step-text { color: var(--warn-text); }
+  .sidebar-step.pending .sidebar-step-text span { color: var(--warn-text); }
+  .sidebar-step.pending .sidebar-step-num {
+    background: var(--warn);
+    color: var(--warn-text);
+    border-color: var(--warn);
+    box-shadow: 0 0 0 4px rgba(180, 109, 20, 0.15);
+  }
+  .sidebar-step.pending .sidebar-step-num svg {
+    color: var(--warn-text);
+  }
+
+  .sidebar-step-text {
+    font-size: 12px;
+    line-height: 1.4;
+    padding-top: 5px;
+  }
+  .sidebar-step-text span {
+    display: block;
+    font-size: 13.5px;
+    margin-top: 2px;
+  }
+
+  .page-content {
+    min-width: 0; /* Prevent grid blowout */
+  }
+
+  .logo-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 19px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--navy);
+    margin-bottom: 1.5rem;
+    padding: 0 2px;
+    margin-left: 12px;
+  }
+  .logo-brand span { color: var(--navy); font-weight: 600; }
+
+  .hidden { display: none !important; }
+
+  /* ═══════════════════════════════════════════════════
+     SCREEN TRANSITION
+  ═══════════════════════════════════════════════════ */
+  @keyframes screenIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  #app > div:not(.hidden) {
+    animation: screenIn var(--dur-slow) var(--ease-out) both;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     HEADER
+  ═══════════════════════════════════════════════════ */
+  .page-header { margin-bottom: 1.75rem; }
+  .page-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--navy);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+  .page-header p {
+    font-size: 13.5px;
+    color: var(--text2);
+    margin-top: 5px;
+    line-height: 1.6;
+  }
+
+  .pia-status-row {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    padding: 8px 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .pia-status-row .pia-status-value { text-align: right; }
+  .pia-status-label { color: var(--text3); font-size: 12.5px; }
+
+  .step-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: var(--navy-tint);
+    color: var(--navy-text);
+    padding: 5px 14px;
+    border-radius: 99px;
+    margin-bottom: 12px;
+    border: 1px solid var(--navy-border);
+  }
+  .step-badge::before {
+    display: none;
+  }
+  .badge-revision {
+    background: var(--warn) !important;
+    color: var(--warn-text) !important;
+    border-color: rgba(180,109,20,0.2) !important;
+  }
+  .badge-revision::before {
+    background: var(--warn-text) !important;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     CARD
+  ═══════════════════════════════════════════════════ */
+  .card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: clamp(1.25rem, 3vw, 2rem);
+    margin-bottom: 1.25rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+    transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+    overflow: visible;
+  }
+  .card:focus-within {
+    border-color: var(--navy-border);
+    box-shadow: 0 4px 12px rgba(30,58,95,0.05);
+  }
+  .card-grid-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* Two columns, equal width */
+    gap: 1rem; /* Gap between cards */
+  }
+
+  .card-title {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 14px;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     FORM ELEMENTS
+  ═══════════════════════════════════════════════════ */
+  .field { margin-bottom: 1rem; contain: layout style; }
+  .field:last-child { margin-bottom: 0; }
+  .field label {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text2);
+    margin-bottom: 5px;
+  }
+
+  .field input,
+  .field textarea,
+  .field select {
+    width: 100%;
+    font-size: 14px;
+    padding: 9px 12px;
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    outline: none;
+    transition: border-color var(--dur-fast) var(--ease),
+                box-shadow var(--dur-fast) var(--ease),
+                background var(--dur-fast) var(--ease);
+    -webkit-appearance: none;
+    will-change: border-color, box-shadow;
+  }
+  .field input::placeholder,
+  .field textarea::placeholder { color: var(--text3); }
+  .field input:hover,
+  .field textarea:hover,
+  .field select:hover {
+    border-color: var(--border2);
+    background: var(--bg2);
+  }
+  .field input:focus,
+  .field textarea:focus,
+  .field select:focus {
+    border-color: var(--navy-bright);
+    box-shadow: 0 0 0 3px var(--navy-glow);
+    background: var(--bg);
+  }
+  .field textarea {
+    resize: vertical;
+    min-height: 88px;
+    line-height: 1.6;
+  }
+  
+  .field input[readonly],
+  .field textarea[readonly] {
+    background-color: var(--bg2);
+    color: var(--text2);
+    border-color: var(--border);
+    cursor: not-allowed;
+    opacity: 0.85;
+  }
+  .field input[readonly]:focus, .field textarea[readonly]:focus { box-shadow: none; border-color: var(--border); }
+
+  .field-row   { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .field-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  /* Custom checkboxes & radios */
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 16px; height: 16px;
+    cursor: pointer;
+    accent-color: var(--navy-bright);
+    flex-shrink: 0;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     CHECK TABLE (PII / PIA5)
+  ═══════════════════════════════════════════════════ */
+  .check-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .check-table th {
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text3);
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+  .check-table th.center { text-align: center; }
+  .check-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    line-height: 1.5;
+    vertical-align: middle;
+  }
+  .check-table td.center { text-align: center; }
+  .check-table tr:last-child td { border-bottom: none; }
+  .check-table tbody tr {
+    transition: background var(--dur-fast) var(--ease);
+  }
+  .check-table tbody tr:hover td { background: var(--bg2); }
+
+  /* ═══════════════════════════════════════════════════
+     BUTTONS
+  ═══════════════════════════════════════════════════ */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 9px 18px;
+    font-size: 13.5px;
+    font-weight: 500;
+    border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-family: var(--font);
+    white-space: nowrap;
+    transition: background var(--dur-fast) var(--ease),
+                border-color var(--dur-fast) var(--ease),
+                transform var(--dur-fast) var(--ease),
+                box-shadow var(--dur-fast) var(--ease),
+                color var(--dur-fast) var(--ease);
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    will-change: transform, background-color;
+  }
+  .btn:hover {
+    background: var(--bg2);
+    border-color: var(--border2);
+  }
+  .btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--navy-glow);
+    border-color: var(--navy-bright);
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  .btn-primary {
+    background: var(--navy);
+    color: #fff;
+    border-color: var(--navy);
+    font-weight: 500;
+  }
+  .btn-primary:hover {
+    background: var(--navy-mid);
+    border-color: var(--navy-mid);
+  }
+  .btn-primary:focus-visible {
+    box-shadow: 0 0 0 3px var(--navy-glow), 0 0 0 1px var(--navy);
+  }
+
+  .btn-danger  { background: var(--danger);  color: var(--danger-text);  border-color: transparent; }
+  .btn-success { background: var(--success); color: var(--success-text); border-color: transparent; }
+
+  .btn-sm { padding: 5px 12px; font-size: 12px; }
+
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 1.75rem;
+    flex-wrap: wrap;
+  }
+  .btn-row.spread { justify-content: space-between; }
+
+  /* Icon button */
+  .btn-icon {
+    padding: 7px;
+    border-radius: var(--radius);
+    line-height: 1;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     ALERTS
+  ═══════════════════════════════════════════════════ */
+  .alert {
+    align-items: flex-start;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    margin-bottom: 1rem;
+    line-height: 1.55;
+    border: 1px solid transparent;
+  }
+  .alert::before {
+    content: ''; width: 18px; height: 18px;
+    display: block; flex-shrink: 0; margin-top: 1px; margin-bottom: 4px;
+    background-size: contain; background-repeat: no-repeat;
+  }
+  .alert-info    { background: var(--navy-tint); color: var(--navy-text); border-color: var(--navy-border); }
+  .alert-info::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%231e3a5f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'%3E%3C/circle%3E%3Cline x1='12' y1='16' x2='12' y2='12'%3E%3C/line%3E%3Cline x1='12' y1='8' x2='12.01' y2='8'%3E%3C/line%3E%3C/svg%3E"); }
+  .alert-warn    { background: var(--warn);    color: var(--warn-text);    border-color: rgba(180,109,20,0.2); }
+  .alert-warn::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2392400e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'%3E%3C/path%3E%3Cline x1='12' y1='9' x2='12' y2='13'%3E%3C/line%3E%3Cline x1='12' y1='17' x2='12.01' y2='17'%3E%3C/line%3E%3C/svg%3E"); }
+  .alert-success { background: var(--success); color: var(--success-text); border-color: rgba(22,163,74,0.2); }
+  .alert-success::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23065f46' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 11.08V12a10 10 0 1 1-5.93-9.14'%3E%3C/path%3E%3Cpolyline points='22 4 12 14.01 9 11.01'%3E%3C/polyline%3E%3C/svg%3E"); }
+  .alert-danger  { background: var(--danger);  color: var(--danger-text);  border-color: rgba(220,38,38,0.2); }
+  .alert-danger::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23dc2626' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'%3E%3C/circle%3E%3Cline x1='15' y1='9' x2='9' y2='15'%3E%3C/line%3E%3Cline x1='9' y1='9' x2='15' y2='15'%3E%3C/line%3E%3C/svg%3E"); }
+
+  /* ═══════════════════════════════════════════════════
+     SUMMARY ROWS
+  ═══════════════════════════════════════════════════ */
+  .summary-section  { margin-bottom: 1.25rem; }
+  .summary-section h3 {
+    font-size: 11px; font-weight: 600; color: var(--text3);
+    text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px;
+  }
+  .summary-row {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr;
+    gap: 16px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    line-height: 1.5;
+    align-items: flex-start;
+  }
+  .summary-row:last-child { border-bottom: none; }
+  .summary-label {
+    color: var(--text3);
+    min-width: 156px;
+    flex-shrink: 0;
+    font-size: 12.5px;
+    overflow-wrap: anywhere;
+    line-height: 1.75;
+  }
+  .summary-value { color: var(--text); word-break: break-word; flex: 1; min-width: 0; }
+
+  /* ═══════════════════════════════════════════════════
+     TAGS
+  ═══════════════════════════════════════════════════ */
+  .pii-tag {
+    display: inline-block; background: var(--navy-tint); color: var(--navy-text);
+    border: 1px solid var(--navy-border); padding: 3px 10px; border-radius: 99px;
+    font-size: 11.5px; font-weight: 500; margin: 0 4px 6px 0;
+  }
+  .stakeholder-tag {
+    display: inline-block; background: var(--bg3); color: var(--text2);
+    border: 1px solid var(--border2); padding: 3px 10px; border-radius: var(--radius);
+    font-size: 12px; font-weight: 500; margin: 0 4px 4px 0;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     STATUS BADGES
+  ═══════════════════════════════════════════════════ */
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 99px;
+    letter-spacing: 0.01em;
+  }
+  .status-badge::before {
+    display: none;
+  }
+  .status-complete { background: var(--success); color: var(--success-text); }
+  .status-pending  { background: var(--warn);    color: var(--warn-text); }
+  .status-approved { background: var(--success); color: var(--success-text); }
+  .status-rejected { background: var(--warn);    color: var(--warn-text); }
+  .status-denied   { background: var(--danger);  color: var(--danger-text); }
+  .status-draft { background: var(--bg3); color: var(--text2); }
+  .status-escalated { background: #f3e8ff; color: #6b21a8; }
+
+  /* ═══════════════════════════════════════════════════
+     TIMELINE
+  ═══════════════════════════════════════════════════ */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before {
+    content: '';
+    position: absolute; left: 9px; top: 10px; bottom: 10px;
+    width: 1px; background: var(--border);
+  }
+  .timeline-item { position: relative; margin-bottom: 1.25rem; }
+  .timeline-item:last-child { margin-bottom: 0; }
+  .timeline-dot {
+    position: absolute; left: -23px; top: 4px;
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 2px solid var(--border2);
+    background: var(--bg);
+    transition: background var(--dur-med) var(--ease),
+                border-color var(--dur-med) var(--ease),
+                box-shadow var(--dur-med) var(--ease);
+  }
+  .timeline-dot.done     { background: #16a34a; border-color: #16a34a; }
+  .timeline-dot.active   { background: var(--navy-bright); border-color: var(--navy-bright); box-shadow: 0 0 0 3px var(--navy-glow); }
+  .timeline-dot.rejected { background: #dc2626; border-color: #dc2626; }
+
+  .timeline-title { font-size: 13px; font-weight: 500; color: var(--text); }
+  .timeline-sub   { font-size: 12px; color: var(--text2); margin-top: 3px; }
+  .timeline-comment { font-size: 12px; color: var(--text3); margin-top: 5px; font-style: italic; padding: 6px 10px; background: var(--bg2); border-radius: var(--radius); border-left: 2px solid var(--border2); }
+
+  /* ═══════════════════════════════════════════════════
+     LOADING / SPINNER
+  ═══════════════════════════════════════════════════ */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    display: inline-block;
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--navy-bright);
+    border-radius: 50%;
+    animation: spin 0.65s linear infinite;
+    flex-shrink: 0;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     CERTIFICATE
+  ═══════════════════════════════════════════════════ */
+  @keyframes certReveal {
+    from { opacity: 0; transform: scale(0.96) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .cert {
+    background: var(--bg);
+    border: 2px solid var(--navy-border);
+    border-radius: var(--radius-lg);
+    padding: 2.5rem 2rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    animation: certReveal var(--dur-slow) var(--ease-out) 0.1s both;
+  }
+  .cert::after {
+    content: '';
+    position: absolute; inset: 7px;
+    border: 1px dashed var(--navy-border);
+    border-radius: 8px;
+    pointer-events: none;
+    opacity: 0.6;
+  }
+  .cert-seal {
+    width: 68px; height: 68px;
+    border-radius: 50%;
+    background: var(--navy-tint);
+    border: 2px solid var(--navy-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1.25rem;
+    color: var(--navy);
+    font-size: 28px;
+    box-shadow: 0 0 0 6px rgba(30,58,95,0.05);
+  }
+  .cert h2 {
+    font-size: 17px; font-weight: 600; color: var(--text);
+    letter-spacing: -0.02em;
+    margin-bottom: 3px;
+  }
+  .cert p { font-size: 13px; color: var(--text2); line-height: 1.7; }
+  .cert-id {
+    font-size: 12.5px;
+    font-family: var(--font-mono);
+    color: var(--navy-text);
+    background: var(--navy-tint);
+    padding: 4px 12px;
+    border-radius: 99px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 12px;
+    letter-spacing: 0.02em;
+    border: 1px solid var(--navy-border);
+  }
+  .cert-program-block {
+    margin: 1.25rem 0;
+    padding: 1rem 1.25rem;
+    background: var(--bg2);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+  
+  /* ═══════════════════════════════════════════════════
+     FLAG FEEDBACK STYLING
+  ═══════════════════════════════════════════════════ */
+  .input-wrapper {
+    position: relative;
+  }
+  input.has-flag, select.has-flag, textarea.has-flag, .upload-card.has-flag, .card.has-flag, td.has-flag,
+  input.is-invalid, select.is-invalid, textarea.is-invalid {
+    border-color: var(--danger-text) !important;
+    box-shadow: 0 0 0 1px var(--danger-text) !important;
+  }
+  input.is-invalid:focus, select.is-invalid:focus, textarea.is-invalid:focus {
+    box-shadow: 0 0 0 3px rgba(220,38,38,0.15), 0 0 0 1px var(--danger-text) !important;
+  }
+  .input-wrapper input.has-flag, .input-wrapper textarea.has-flag {
+    padding-right: 36px;
+  }
+  .input-wrapper .select-arrow {
+    right: 36px; /* Move arrow to make space for flag icon */
+  }
+  .flag-icon-tooltip {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--danger-text);
+    cursor: help;
+    z-index: 2;
+  }
+  .flag-icon-tooltip .flag-tooltip-content {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    bottom: 120%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: var(--navy-text);
+    color: white;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    font-size: 12px;
+    width: 240px;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+    z-index: 10;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  .flag-icon-tooltip .flag-tooltip-content::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 6px;
+    border-style: solid;
+    border-color: var(--navy-text) transparent transparent transparent;
+  }
+  .flag-icon-tooltip:hover .flag-tooltip-content,
+  .flag-icon-tooltip:focus .flag-tooltip-content,
+  .flag-icon-tooltip:focus-within .flag-tooltip-content {
+    visibility: visible;
+    opacity: 1;
+  }
+  .check-table td .flag-tooltip-content {
+    bottom: auto;
+    top: 100%;
+    margin-top: 8px;
+  }
+  .check-table td .flag-tooltip-content::after {
+    top: auto;
+    bottom: 100%;
+    border-color: transparent transparent var(--navy-text) transparent;
+  }
+
+  /* Info tooltip variant — inline label helper (NOT positioned absolutely) */
+  .info-tooltip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 4px;
+    cursor: help;
+    position: relative;
+    color: var(--navy-bright);
+    flex-shrink: 0;
+    vertical-align: middle;
+  }
+  .info-tooltip .info-tooltip-content {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: var(--navy);
+    color: white;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    font-size: 12px;
+    width: 220px;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+    z-index: 1000;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    white-space: normal;
+    line-height: 1.5;
+  }
+  .info-tooltip .info-tooltip-content::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 6px;
+    border-style: solid;
+    border-color: var(--navy) transparent transparent transparent;
+  }
+  .check-table th .info-tooltip .info-tooltip-content {
+    bottom: auto;
+    top: calc(100% + 8px);
+  }
+  .check-table th .info-tooltip .info-tooltip-content::after {
+    top: auto;
+    bottom: 100%;
+    border-color: transparent transparent var(--navy) transparent;
+  }
+  .info-tooltip:hover .info-tooltip-content,
+  .info-tooltip:focus .info-tooltip-content,
+  .info-tooltip:focus-within .info-tooltip-content {
+    visibility: visible;
+    opacity: 1;
+  }
+  .flag-feedback {
+    margin-top: 6px; 
+    margin-bottom: 12px; 
+    font-size: 12px; 
+    color: var(--danger-text); 
+    background: var(--danger); 
+    border: 1px solid rgba(220,38,38,0.2); 
+    padding: 8px 12px; 
+    border-radius: var(--radius); 
+    display: flex; 
+    align-items: flex-start; 
+    gap: 8px;
+  }
+  .flag-feedback svg {
+    flex-shrink: 0; 
+    margin-top: 2px;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     REVIEW DASHBOARD
+  ═══════════════════════════════════════════════════ */
+  .app-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    border-radius: 0;
+    transition: background var(--dur-fast) var(--ease),
+                padding var(--dur-fast) var(--ease);
+    margin: 0 -0.25rem;
+    padding-left: 0.25rem;
+    padding-right: 0.25rem;
+    border-radius: var(--radius);
+  }
+
+  .stakeholder-row { grid-template-columns: 1fr; gap: 8px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; }
+  .stakeholder-row .btn-remove { width: 100%; margin-top: 4px; }
+  
+  .app-row:last-child { border-bottom: none; }
+  .app-row:hover { background: var(--bg2); }
+  .app-row:active { background: var(--bg3); }
+  .app-info { flex: 1; min-width: 0; }
+  .app-id {
+    font-size: 12.5px;
+    font-family: var(--font-mono);
+    color: var(--navy-text);
+    background: var(--navy-tint);
+    padding: 4px 12px;
+    border-radius: 99px;
+    letter-spacing: 0.02em;
+    border: 1px solid var(--navy-border);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .app-name {
+    font-size: 13.5px; font-weight: 500;
+    color: var(--text); margin-top: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .app-date { font-size: 12px; color: var(--text3); margin-top: 2px; }
+
+  /* ═══════════════════════════════════════════════════
+     TOAST NOTIFICATIONS
+  ═══════════════════════════════════════════════════ */
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(100%) scale(0.95); }
+    to   { opacity: 1; transform: translateX(0) scale(1); }
+  }
+  @keyframes toastOut {
+    from { opacity: 1; transform: translateX(0) scale(1); }
+    to   { opacity: 0; transform: translateX(100%) scale(0.95); }
+  }
+  .toast {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    max-width: 360px;
+    padding: 12px 16px 12px 14px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-weight: 500;
+    z-index: 2147483646;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: toastIn var(--dur-med) var(--ease-out) both;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+    font-family: var(--font);
+    border: 1px solid transparent;
+    line-height: 1.4;
+  }
+  .toast-error   { background: var(--danger);  color: var(--danger-text);  border-color: rgba(220,38,38,0.2); }
+  .toast-success { background: var(--success); color: var(--success-text); border-color: rgba(22,163,74,0.2); }
+  .toast-icon    { font-size: 15px; flex-shrink: 0; }
+
+  /* ═══════════════════════════════════════════════════
+     LOADING OVERLAY
+  ═══════════════════════════════════════════════════ */
+  @keyframes overlayIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  .loader-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.35);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2147483647;
+    animation: overlayIn var(--dur-med) var(--ease) both;
+  }
+  .loader-box {
+    background: var(--bg);
+    padding: 1.75rem 2rem;
+    border-radius: var(--radius-lg);
+    text-align: center;
+    border: 1px solid var(--border);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    min-width: 200px;
+  }
+  .loader-box .spinner { width: 28px; height: 28px; margin: 0 auto 1rem; border-width: 3px; }
+  .loader-box p { color: var(--text); font-size: 14px; font-weight: 500; }
+
+  /* ═══════════════════════════════════════════════════
+     MODAL (email prompt)
+  ═══════════════════════════════════════════════════ */
+  @keyframes modalIn {
+    from { opacity: 0; transform: scale(0.96) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2147483647;
+    padding: 1rem;
+  }
+  .modal-box {
+    width: 100%; max-width: 420px;
+    background: var(--bg);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    animation: modalIn var(--dur-med) var(--ease-out) both;
+  }
+  .modal-box h3 { font-size: 16px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; }
+  .modal-box p  { font-size: 13px; color: var(--text2); line-height: 1.6; margin-bottom: 16px; }
+
+  /* ═══════════════════════════════════════════════════
+     PROCESSING SCREEN
+  ═══════════════════════════════════════════════════ */
+  .processing-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 5rem 2rem;
+    text-align: center;
+    gap: 0;
+  }
+  .processing-screen .spinner-lg {
+    width: 44px; height: 44px;
+    border-width: 3px;
+    margin-bottom: 1.5rem;
+  }
+  .processing-screen h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .processing-screen p  { font-size: 13px; color: var(--text2); line-height: 1.7; }
+
+  /* ═══════════════════════════════════════════════════
+     FOOTER WATERMARK
+  ═══════════════════════════════════════════════════ */
+  .app-footer {
+    margin-top: 1.75rem;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    font-size: 11.5px;
+    color: var(--text3);
+    text-align: center;
+    letter-spacing: 0.01em;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     DIVIDER
+  ═══════════════════════════════════════════════════ */
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 1rem 0;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     STAKEHOLDER INPUT ROW
+  ═══════════════════════════════════════════════════ */
+  .stakeholder-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 8px;
+    align-items: end;
+    margin-bottom: 12px;
+  }
+  .stakeholder-row .field { margin-bottom: 0; }
+
+  /* ═══════════════════════════════════════════════════
+     CUSTOM OTHERS TABLE REMOVE BTN
+  ═══════════════════════════════════════════════════ */
+  .btn-remove {
+    padding: 5px 10px;
+    font-size: 12px;
+    background: var(--danger);
+    color: var(--danger-text);
+    border-color: transparent;
+    border-radius: var(--radius);
+  }
+  .btn-remove:hover { opacity: 0.85; background: var(--danger); }
+
+  /* ═══════════════════════════════════════════════════
+     CONSENT CHECKBOX WRAPPER
+  ═══════════════════════════════════════════════════ */
+  .consent-wrap {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.6;
+    padding: 1rem 1.25rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+  }
+  .consent-wrap:hover { border-color: var(--navy-border); background: var(--navy-tint); }
+  .consent-wrap input { margin-top: 2px; }
+
+  /* ═══════════════════════════════════════════════════
+     SKIP LINK (accessibility)
+  ═══════════════════════════════════════════════════ */
+  .skip-link {
+    position: absolute;
+    top: -100%;
+    left: 0;
+    background: var(--navy);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-weight: 500;
+    z-index: 999999;
+    text-decoration: none;
+    transition: top var(--dur-fast);
+  }
+  .skip-link:focus { top: 8px; }
+
+  /* ═══════════════════════════════════════════════════
+     RESPONSIVE
+  ═══════════════════════════════════════════════════ */
+  @media (max-width: 767px) {
+    #app { padding: 0.5rem 1rem 3rem; }
+    .page-header h1 { font-size: 19px; }
+    .card { padding: 1rem 1.25rem; }
+    .card-grid-container {
+      grid-template-columns: 1fr; /* Stack cards vertically on small screens */
+      gap: 0.75rem;
+    }
+
+    .field-row, .field-row-3 { grid-template-columns: 1fr; gap: 8px; }
+
+    .summary-row { flex-direction: column; gap: 4px; padding: 10px 0; }
+    .summary-label { min-width: unset; font-size: 11px; line-height: 1.2; }
+
+    .form-sidebar {
+      margin-left: 12px;
+    }
+
+    /* Sidebar mobile overrides - revert to progress bar tracking */
+    .form-layout { grid-template-columns: 1fr; gap: 0.75rem; }
+    .form-sidebar {
+      background: transparent;
+      padding: 0 2px;
+      top: 0;
+      position: relative;
+      z-index: 1;
+      box-shadow: none;
+    }
+    .form-sidebar-title { display: none; }
+    .sidebar-steps {
+      flex-direction: row;
+      justify-content: space-between;
+      gap: 4px;
+      padding: 0;
+      overflow: visible;
+    }
+    .sidebar-step {
+      flex: 1;
+      height: 4px;
+      border-radius: 99px;
+      background: var(--bg3);
+      opacity: 1;
+      min-width: 0;
+      padding: 0;
+      margin: 0;
+      transition: background var(--dur-slow) var(--ease-out);
+    }
+    .sidebar-step.active { background: var(--navy-bright); }
+    .sidebar-step.done { background: #16a34a; }
+    .sidebar-step-num { display: none; }
+    .sidebar-step-text {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); border: 0;
+    }
+    
+    /* Standardize Button Rows for Touch Devices */
+    .btn-row,
+    .btn-row.spread { 
+      flex-direction: column-reverse !important; 
+      align-items: stretch !important;
+      gap: 12px; 
+    }
+    .btn-row > div > span { text-align: center; }
+    .btn-row > div > .status-badge { align-self: center; }
+
+    .cert { padding: 1.75rem 1.25rem; }
+    .cert-seal { width: 56px; height: 56px; font-size: 24px; }
+  }
+
+  /* ═══════════════════════════════════════════════════
+     REDUCED MOTION
+  ═══════════════════════════════════════════════════ */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+  </style>
+</head>
+<body>
+<a class="skip-link" href="#app">Skip to main content</a>
+
+<div id="app" role="main">
+  <div class="logo-brand" id="app-mini-logo">
+    <img src="https://upload.wikimedia.org/wikipedia/commons/e/e2/Megaworld_logo_and_wordmark.svg" alt="Megaworld Logo" height="28">
+  </div>
+  <div id="screen-dcs"     class="hidden" aria-live="polite"></div>
+  <div id="screen-guide" class="hidden" aria-live="polite"></div>
+  <div id="screen-pia1"    class="hidden" aria-live="polite"></div>
+  <div id="screen-pia2"    class="hidden" aria-live="polite"></div>
+  <div id="screen-pia3"    class="hidden" aria-live="polite"></div>
+  <div id="screen-pia4"    class="hidden" aria-live="polite"></div>
+  <div id="screen-pia5"    class="hidden" aria-live="polite"></div>
+  <div id="screen-summary"    class="hidden" aria-live="polite"></div>
+  <div id="screen-processing" class="hidden" aria-live="polite"></div>
+  
+  <div id="screen-certificate" class="hidden" aria-live="polite"></div>
+  
+  <div id="screen-confirmation" class="hidden" aria-live="polite"></div>
+</div>
+
+<div id="draft-indicator" style="position:fixed; bottom:20px; right:20px; background:var(--bg); border:1px solid var(--border); padding:8px 16px; border-radius:99px; font-size:12px; color:var(--text2); box-shadow:0 4px 12px rgba(0,0,0,0.08); display:none; align-items:center; gap:8px; z-index:999; transition: opacity 0.3s ease;">
+  <span class="spinner" style="width:14px; height:14px; border-width:2px; display:none;" id="draft-spinner"></span>
+  <span id="draft-status">Saved</span>
+</div>
+
+<script type="text/javascript">
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// � PERFORMANCE OPTIMIZATION: DOM Cache & Memoization
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const domCache = {};
+const escapeHtmlCache = new Map();
+let persistStateTimeout = null;
+
+// Get DOM element with caching
+function getCachedElement(id) {
+  if (!domCache[id]) {
+    domCache[id] = document.getElementById(id);
+  }
+  return domCache[id];
+}
+
+// Clear cache when screens change
+function clearDomCache() {
+  Object.keys(domCache).forEach(k => delete domCache[k]);
+}
+
+// Debounce function for performance
+function debounce(fn, delay) {
+  let timeoutId;
+  return function(...args) {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+
+// Memoized HTML escaping
+function escapeHtmlMemo(str) {
+  if (escapeHtmlCache.has(str)) {
+    return escapeHtmlCache.get(str);
+  }
+  const result = escapeHtml(str);
+  if (escapeHtmlCache.size > 500) {
+    const firstKey = escapeHtmlCache.keys().next().value;
+    escapeHtmlCache.delete(firstKey);
+  }
+  escapeHtmlCache.set(str, result);
+  return result;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// �📋 STATE
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const state = {
+  currentScreen: 'dcs',
+  appId: '', sessionId: '', baseSessionId: '', revision: 0,
+  parentID: '',
+  submittedAt: '', userEmail: '',
+  isIncomplete: false,  // ← Marks draft as unsaved/incomplete until final submission
+  isEditing: false,  // True if editing previously submitted application
+  draftId: '', // Unique draft identifier
+  draftStatus: 'incomplete', // 'incomplete' | 'editing' | 'completed' | 'rejected'
+  isLoadingExistingDraft: false, // True if resuming old draft (prevents switching)
+  availableDrafts: [], // List of user's old incomplete drafts
+  approverFlags: {},
+  pia1: { dept:'', program:'', date:'', drafter:'', drafterEmail:'', drafterPhone:'', deptHead:'', deptHeadEmail:'', deptHeadPhone:'', divHead:'', divHeadEmail:'', divHeadPhone:'', immediateHead:'', immediateHeadEmail:'', immediateHeadPhone:'', description:'', purpose:'', benefits:'', scope:'', endUser:'' },
+  pia2: {}, pia2CustomOthers: [],
+  pia3: { intStakeholders:[{name:'', email:''}], extStakeholders:[{name:'', email:''}], intDescription:'', extDescription:'' },
+  pia4: { collect:'', use:'', retain:'', disclose:'', dispose:'' },
+  pia5: {},
+  dcsData: null,
+  isFlagged: false, approvalStep: 0, isReadyForPIA: false, hasNDADPA: false,
+  approvers: [
+    { name:'Immediate Head',     email:'', decision: null, comment:'' },
+    { name:'Department Head',    email:'', decision: null, comment:'' },
+    { name:'Privacy Officer',    email:'', decision: null, comment:'' }
+  ],
+  status: 'Pending', isSubmitting: false
+};
+
+const pii2Fields = ['Name','Home Address','Business Address','Email Address','Telephone No. (Work)','Telephone No. (Home)','Age','Date of Birth','Marital Status','Color, Race or Ethnic Origin','Religion','Education','Photo','Biometrics','Political Association','Philosophical Beliefs / Orientation','Health','Sexual Life, Preference, Practice','Offences Committed or Alleged','Government-issued IDs','Others']; // Moved to global scope in Code.gs
+const pia5Questions = [
+  'Do you have a Privacy Policy visible and available to your data subjects?',
+  'Is consent secured prior to the collection of personal data?',
+  'Will any information also be collected indirectly about the individual?',
+  'Do you have steps to ensure that all data processed are accurate, complete, and up to date?',
+  'The program has taken reasonable steps to protect the personal information it holds from misuse and loss and from unauthorised access, modification or disclosure.',
+  'Do you have a retention policy for your hard and digital copies?',
+  'Do you collect or disclose information outside the Philippines?',
+  'Do you have outsourcing or data sharing agreement with 3rd parties?'
+];
+const STORAGE_KEY = 'pia-spa-system:draft-state:v1';
+
+// ─── Sanitization ─────────────────────────────────────
+function sanitizeText(value, maxLength = 5000) {
+  return String(value ?? '').replace(/[<>'"`]/g, '').replace(/\u0000/g, '')
+    .replace(/javascript:/gi, '').replace(/on\w+\s*=/gi, '')
+    .trim().slice(0, maxLength);
+}
+function sanitizeNumeric(value, maxLength = 11) {
+  // Only accept numbers and limit to 11 digits (stripping any whitespaces/non-digits)
+  return String(value ?? '').replace(/\D/g, '').slice(0, maxLength);
+}
+
+/**
+ * Validates a person's name field:
+ * 1. Strips invalid special characters (e.g., @#$&^*()&)
+ * 2. Rejects email addresses (contains @ with domain)
+ * 3. For alpha-only mode, strips digits (used for stakeholder names)
+ * @param {string} value - The input value to validate
+ * @param {boolean} alphaOnly - If true, strips all digits (for stakeholder names)
+ * @returns {string} The cleaned name value
+ */
+function validatePersonName(value, alphaOnly = false) {
+  if (!value) return '';
+  // Remove characters that are never valid in person names (preserve letters, spaces, hyphens, apostrophes)
+  let cleaned = String(value).replace(/[@#$%^&*()_+={}|\[\]\\:;\"'<>,~`0-9]/g, '');
+  // If NOT alphaOnly mode, re-allow digits (digits are stripped by default in the combined regex above)
+  if (!alphaOnly) {
+    // Keep digits from the original value (they were stripped by the combined regex)
+    cleaned = String(value).replace(/[@#$%^&*()_+={}|\[\]\\:;\"'<>,~`]/g, '');
+  }
+  // Detect and reject email addresses in name fields
+  if (/[^\s@]+@[^\s@]+\.[^\s@]+/.test(cleaned)) {
+    // Strip the email-like portion
+    cleaned = cleaned.replace(/[^\s@]+@[^\s@]+\.[^\s@]+\s*/g, '');
+  }
+  return cleaned.trim();
+}
+
+function sanitizeChoice(value, allowedValues) {
+  const c = sanitizeText(value, 32).toUpperCase();
+  return allowedValues.includes(c) ? c : '';
+}
+function normalizeDecision(value) {
+  const c = sanitizeText(value, 16).toUpperCase();
+  if (c === 'APPROVE') return 'Approve';
+  if (c === 'REJECT') return 'Reject';
+  if (c === 'DENY') return 'Deny';
+  return null;
+}
+function escapeHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ─── Info Tooltip Helper ──────────────────────────────
+/**
+ * Generates an inline info tooltip icon with hover text.
+ * Usage: infoTip("Your tooltip text here")
+ */
+function infoTip(text) {
+  return `<span class="info-tooltip" tabindex="0" aria-label="${escapeHtml(text)}" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1.5px solid var(--text3);color:var(--text3);font-size:11px;font-weight:700;cursor:help;margin-left:5px;vertical-align:middle;position:relative;flex-shrink:0;">?<div class="info-tooltip-content">${escapeHtml(text)}</div></span>`;
+}
+
+// Debounced persistState for better performance (batches updates)
+const debouncedPersistState = debounce(() => {
+  persistStateImmediate();
+}, 500);
+
+// ─── State persistence ────────────────────────────────
+function getStateSnapshot() {
+  let screen = state.currentScreen;
+  if (screen === 'processing') screen = 'summary';
+  const snapshot = { 
+    parentID: state.parentID,
+    currentScreen: screen, 
+    appId: state.appId, 
+    sessionId: state.sessionId, 
+    baseSessionId: state.baseSessionId, 
+    revision: state.revision, 
+    submittedAt: state.submittedAt, 
+    draftId: state.draftId,
+    draftStatus: state.draftStatus,
+    isIncomplete: state.isIncomplete,
+    isEditing: state.isEditing,
+    isLoadingExistingDraft: state.isLoadingExistingDraft,
+    isFlagged: state.isFlagged, 
+    approvalStep: state.approvalStep, 
+    approvers: state.approvers, 
+    status: state.status,
+    pia1: state.pia1,
+    pia2: state.pia2,
+    pia2CustomOthers: state.pia2CustomOthers,
+    pia3: state.pia3,
+    pia4: state.pia4,
+    pia5: state.pia5,
+    dcsData: state.dcsData,
+    approverFlags: state.approverFlags
+  };
+  return snapshot;
+}
+// Internal immediate persist (called by debounced version)
+function persistStateImmediate() {
+  // Server-side draft persistence (more secure than localStorage)
+  // Attempts to save state to server; fails silently if offline or API errors
+  if (!state.sessionId || !state.isIncomplete) {
+    return; // Don't save if no session ID or app is already submitted
+  }
+  
+  if (state.isLoadingExistingDraft && !state.draftId) {
+    return;
+  }
+  
+  try {
+    const snapshot = getStateSnapshot();
+    showDraftStatus('Saving');
+    
+    google.script.run
+      .withSuccessHandler(result => {
+        if (result && result.draftId) {
+          state.draftId = result.draftId;
+        }
+        // Update last save timestamp
+        state.lastDraftSave = new Date().toLocaleTimeString();
+        showDraftStatus('Saved');
+      })
+      .withFailureHandler(err => {
+        showDraftStatus('Save failed: ' + (err?.message || err), true);
+      })
+      .apiSaveDraft(state.sessionId, snapshot);
+  } catch (e) {
+    showDraftStatus('Save error: ' + e.message, true);
+  }
+}
+
+// Debounced version - batches rapid changes
+function persistState() {
+  debouncedPersistState();
+}
+function showDraftStatus(msg, isError = false) {
+  const el = document.getElementById('draft-indicator');
+  const textEl = document.getElementById('draft-status');
+  const spinner = document.getElementById('draft-spinner');
+  if (!el || !textEl) return;
+  
+  el.style.display = 'flex';
+  textEl.textContent = msg;
+  textEl.style.color = isError ? 'var(--danger-text)' : 'var(--text2)';
+  
+  if (msg.toLowerCase().includes('saving')) {
+    spinner.style.display = 'block';
+    el.style.opacity = '1';
+  } else {
+    spinner.style.display = 'none';
+    el.style.opacity = '1';
+    setTimeout(() => {
+      el.style.opacity = '0';
+      setTimeout(() => {
+        if(el.style.opacity === '0') el.style.display = 'none';
+      }, 300);
+    }, 2500);
+  }
+}
+function manualSaveDraft() {
+  if (!state.sessionId) {
+    showDraftStatus('No active session - start a new application first', true);
+    return;
+  }
+  persistState();
+}
+function restoreState() {
+  // Synchronous state restoration from in-memory state (during same session).
+  // For cross-session restoration, use asyncRestoreDraft() after getting sessionId.
+  // Returns false to indicate no in-memory state found.
+  try {
+    return false;
+  } catch(e) { 
+    return false; 
+  }
+}
+
+/**
+ * Asynchronously restores draft from server after sessionId is known.
+ * Call this after the user gets a sessionId (e.g., loading an existing submission).
+ */
+function asyncRestoreDraft(sessionId) {
+  if (!sessionId) {
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(result => {
+      hideLoading();
+      if (result && result.success && result.state) {
+        const s = result.state;
+        state.parentID = s.parentID || '';
+        state.currentScreen = s.currentScreen || state.currentScreen;
+        state.appId = s.appId || state.appId;
+        state.sessionId = s.sessionId || state.sessionId;
+        state.baseSessionId = s.baseSessionId || state.baseSessionId;
+        state.revision = Number(s.revision || 0);
+        state.submittedAt = s.submittedAt || state.submittedAt;
+        state.draftId = s.draftId || state.draftId;
+        state.draftStatus = s.draftStatus || state.draftStatus;
+        state.isIncomplete = s.isIncomplete !== undefined ? s.isIncomplete : state.isIncomplete;
+        state.isLoadingExistingDraft = s.isLoadingExistingDraft !== undefined ? s.isLoadingExistingDraft : state.isLoadingExistingDraft;
+        state.isFlagged = !!s.isFlagged;
+        state.approvalStep = Number(s.approvalStep || 0);
+        state.approvers = Array.isArray(s.approvers) && s.approvers.length ? s.approvers : state.approvers;
+        state.status = s.status || state.status;
+        // Merge server/draft data into existing state to preserve DCS-pre-populated fields
+        if (s.pia1 && typeof s.pia1 === 'object') {
+          state.pia1 = { ...state.pia1, ...s.pia1 };
+        }
+        if (s.pia2 && typeof s.pia2 === 'object') {
+          state.pia2 = { ...state.pia2, ...s.pia2 };
+        }
+        state.pia2CustomOthers = Array.isArray(s.pia2CustomOthers) ? s.pia2CustomOthers : state.pia2CustomOthers;
+        if (s.pia3 && typeof s.pia3 === 'object') {
+          state.pia3 = { ...state.pia3, ...s.pia3 };
+        }
+        if (s.pia4 && typeof s.pia4 === 'object') {
+          state.pia4 = { ...state.pia4, ...s.pia4 };
+        }
+        if (s.pia5 && typeof s.pia5 === 'object') {
+          state.pia5 = { ...state.pia5, ...s.pia5 };
+        }
+        state.dcsData = state.dcsData || s.dcsData; // Prioritize fresh DCS context over stale draft
+        
+        let draftFlags = s.approverFlags || {};
+        if (typeof draftFlags === 'string') {
+          try { draftFlags = JSON.parse(draftFlags); } catch(e) { draftFlags = {}; }
+        }
+        state.approverFlags = Object.keys(state.approverFlags || {}).length > 0 ? state.approverFlags : draftFlags;
+        
+        // Force revision mode if this is a draft for a rejected submission
+        if (window.isRevisionDraft) {
+          state.isEditing = true;
+        }
+        
+        // Ensure drafterEmail always matches the currently logged in user
+        if (state.userEmail) {
+          state.pia1.drafterEmail = state.userEmail;
+        }
+        
+        show(state.currentScreen);
+        renderCurrentScreen();
+      } else {
+        showError('Could not find existing draft. Starting new session.');
+        createNewApplicationSession();
+      }
+    })
+    .withFailureHandler(err => {
+      hideLoading();
+      showError('Failed to restore draft: ' + err.message);
+    })
+    .apiRestoreDraft(sessionId);
+}
+
+// ─── Screen routing ───────────────────────────────────
+function show(name) {
+  document.querySelectorAll('#app > div').forEach(d => d.classList.add('hidden'));
+  const el = document.getElementById('screen-' + name);
+  if (el) {
+    el.classList.remove('hidden');
+    el.removeAttribute('style');
+    void el.offsetWidth; // force reflow to retrigger animation
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = '';
+  }
+
+  const miniLogo = document.getElementById('app-mini-logo');
+  if (miniLogo) {
+    name === 'dcs' ? miniLogo.classList.add('hidden') : miniLogo.classList.remove('hidden');
+  }
+
+  state.currentScreen = name;
+  // Move focus to main heading for accessibility
+  requestAnimationFrame(() => {
+    const h = el?.querySelector('h1');
+    if (h) { h.setAttribute('tabindex', '-1'); h.focus(); }
+  });
+}
+
+// Helper function to determine the correct CSS class for a status badge
+function getStatusBadgeClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (s.includes('approve')) return 'status-approved'; // Covers 'Approved', 'Approved by ISM'
+  if (s.includes('reject') || s.includes('return')) return 'status-rejected';
+  if (s.includes('deny')) return 'status-denied';
+  if (s.includes('draft')) return 'status-draft';
+  if (s.includes('escalat')) return 'status-escalated';
+  return 'status-pending'; // Default for 'Pending', 'Escalated to Division Head', etc.
+}
+
+const PIA1_FIELD_CONFIG = {
+  dept: { max: 150, id: 'p1-dept' },
+  date: { max: 32, id: 'p1-date' },
+  program: { max: 200, id: 'p1-prog' },
+  drafter: { max: 150, id: 'p1-drafter' },
+  drafterEmail: { max: 150, id: 'p1-demail' },
+  drafterPhone: { max: 50, id: 'p1-dphone' },
+  deptHead: { max: 150, id: 'p1-dhead' },
+  deptHeadEmail: { max: 150, id: 'p1-dhemail' },
+  deptHeadPhone: { max: 50, id: 'p1-dhphone' },
+  divHead: { max: 150, id: 'p1-divh' },
+  divHeadEmail: { max: 150, id: 'p1-divemail' },
+  divHeadPhone: { max: 50, id: 'p1-divphone' },
+  immediateHead: { max: 150, id: 'p1-ihead' },
+  immediateHeadEmail: { max: 150, id: 'p1-iemail' },
+  immediateHeadPhone: { max: 50, id: 'p1-iphone' },
+  description: { max: 4000, id: 'p1-desc' },
+  purpose: { max: 2500, id: 'p1-purp' },
+  benefits: { max: 2500, id: 'p1-ben' },
+  scope: { max: 2500, id: 'p1-scope' },
+  endUser: { max: 250, id: 'p1-eu' }
+};
+
+function syncPIA1State() {
+  // OPTIMIZATION: Use cached element getter for better performance
+  Object.keys(PIA1_FIELD_CONFIG).forEach(k => {
+    const config = PIA1_FIELD_CONFIG[k];
+    const el = getCachedElement(config.id);
+    if(el) state.pia1[k] = sanitizeText(el.value || '', config.max);
+  });
+}
+
+function normalizeStakeholders(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return [{name: '', email: ''}];
+  return arr.map(item => {
+    if (typeof item === 'string') return { name: item, email: '' };
+    return { name: item.name || '', email: item.email || '' };
+  });
+}
+
+function syncPIA3State() {
+  const gather = (prefix, targetArray) => {
+    const arr = [];
+    const max = Math.max(targetArray.length, document.querySelectorAll(`input[id^="${prefix}-name-"]`).length);
+    for (let i = 0; i < max; i++) {
+      const nameEl = document.getElementById(`${prefix}-name-${i}`);
+      const emailEl = document.getElementById(`${prefix}-email-${i}`);
+      if (nameEl || emailEl) {
+        const n = sanitizeText(nameEl?.value || '', 180);
+        const e = sanitizeText(emailEl?.value || '', 180);
+        if (n || e) arr.push({ name: n, email: e });
+      }
+    }
+    return arr.length ? arr : [{name: '', email: ''}];
+  };
+  state.pia3.intStakeholders = gather('p3-int', state.pia3.intStakeholders || []);
+  state.pia3.extStakeholders = gather('p3-ext', state.pia3.extStakeholders || []);
+  
+  const intDescEl = getCachedElement('p3-int-desc');
+  if (intDescEl) state.pia3.intDescription = sanitizeText(intDescEl.value, 4000);
+  
+  const extDescEl = getCachedElement('p3-ext-desc');
+  if (extDescEl) state.pia3.extDescription = sanitizeText(extDescEl.value, 4000);
+}
+function syncPIA4State() {
+  // OPTIMIZATION: Batch element access
+  ['collect','use','retain','disclose','dispose'].forEach(k => {
+    const el = getCachedElement('p4-'+k);
+    if(el) state.pia4[k] = sanitizeText(el.value||'', 2500);
+  });
+}
+function syncPIA5State() {
+  pia5Questions.forEach((q, i) => {
+    const el = document.querySelector(`input[name="q5-${i}"]:checked`);
+    if(el) state.pia5[i] = sanitizeChoice(el.value||'', ['YES','NO','N/A']);
+  });
+}
+
+function getModeBadge() {
+  if (state.isEditing) {
+    return `<span class="step-badge badge-revision" style="margin-bottom:0; background:var(--warn); color:var(--warn-text); border-color:rgba(180,109,20,0.2);">Revision Mode</span>`;
+  }
+  return '';
+}
+
+// OPTIMIZATION: Pre-compute constant SVG icon for flags
+const FLAG_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>';
+const flagIconCache = new Map();
+
+function getFlagMessage(fieldKey) {
+  if (!state.approverFlags) return '';
+  return state.approverFlags[fieldKey] || '';
+}
+
+function getFlagClass(fieldKey) {
+  return getFlagMessage(fieldKey) ? 'has-flag' : '';
+}
+
+function getFlagIconHtml(fieldKey) {
+  // OPTIMIZATION: Cache flag icon HTML to avoid recalculating
+  if (flagIconCache.has(fieldKey)) {
+    return flagIconCache.get(fieldKey);
+  }
+  
+  const flagMsg = getFlagMessage(fieldKey);
+  if (!flagMsg) {
+    flagIconCache.set(fieldKey, '');
+    return '';
+  }
+  
+  const escapedMsg = escapeHtmlMemo(flagMsg);
+  const html = `
+    <div class="flag-icon-tooltip" tabindex="0" aria-label="Approver note: ${escapedMsg}">
+      ${FLAG_SVG}
+      <div class="flag-tooltip-content">
+        <strong>Approver Note:</strong> ${escapedMsg}
+      </div>
+    </div>
+  `;
+  flagIconCache.set(fieldKey, html);
+  return html;
+}
+
+/**
+ * Creates a brand new application session
+ */
+function createNewApplicationSession() {
+  google.script.run
+    .withSuccessHandler(result => {
+      hideLoading();
+      if (result && result.sessionId) {
+        state.appId = '';  // Keep empty until first submission
+        state.sessionId = result.sessionId;
+        state.baseSessionId = result.sessionId;  // Use for draft identification
+        state.draftStatus = 'incomplete';
+        state.isIncomplete = true;
+        state.isEditing = false;
+        state.isLoadingExistingDraft = false;
+        show('pia5');
+        renderPIA5Survey();
+        persistState();
+      } else {
+        showError('Failed to create session: ' + (result?.error || 'Unknown error'));
+      }
+    })
+    .withFailureHandler(err => {
+      hideLoading();
+      showError('Error starting application: ' + (err?.message || err));
+    })
+    .apiGenerateNewSessionId();
+}
+
+function goBack(screen) {
+  if (state.isEditing && screen === 'guide') return;
+  if (state.currentScreen === 'pia1') syncPIA1State();
+  else if (state.currentScreen === 'pia2') syncPIA2State();
+  else if (state.currentScreen === 'pia3') syncPIA3State();
+  else if (state.currentScreen === 'pia4') syncPIA4State();
+  else if (state.currentScreen === 'pia5') syncPIA5State();
+  persistState();
+  show(screen);
+  renderCurrentScreen();
+}
+
+function renderCurrentScreen() {
+  switch (state.currentScreen) {
+    case 'dcs': renderDCSCheck(); break;
+    case 'guide': renderGuide(); break;
+    case 'pia1': renderPIA1(); break;
+    case 'pia2': renderPIA2(); break;
+    case 'pia3': renderPIA3(); break;
+    case 'pia4': renderPIA4(); break;
+    case 'pia5': renderPIA5Survey(); break;
+    case 'summary': renderSummary(); break;
+    case 'processing': renderProcessingScreen(); break;
+    case 'certificate': renderCertificate(); break;
+    case 'confirmation': renderConfirmation(); break;
+    default: break; // No default screen
+  }
+}
+
+// ─── Sidebar tracker ──────────────────────────────────
+function renderSidebarTracker(activeStep) {
+  const steps = [
+    { num: 1, section: null, label: 'Instructions & Compliance Agreement' },
+    { num: 2, section: null, label: 'Privacy Compliance Checklist' },
+    { num: 3, section: 1, label: 'Program / Process Information' },
+    { num: 4, section: 2, label: 'PII Inventory' },
+    { num: 5, section: 3, label: 'Stakeholder Identification' },
+    { num: 6, section: 4, label: 'Information Flow' },
+    { num: 7, section: null, label: 'Application Summary' }
+  ];
+
+  let html = `<aside class="form-sidebar"><div class="form-sidebar-title">Application Progress</div><div class="sidebar-steps">`;
+  steps.forEach(step => {
+    let cls = '';
+    let numHtml = step.num;
+    if (step.num < activeStep) {
+      cls = 'done';
+      numHtml = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+    } else if (step.num === activeStep) {
+      cls = 'active';
+    }
+
+    let stepTextHtml = '';
+    if (step.section !== null) {
+      stepTextHtml = `Section ${step.section} <span style="font-weight:${step.num === activeStep ? '700' : '400'};">${escapeHtml(step.label)}</span>`;
+    } else {
+      stepTextHtml = `<span style="font-size:15px; font-weight:${step.num === activeStep ? '700' : '500'}; margin-top:0; padding-top:2px;">${escapeHtml(step.label)}</span>`;
+    }
+
+    html += `
+      <div class="sidebar-step ${cls}">
+        <div class="sidebar-step-num">${numHtml}</div>
+        <div class="sidebar-step-text">${stepTextHtml}</div>
+      </div>
+    `;
+  });
+  html += `</div></aside>`;
+  return html;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 📖 GUIDE / DCS LINKING
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderDCSCheck() {
+  const userEmail = state.userEmail || '(anonymous)';
+  const parentId = state.parentID;
+  const el = document.getElementById('screen-dcs');
+
+  window.isDCSVerified = false;
+  window.dcsAction = null;
+  window.dcsSessionId = null;
+  
+  el.innerHTML = `
+    <div class="page-header" style="margin-top: 1rem;">
+      <span class="step-badge">Security Check</span>
+      <h1>Link Verification</h1>
+      <p>Verifying your request link.</p>
+    </div>
+    <div class="card-grid-container">
+      <div class="card" style="background: var(--navy-tint); border-color: var(--navy-border);">
+        <div class="card-title" style="color: var(--navy-text);">Your account</div>
+        <div style="font-size:13px; color:var(--navy-text);">
+          <strong>Email:</strong>
+          <code style="background:rgba(255,255,255,0.6); padding:2px 8px; border-radius:4px; font-family:var(--font-mono); font-size:12.5px;">${escapeHtml(userEmail)}</code>
+        </div>
+        <div style="font-size:12px; color:var(--navy-text); margin-top:6px; opacity:0.75;">All submissions will be logged and attributed to this email address.</div>
+      </div>
+      
+      <div class="card" id="dcs-link-status">
+        <div class="card-title">Your Status</div>
+        <div class="processing-screen" style="padding: 1rem 0; text-align: left; flex-direction: row; justify-content: flex-start; gap: 12px;">
+          <div class="spinner" style="width: 22px; height: 22px; margin: 0;"></div>
+          <div>
+            <h2 style="font-size: 14px; margin: 0;">Verifying DCS Request ID...</h2>
+            <p style="font-size: 13px; margin: 0; color: var(--text3);">${escapeHtml(parentId)}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="dcs-alert-container"></div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="proceed-to-guide-btn" disabled aria-label="Proceed">Verifying Link...</button>
+    </div>
+  `;
+
+  google.script.run
+    .withSuccessHandler(result => {
+      const statusEl = document.getElementById('dcs-link-status');
+      const alertEl = document.getElementById('dcs-alert-container');
+      const proceedBtn = document.getElementById('proceed-to-guide-btn');
+
+      if (result && result.success) {
+        state.dcsData = result.context;
+        state.dcsData.reqId = parentId;
+        // Store approver comments for use later
+        state.dcsData._approverComments = result.approverComments || '';
+        // Store agency metadata if present
+        if (result.context && result.context.metadataAgency) {
+          state.dcsData.metadataAgency = result.context.metadataAgency;
+        }
+        
+        // Capture fresh approver flags from DCS context
+        let freshFlags = {};
+        if (typeof result.approverFlags === 'string') {
+          try { freshFlags = JSON.parse(result.approverFlags); } catch(e) {}
+        } else if (result.approverFlags) {
+          freshFlags = result.approverFlags;
+        }
+        state.approverFlags = freshFlags;
+        persistState();
+
+        statusEl.innerHTML = `
+          <div class="card-title">Your Status</div>
+          <div class="pia-status-row" style="border-bottom: 1px dashed var(--border);">
+            <div class="pia-status-label">DCS ID</div>
+            <div class="pia-status-value">
+              <span class="status-badge status-approved">${escapeHtml(parentId)}</span>
+            </div>
+          </div>
+          <div class="pia-status-row" style="border-bottom: none;">
+            <div class="pia-status-label">Session ID</div>
+            <div class="pia-status-value">
+              <span class="status-badge status-${result.existingSubmissionId ? 'approved' : (result.existingDraftSessionId ? 'rejected' : 'pending')}">${result.existingSubmissionId ? escapeHtml(result.existingSubmissionId) : (result.existingDraftSessionId ? escapeHtml(result.existingDraftSessionId) : 'Not Started')}</span>
+            </div>
+          </div>
+        `;
+        
+        // 1. If it's already submitted and NOT rejected/returned -> Stop here
+        if (result.existingSubmissionId && result.existingSubmissionStatus !== 'Rejected' && result.existingSubmissionStatus !== 'Returned') {
+          alertEl.innerHTML = `
+            <div class="alert alert-info">
+              <strong>Application Already Submitted.</strong> A Privacy Impact Assessment (<strong>${escapeHtml(result.existingSubmissionId)}</strong>) for this request has already been completed.
+            </div>
+          `;
+          proceedBtn.textContent = "Close Window";
+          proceedBtn.disabled = false;
+          proceedBtn.onclick = () => window.top.close();
+          showSuccess('Application already submitted.');
+          return;
+        }
+
+        const showApproverComment = result.approverComments
+          ? `<div style="margin-top:12px; padding:10px 12px; background:var(--bg2); border-radius:var(--radius); border-left:3px solid var(--warn-text); font-size:13px; color:var(--text2);"><strong style="color:var(--warn-text);">Approver Feedback:</strong><br>${escapeHtml(result.approverComments)}</div>`
+          : '';
+
+        // 2. If there's an existing draft
+        if (result.existingDraftSessionId) {
+          const isRevision = result.existingSubmissionId && (result.existingSubmissionStatus === 'Rejected' || result.existingSubmissionStatus === 'Returned');
+          
+          // Check if DCS has been updated — if DCS status is still 'Returned', the user must update DCS first
+          const dcsStatus = (result.context && result.context.status || '').toLowerCase();
+          let hasDCSFlags = false;
+          try {
+            const flagsObj = result.approverFlags || {};
+            const flagKeys = Object.keys(flagsObj);
+            hasDCSFlags = flagKeys.length === 0 || flagKeys.some(key => key.startsWith('DCS - '));
+          } catch(e) {}
+          
+          const isDcsUpdated = (dcsStatus !== 'returned' && dcsStatus !== 'rejecteddcs') || !hasDCSFlags;
+
+          if (isRevision && !isDcsUpdated) {
+            alertEl.innerHTML = `
+              <div class="alert alert-warn">
+                <strong>DCS Update Required.</strong> Your application (<strong>${escapeHtml(result.existingSubmissionId)}</strong>) was returned. You must first update your DCS request before you can resume your PIA revision draft.
+              </div>
+              ${showApproverComment}
+              <div style="margin-top:12px; padding:10px 12px; background:var(--bg2); border-radius:var(--radius); font-size:13px; color:var(--text2);">
+                <strong>Next Step:</strong> Please go to the DCS system, update your request, and then use the new DCS link to access this PIA.
+              </div>
+            `;
+            window.isDCSVerified = false;
+            proceedBtn.textContent = "Update DCS Request First";
+            proceedBtn.disabled = true;
+            showError('DCS update required before resuming draft.');
+            return;
+          }
+
+          window.isRevisionDraft = isRevision;
+          alertEl.innerHTML = `
+            <div class="alert alert-${isRevision ? 'warn' : 'info'}" style="margin-bottom: 0;">
+              <strong>${isRevision ? 'Revision Draft Found' : 'Draft Found'}.</strong> You have an unfinished ${isRevision ? 'revision ' : ''}draft for this request.
+            </div>
+            ${isRevision ? showApproverComment : ''}
+          `;
+          window.isDCSVerified = true;
+          window.dcsAction = 'resume';
+          window.dcsSessionId = result.existingDraftSessionId;
+          proceedBtn.textContent = "Resume Draft →";
+          proceedBtn.onclick = () => {
+            showLoading('Resuming draft...');
+            asyncRestoreDraft(window.dcsSessionId);
+          };
+          proceedBtn.disabled = false;
+          showSuccess('Draft context found.');
+          return;
+        }
+
+        // 3. If there is a rejected submission but NO draft yet
+        if (result.existingSubmissionId && (result.existingSubmissionStatus === 'Rejected' || result.existingSubmissionStatus === 'Returned')) {
+          window.isRevisionDraft = true;
+          window.dcsSessionId = result.existingSubmissionId;
+          
+          // Check if DCS has been updated — if DCS status is still 'Returned', the user must update DCS first
+          const dcsStatus = (result.context && result.context.status || '').toLowerCase();
+          let hasDCSFlags = false;
+          try {
+            const flagsObj = result.approverFlags || {};
+            const flagKeys = Object.keys(flagsObj);
+            hasDCSFlags = flagKeys.length === 0 || flagKeys.some(key => key.startsWith('DCS - '));
+          } catch(e) {}
+          
+          const isDcsUpdated = (dcsStatus !== 'returned' && dcsStatus !== 'rejecteddcs') || !hasDCSFlags;
+
+          if (!isDcsUpdated) {
+            // DCS has NOT been updated — block PIA revision and tell user to update DCS first
+            alertEl.innerHTML = `
+              <div class="alert alert-warn">
+                <strong>DCS Update Required.</strong> Your application (<strong>${escapeHtml(result.existingSubmissionId)}</strong>) was returned. You must first update your DCS request before you can revise this PIA form.
+              </div>
+              ${showApproverComment}
+              <div style="margin-top:12px; padding:10px 12px; background:var(--bg2); border-radius:var(--radius); font-size:13px; color:var(--text2);">
+                <strong>Next Step:</strong> Please go to the DCS system, update your request, and then use the new DCS link to access this PIA for revision.
+              </div>
+            `;
+            window.isDCSVerified = false;
+            proceedBtn.textContent = "Update DCS Request First";
+            proceedBtn.disabled = true;
+            showError('DCS update required before PIA revision.');
+            return;
+          }
+
+          alertEl.innerHTML = `
+            <div class="alert alert-warn">
+              <strong>Revision Ready.</strong> Your application (<strong>${escapeHtml(result.existingSubmissionId)}</strong>) was returned. Your DCS request has been updated. Please review the feedback below and revise this PIA form.
+            </div>
+            ${showApproverComment}
+          `;
+          window.isDCSVerified = true;
+          window.dcsAction = 'edit';
+          proceedBtn.textContent = "Revise PIA Form →";
+          proceedBtn.disabled = false;
+          proceedBtn.onclick = () => { show('guide'); renderGuide(); };
+          showSuccess('Application ready for revision.');
+          return;
+        }
+
+        // Pre-populate state with verified context for NEW applications
+        state.pia1.dept = result.context.department || '';
+        state.pia1.program = result.context.program || '';
+        state.pia1.scope = result.context.scope || '';
+        state.pia1.immediateHeadEmail = result.context.immediateHeadEmail || '';
+        state.pia1.deptHeadEmail = result.context.deptHeadEmail || '';
+        state.pia1.divHeadEmail = result.context.divHeadEmail || '';
+        
+        // Autofill HeadNames from DCS
+        state.pia1.immediateHead = result.context.immHeadName || '';
+        state.pia1.deptHead = result.context.deptHeadName || '';
+        state.pia1.divHead = result.context.divHeadName || '';
+        
+        state.pia1.drafterEmail = state.userEmail || '';
+        state.pia1.drafter = result.context.drafterName || '';
+
+        alertEl.innerHTML = `
+          <div class="alert alert-success">
+            <strong>Link Successful.</strong> Ready to begin a new Privacy Impact Assessment for Request <strong>${escapeHtml(parentId)}</strong>.
+          </div>
+        `;
+        
+        window.isDCSVerified = true;
+        window.dcsAction = 'new';
+        proceedBtn.textContent = "Continue to Instructions →";
+        proceedBtn.onclick = () => { show('guide'); renderGuide(); };
+        proceedBtn.disabled = false;
+        showSuccess('DCS context linked successfully.');
+
+      } else {
+        statusEl.innerHTML = `
+          <div class="card-title">Your Status</div>
+          <div class="alert alert-danger" style="margin: 1rem 0 0 0; display: block;">
+            <strong>Link Failed.</strong> Could not verify context for DCS Request <strong>${escapeHtml(parentId)}</strong>.
+            <br><small>${escapeHtml(result.error || 'Context not found or unauthorized.')}</small>
+          </div>
+        `;
+        proceedBtn.textContent = "Verification Failed";
+        showError('Error linking DCS: ' + (result.error || 'Context not found or unauthorized.'));
+      }
+    })
+    .withFailureHandler(err => {
+      const statusEl = document.getElementById('dcs-link-status');
+      statusEl.innerHTML = `
+        <div class="card-title">Your Status</div>
+        <div class="alert alert-danger" style="margin: 1rem 0 0 0;">
+          <strong>Server Error.</strong> An unexpected error occurred while trying to link your DCS request. Please try again later.
+          <br><small>${escapeHtml(err.message)}</small>
+        </div>
+      `;
+      const proceedBtn = document.getElementById('proceed-to-guide-btn');
+      if (proceedBtn) proceedBtn.textContent = "Verification Failed";
+      showError('Server Error: ' + err.message);
+    })
+    .apiGetDCSContext(parentId);
+}
+
+function renderGuide() {
+  const el = document.getElementById('screen-guide');
+  
+  el.innerHTML = `
+    <div class="form-layout">
+      ${renderSidebarTracker(1)}
+      <div class="page-content">
+        <div class="page-header">
+          <span class="step-badge">Step 1 of 7</span>
+          <h1>Instructions &amp; Compliance Agreement</h1>
+          <p>Please read the following carefully before proceeding with your PIA submission.</p>
+        </div>
+        <div class="card">
+          <div class="card-title">What is a Privacy Impact Assessment?</div>
+          <p style="font-size:13px; color:var(--text2); line-height:1.75;">A Privacy Impact Assessment (PIA) is a systematic process for evaluating the potential effects that a program or process may have on the privacy of individuals. It identifies privacy risks and recommends measures to mitigate or eliminate those risks before they occur.</p>
+        </div>
+        <div class="card">
+          <div class="card-title">Compliance requirements</div>
+          <ul style="font-size:13px; color:var(--text2); line-height:2.1; padding-left:1.25rem; list-style:disc outside;">
+            <li>All answers must be complete, accurate, and truthful.</li>
+            <li>Submission is <strong>final</strong> — you cannot edit after confirming.</li>
+            <li>Rejected applications may be revised and resubmitted.</li>
+            <li>Denied applications are permanently locked for audit.</li>
+            <li>Responses are stored and subject to internal review.</li>
+            <li>Your identity will be logged via your Google account session.</li>
+          </ul>
+        </div>
+        <div class="alert alert-info" role="note">
+          ${window.dcsAction === 'edit' 
+            ? 'You are entering Revision Mode. Please update the necessary fields according to the reviewer\'s feedback.'
+            : 'Your Application ID will be assigned automatically when you submit the application.'}
+        </div>
+        <label class="consent-wrap" for="agree-check">
+          <input type="checkbox" id="agree-check" onchange="checkProceedReadiness()" aria-describedby="consent-desc">
+          <span id="consent-desc">I have read and understood the instructions. I agree to submit accurate information and accept that my submission will be subject to the organization's data privacy compliance review process.</span>
+        </label>
+        <div class="btn-row spread">
+          <button class="btn" onclick="show('dcs'); renderDCSCheck()">← Back</button>
+          <button class="btn btn-primary" id="proceed-to-survey-btn" disabled onclick="handleGuideProceed()" aria-label="Proceed to compliance survey">Proceed to Survey →</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  window.checkProceedReadiness = () => {
+    const checked = document.getElementById('agree-check')?.checked;
+    const btn = document.getElementById('proceed-to-survey-btn');
+    if (btn) btn.disabled = !checked;
+  };
+
+  window.handleGuideProceed = () => {
+    if (window.dcsAction === 'new') {
+      showLoading('Starting new application...');
+      createNewApplicationSession();
+    } else if (window.dcsAction === 'edit') {
+      showLoading('Loading application for revision...');
+      google.script.run
+        .withSuccessHandler(res => {
+          hideLoading();
+          if (state.isSubmitting) return;
+          if (res) {
+            state.parentID = res.linkedReqId || state.parentID;
+            state.appId = res.sessionId;
+            state.sessionId = res.sessionId;
+            state.baseSessionId = res.sessionId;
+            state.isEditing = true;
+            state.isIncomplete = true;
+            state.draftStatus = 'editing';
+            state.status = 'Draft';
+            state.isFlagged = res.isFlagged || false;
+            
+            // IMPORTANT: Merge server data into existing state rather than replacing entirely.
+            // This preserves DCS-pre-populated fields (program, scope, etc.) that the
+            // server-side pia1 snapshot may not contain.
+            if (res.pia1 && typeof res.pia1 === 'object') {
+              state.pia1 = { ...state.pia1, ...res.pia1 };
+            }
+            if (res.pia3 && typeof res.pia3 === 'object') {
+              state.pia3 = { ...state.pia3, ...res.pia3 };
+            }
+            if (res.pia4 && typeof res.pia4 === 'object') {
+              state.pia4 = { ...state.pia4, ...res.pia4 };
+            }
+            if (res.pia5 && typeof res.pia5 === 'object') {
+              state.pia5 = { ...state.pia5, ...res.pia5 };
+            }
+            
+            let freshFlags = res.approverFlags || {};
+            if (typeof freshFlags === 'string') {
+              try { freshFlags = JSON.parse(freshFlags); } catch(e) { freshFlags = {}; }
+            }
+            state.approverFlags = freshFlags;
+            
+            if (res.pia2 && res.pia2.customOthers) {
+              state.pia2CustomOthers = res.pia2.customOthers;
+              state.pia2 = res.pia2.fields || res.pia2;
+            } else if (res.pia2 && res.pia2.fields) {
+              state.pia2CustomOthers = res.pia2.customOthers || [];
+              state.pia2 = res.pia2.fields;
+            } else {
+              state.pia2CustomOthers = [];
+              state.pia2 = res.pia2 || {};
+            }
+            persistState();
+            show('pia5');
+            renderPIA5Survey();
+          } else {
+            showError('Failed to load application data.');
+          }
+        })
+        .withFailureHandler(err => {
+          hideLoading();
+          showError('Error loading application: ' + (err.message || err));
+        })
+        .apiGetApplicationData(window.dcsSessionId);
+    }
+  };
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 📋 PIA 1 – PROGRAM INFORMATION
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderPIA1() {
+  // GUARD: Verify all PIA5 questions are answered before showing PIA1
+  // This prevents draft restoration or navigation bypass from skipping PIA5 validation
+  const allPia5Answered = pia5Questions.every((_, i) =>
+    ['YES', 'NO', 'N/A'].includes(state.pia5[i])
+  );
+  if (!allPia5Answered) {
+    showError('Please answer ALL questions in the Privacy Compliance Checklist before proceeding to Program Info.');
+    show('pia5');
+    renderPIA5Survey();
+    return;
+  }
+
+  const accountablePersons = [];
+  if (state.dcsData && state.dcsData.accountable) {
+    for (let i = 1; i <= 5; i++) {
+      const name = state.dcsData.accountable[`accountableName${i}`];
+      if (name) {
+        accountablePersons.push(name);
+      }
+    }
+  }
+  
+  if (!state.pia1.endUser && accountablePersons.length > 0) {
+    state.pia1.endUser = accountablePersons.join(', ');
+  }
+
+  // Safety fallback: if any pia1 fields are empty, try to fill from DCS context data
+  if (state.dcsData && typeof state.dcsData === 'object') {
+    if (!state.pia1.program && (state.dcsData.program || state.dcsData.programName)) {
+      state.pia1.program = state.dcsData.program || state.dcsData.programName || '';
+    }
+    if (!state.pia1.scope && state.dcsData.scope) {
+      state.pia1.scope = state.dcsData.scope || '';
+    }
+    if (!state.pia1.description && state.dcsData.description) {
+      state.pia1.description = state.dcsData.description || '';
+    }
+    if (!state.pia1.purpose && state.dcsData.purpose) {
+      state.pia1.purpose = state.dcsData.purpose || '';
+    }
+  }
+
+  const s = Object.fromEntries(Object.entries(state.pia1).map(([k,v]) => [k, escapeHtml(sanitizeText(v, 4000))]));
+  document.getElementById('screen-pia1').innerHTML = `
+    <div class="form-layout">
+      ${renderSidebarTracker(3)}
+      <div class="page-content">
+        <div class="page-header">
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+            <span class="step-badge" style="margin-bottom:0;">PIA Section 1</span>
+            ${getModeBadge()}
+          </div>
+          <h1>Program / Process Information</h1>
+          <p>Provide basic identification and contact information for this assessment.</p>
+        </div>
+        <div class="card">
+          <div class="card-title">Program details</div>
+          <div class="field-row">
+            <div class="field"><label for="p1-dept">Department <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The organizational unit responsible for this program or process.')}</label><input id="p1-dept" value="${s.dept}" placeholder="e.g. Human Resources" aria-required="true" autocomplete="organization" oninput="state.pia1.dept=sanitizeText(this.value,150); persistState();" readonly /></div>
+            <div class="field"><label for="p1-date">Date of program <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The date this program or process is planned or initiated. Must be a future date within the next 10 years.')}</label><input id="p1-date" type="date" value="${s.date || new Date().toISOString().split('T')[0]}" min="${new Date().toISOString().split('T')[0]}" max="${new Date(Date.now() + 10*365*24*60*60*1000).toISOString().split('T')[0]}" aria-required="true" onchange="state.pia1.date=sanitizeText(this.value,32); persistState();" /></div>
+          </div>
+          <div class="field"><label for="p1-prog">Name of program / process <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The official name of the program, system, or process being assessed.')}</label><input id="p1-prog" value="${s.program}" placeholder="Official program or process name" maxlength="200" aria-required="true" oninput="state.pia1.program=sanitizeText(this.value,200); persistState();" /></div>
+        </div>
+        <div class="card">
+          <div class="card-title">PIA drafter (PIP)</div>
+          <div class="field"><label for="p1-drafter">Full name <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The person completing this Privacy Impact Assessment on behalf of the program.')}</label><input id="p1-drafter" value="${s.drafter}" placeholder="Name of person completing this PIA" maxlength="150" autocomplete="name" aria-required="true" oninput="this.value=validatePersonName(this.value); state.pia1.drafter=sanitizeText(this.value,150); persistState();" readonly /></div>
+          <div class="field-row">
+            <div class="field"><label for="p1-demail">Email <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The corporate email address of the PIA drafter. Auto-populated from your account.')}</label><input id="p1-demail" type="email" value="${s.drafterEmail}" placeholder="drafter@org.com" autocomplete="email" aria-required="true" readonly /></div>
+            <div class="field"><label for="p1-dphone">Trunk Line / Phone Number / Landline Number <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Your trunk line or landline number for contact purposes.')}</label><input id="p1-dphone" type="tel" value="${s.drafterPhone}" placeholder="2800" autocomplete="tel" aria-required="true" oninput="this.value=sanitizeNumeric(this.value); state.pia1.drafterPhone=this.value; persistState();" /></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Immediate head</div>
+          <div class="field"><label for="p1-ihead">Full name <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The immediate supervisor or team lead responsible for overseeing this program.')}</label><input id="p1-ihead" value="${s.immediateHead}" placeholder="Immediate head name" maxlength="150" readonly aria-required="true" /></div>
+          <div class="field-row">
+            <div class="field"><label for="p1-iemail">Email <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The corporate email of the immediate head. Auto-populated from the DCS request.')}</label><input id="p1-iemail" type="email" value="${s.immediateHeadEmail}" placeholder="immediatehead@org.com" readonly aria-required="true" /></div>
+            <div class="field"><label for="p1-iphone">Trunk Line / Phone Number / Landline Number<span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Immediate Head\'s trunk line or landline number.')}</label><input id="p1-iphone" type="tel" value="${s.immediateHeadPhone}" placeholder="2800" aria-required="true" oninput="this.value=sanitizeNumeric(this.value); state.pia1.immediateHeadPhone=this.value; persistState();" /></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Department head (PIP)</div>
+          <div class="field"><label for="p1-dhead">Full name <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The department head who oversees the department responsible for this program.')}</label><input id="p1-dhead" value="${s.deptHead}" placeholder="Department head name" maxlength="150" readonly aria-required="true" /></div>
+          <div class="field-row">
+            <div class="field"><label for="p1-dhemail">Email <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The corporate email of the department head. Auto-populated from the DCS request.')}</label><input id="p1-dhemail" type="email" value="${s.deptHeadEmail}" placeholder="depthead@org.com" readonly aria-required="true" /></div>
+            <div class="field"><label for="p1-dhphone">Trunk Line / Phone Number / Landline Number<span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Department Head\'s trunk line or landline number.')}</label><input id="p1-dhphone" type="tel" value="${s.deptHeadPhone}" placeholder="2800" aria-required="true" oninput="this.value=sanitizeNumeric(this.value); state.pia1.deptHeadPhone=this.value; persistState();" /></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Division head (PIC)</div>
+          <div class="field"><label for="p1-divh">Full name <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The division head who has overall responsibility for this division.')}</label><input id="p1-divh" value="${s.divHead}" placeholder="Division head name" maxlength="150" readonly aria-required="true" /></div>
+          <div class="field-row">
+              <div class="field"><label for="p1-divemail">Email <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The corporate email of the division head. Auto-populated from the DCS request.')}</label><input id="p1-divemail" type="email" value="${s.divHeadEmail}" placeholder="divhead@org.com" readonly aria-required="true" /></div>
+              <div class="field"><label for="p1-divphone">Trunk Line / Phone Number / Landline Number <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Division Head\'s trunk line or landline number.')}</label><input id="p1-divphone" type="tel" value="${s.divHeadPhone}" placeholder="2800" aria-required="true" oninput="this.value=sanitizeNumeric(this.value); state.pia1.divHeadPhone=this.value; persistState();" /></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Program description</div>
+          <div class="field"><label for="p1-desc">Describe your program or process <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('A comprehensive overview of the program, its objectives, and how it operates within the organization.')}</label><textarea id="p1-desc" placeholder="Provide a brief overview of what this program/process does…" maxlength="4000" aria-required="true" oninput="state.pia1.description=sanitizeText(this.value,4000); persistState();">${s.description}</textarea></div>
+          <div class="field"><label for="p1-purp">Purpose <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Explain why personal data is being collected and processed — the legitimate business need.')}</label><textarea id="p1-purp" placeholder="What is the intended purpose of collecting or processing personal data?" maxlength="2500" style="min-height:60px" aria-required="true" oninput="state.pia1.purpose=sanitizeText(this.value,2500); persistState();">${s.purpose}</textarea></div>
+          <div class="field">
+            <label for="p1-ben">Expected benefits <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Describe the positive outcomes or value this program delivers to the organization or its stakeholders.')}</label>
+            <div class="input-wrapper">
+              <textarea id="p1-ben" class="${getFlagClass('PIA 1 - Benefits')}" placeholder="What benefits does this program deliver?" maxlength="2500" style="min-height:60px" aria-required="true" oninput="state.pia1.benefits=sanitizeText(this.value,2500); persistState();" >${s.benefits}</textarea>
+              ${getFlagIconHtml('PIA 1 - Benefits')}
+            </div>
+          </div>
+          <div class="field">
+            <label for="p1-scope">Scope <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Define the boundaries of data processing — what data, which systems, and who is affected.')}</label>
+            <div class="input-wrapper">
+              <textarea id="p1-scope" class="${getFlagClass('PIA 1 - Scope')}" placeholder="Define the boundaries and coverage of this program…" maxlength="2500" style="min-height:60px" aria-required="true" oninput="state.pia1.scope=sanitizeText(this.value,2500); persistState();" >${s.scope}</textarea>
+              ${getFlagIconHtml('PIA 1 - Scope')}
+            </div>
+          </div>
+          <div class="field">
+            <label for="p1-eu">End user / processor <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('The individuals or roles who will access and process the personal data collected by this program.')}</label>
+            <div class="input-wrapper">
+              <input id="p1-eu" class="${getFlagClass('PIA 1 - End User')}" value="${s.endUser}" placeholder="Who will be using or processing this data?" maxlength="250" oninput="this.value=validatePersonName(this.value); state.pia1.endUser=sanitizeText(this.value,250); persistState();" readonly aria-required="true" />
+              ${getFlagIconHtml('PIA 1 - End User')}
+            </div>
+          </div>
+        </div>
+        <div class="btn-row spread">
+          <button class="btn" onclick="goBack('pia5')">← Back to Survey</button>
+          <button class="btn btn-primary" onclick="savePIA1()">Next: PII Inventory →</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function savePIA1() {
+  syncPIA1State();
+  if (!validatePIA1()) return;
+  persistState();
+  show('pia2'); renderPIA2();
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 📋 PIA 2 – PII INVENTORY
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function syncPIA2State() {
+  // OPTIMIZATION: Batch selector operations
+  pii2Fields.forEach((f, i) => {
+    const val = document.querySelector(`input[name="pii${i}"]:checked`)?.value;
+    if (val) state.pia2[i] = sanitizeChoice(val, ['YES','NO']);
+  });
+  if (Array.isArray(state.pia2CustomOthers)) {
+    state.pia2CustomOthers.forEach((e, idx) => {
+      const nameInput = getCachedElement(`custom-other-${idx}`);
+      if (nameInput) e.name = nameInput.value;
+      const valEl = document.querySelector(`input[name="custom-pii${idx}"]:checked`);
+      if (valEl) e.value = sanitizeChoice(valEl.value, ['YES','NO']);
+    });
+  }
+}
+
+function renderPIA2() {
+  const rows = pii2Fields.map((f, i) => {
+    const yes = state.pia2[i] === 'YES', no = state.pia2[i] === 'NO';
+    const isOthersRow = i === 20; // 'Others' is at index 20
+    const changeHandler = i === 20 ? ' onchange="syncPIA2State(); renderPIA2(); persistState();"' : ` onchange="state.pia2[${i}]=this.value; persistState();"`;
+    const requiredAttr = isOthersRow ? '' : 'required'; // Only make required if not the 'Others' row
+    return `<tr>
+      <td class="${getFlagClass('PIA 2 - ' + f)}" style="position:relative; padding-right:36px;">
+        ${f}
+        ${getFlagIconHtml('PIA 2 - ' + f)}
+      </td>
+      <td class="center"><input type="radio" name="pii${i}" value="YES" ${yes?'checked':''} ${changeHandler} aria-label="${f} Yes" ${requiredAttr} /></td>
+      <td class="center"><input type="radio" name="pii${i}" value="NO"  ${no ?'checked':''} ${changeHandler} aria-label="${f} No" ${requiredAttr} /></td>
+    </tr>`;
+  }).join('');
+
+  const othersChecked = state.pia2[20] === 'YES';
+  let customSection = '';
+  if (othersChecked) {
+    const customRows = (Array.isArray(state.pia2CustomOthers) ? state.pia2CustomOthers : []).map((entry, idx) => {
+      const fn = sanitizeText(entry.name || '', 100);
+      return `<tr>
+        <td class="${getFlagClass('PIA 2 - Custom Field ' + (idx+1))}" style="position:relative; padding-right:36px;">
+          <input type="text" id="custom-other-${idx}" value="${fn}" placeholder="Custom field name" oninput="state.pia2CustomOthers[${idx}].name=this.value; persistState();" maxlength="100" aria-label="Custom PII field ${idx+1}" style="width:100%;padding:6px 10px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;background:var(--bg);color:var(--text);font-family:var(--font);outline:none;" required />
+          ${getFlagIconHtml('PIA 2 - Custom Field ' + (idx+1))}
+        </td>
+        <td class="center"><input type="radio" name="custom-pii${idx}" value="YES" ${entry.value==='YES'?'checked':''} onchange="state.pia2CustomOthers[${idx}].value='YES'; persistState();" aria-label="Custom field ${idx+1} Yes" required /></td>
+        <td class="center"><input type="radio" name="custom-pii${idx}" value="NO"  ${entry.value==='NO' ?'checked':''} onchange="state.pia2CustomOthers[${idx}].value='NO'; persistState();"  aria-label="Custom field ${idx+1} No" /></td>
+        <td class="center"><button class="btn btn-remove btn-sm" type="button" onclick="removeCustomOthersField(${idx})" aria-label="Remove custom field ${idx+1}">Remove</button></td>
+      </tr>`;
+    }).join('');
+    customSection = `
+      <div style="margin-top:1.25rem;">
+        <div class="card-title">Custom PII categories</div>
+        <table class="check-table" style="margin-bottom:0.75rem">
+          <thead><tr><th>Field name</th><th class="center" style="width:70px">YES</th><th class="center" style="width:70px">NO</th><th class="center" style="width:80px">Action</th></tr></thead>
+          <tbody>${customRows}</tbody>
+        </table>
+        <button class="btn btn-sm" onclick="addCustomOthersField()">+ Add category</button>
+      </div>`;
+  }
+
+  document.getElementById('screen-pia2').innerHTML = `
+    <div class="form-layout">
+      ${renderSidebarTracker(4)}
+      <div class="page-content">
+        <div class="page-header">
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+            <span class="step-badge" style="margin-bottom:0;">PIA Section 2</span>
+            ${getModeBadge()}
+          </div>
+          <h1>PII Inventory</h1>
+          <p>Indicate which types of personally identifiable information your program collects.</p>
+        </div>
+        <div class="alert alert-info" role="note">Select <strong>YES</strong> for each type of personal data your program collects. Select <strong>NO</strong> if not collected.</div>
+        <div class="card" style="padding:0.75rem 0.75rem; position:relative;">
+          <table class="check-table">
+            <thead><tr><th>Personal information type${infoTip('Personally Identifiable Information (PII) refers to any data that could potentially identify a specific individual. Select YES for each type your program collects or processes.')}</th><th class="center" style="width:70px">YES</th><th class="center" style="width:70px">NO</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          ${customSection}
+        </div>
+        <div class="btn-row spread">
+          <button class="btn" onclick="goBack('pia1')">← Back</button>
+          <button class="btn btn-primary" onclick="savePIA2()">Next: Stakeholders →</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function savePIA2() {
+  syncPIA2State();
+  
+  // Validate standard PII fields (excluding 'Others' at index 20)
+  for (let i = 0; i < pii2Fields.length - 1; i++) { // Loop from 0 to 19
+    if (!state.pia2[i]) {
+      showError(`Please make a selection for "${pii2Fields[i]}".`);
+      return;
+    }
+  }
+
+  const othersChecked = state.pia2[20] === 'YES';
+  if (othersChecked && (!Array.isArray(state.pia2CustomOthers) || state.pia2CustomOthers.length === 0)) {
+    showError(`You selected "YES" for "Others", but no custom PII categories have been added.`);
+    return;
+  }
+  if (othersChecked && Array.isArray(state.pia2CustomOthers)) {
+    for (let i = 0; i < state.pia2CustomOthers.length; i++) {
+      const custom = state.pia2CustomOthers[i];
+      if (!custom.name) {
+        showError(`Please provide a name for custom PII category #${i + 1}.`);
+        return;
+      }
+      if (!custom.value) {
+        showError(`Please select YES or NO for "${custom.name}".`);
+        return;
+      }
+    }
+  }
+
+  let yesCount = 0;
+  pii2Fields.forEach((f, i) => { if (state.pia2[i] === 'YES') yesCount++; });
+  if (othersChecked && Array.isArray(state.pia2CustomOthers)) {
+    state.pia2CustomOthers.forEach(e => { if (e.value === 'YES') yesCount++; });
+  } else if (!othersChecked) {
+    state.pia2CustomOthers = [];
+  }
+  state.isFlagged = yesCount <= 2;
+
+  // New validation: Require at least 3 'YES' decisions in PIA 2
+  if (yesCount < 3) {
+    showError('At least 3 "YES" decisions are required in the PII Inventory (PIA 2).');
+    return;
+  }
+  persistState();
+  show('pia3'); renderPIA3();
+}
+
+function addCustomOthersField() {
+  syncPIA2State();
+  if (!Array.isArray(state.pia2CustomOthers)) state.pia2CustomOthers = [];
+  state.pia2CustomOthers.push({ name:'', value:'' });
+  renderPIA2();
+}
+function removeCustomOthersField(idx) {
+  syncPIA2State();
+  if (Array.isArray(state.pia2CustomOthers) && idx >= 0 && idx < state.pia2CustomOthers.length) {
+    state.pia2CustomOthers.splice(idx, 1);
+    renderPIA2();
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 📋 PIA 3 – STAKEHOLDERS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderPIA3() {
+  clearDomCache();
+  state.pia3.intStakeholders = normalizeStakeholders(state.pia3.intStakeholders);
+  state.pia3.extStakeholders = normalizeStakeholders(state.pia3.extStakeholders);
+
+  const stakeholderInputs = (items, prefix, labelPrefix) => {
+    return items.map((v, idx) => `
+      <div class="stakeholder-row">
+        <div class="field" style="margin-bottom:0;">
+          <label for="${prefix}-name-${idx}">${labelPrefix} ${idx+1} Name</label>
+          <input id="${prefix}-name-${idx}" value="${escapeHtml(v.name)}" placeholder="Name or role" maxlength="180" oninput="state.pia3.${prefix === 'p3-int' ? 'intStakeholders' : 'extStakeholders'}[${idx}].name=sanitizeText(this.value,180); persistState();" onblur="this.value=validatePersonName(this.value, true); state.pia3.${prefix === 'p3-int' ? 'intStakeholders' : 'extStakeholders'}[${idx}].name=this.value; persistState();" />
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label for="${prefix}-email-${idx}">Email (Optional)</label>
+          <input type="email" id="${prefix}-email-${idx}" value="${escapeHtml(v.email)}" placeholder="email@domain.com" maxlength="180" oninput="this.value=this.value.trim().toLowerCase(); state.pia3.${prefix === 'p3-int' ? 'intStakeholders' : 'extStakeholders'}[${idx}].email=this.value; persistState();" />
+        </div>
+        ${items.length > 1 ? `<button class="btn btn-remove btn-sm" type="button" onclick="removeStakeholderField('${prefix}', ${idx})">Remove</button>` : `<button class="btn btn-remove btn-sm" type="button" style="visibility:hidden">Remove</button>`}
+      </div>`).join('');
+  };
+  
+  const intAddBtn = state.pia3.intStakeholders.length < 5 
+    ? `<button class="btn btn-sm" type="button" onclick="addStakeholderField('p3-int')" style="margin-top:4px">+ Add Internal Stakeholder</button>` 
+    : `<div style="font-size:12px; color:var(--text3); margin-top:4px;">Maximum of 5 internal stakeholders reached.</div>`;
+    
+  const extAddBtn = state.pia3.extStakeholders.length < 5 
+    ? `<button class="btn btn-sm" type="button" onclick="addStakeholderField('p3-ext')" style="margin-top:4px">+ Add External Stakeholder</button>` 
+    : `<div style="font-size:12px; color:var(--text3); margin-top:4px;">Maximum of 5 external stakeholders reached.</div>`;
+
+  document.getElementById('screen-pia3').innerHTML = `
+    <div class="form-layout">
+      ${renderSidebarTracker(5)}
+      <div class="page-content">
+        <div class="page-header">
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+            <span class="step-badge" style="margin-bottom:0;">PIA Section 3</span>
+            ${getModeBadge()}
+          </div>
+          <h1>Stakeholder Identification</h1>
+          <p>Identify the internal and external stakeholders involved in this program.</p>
+        </div>
+        <div class="card ${getFlagClass('PIA 3 - Internal Stakeholders')}" style="position:relative;">
+          <div class="card-title">Internal stakeholders${infoTip('Individuals or roles within your organization who are involved in or affected by this data processing activity.')}</div>
+          ${getFlagIconHtml('PIA 3 - Internal Stakeholders')}
+          <p style="font-size:12.5px; color:var(--text3); margin-bottom:12px; line-height:1.5;">Stakeholders within the organization or group.</p>
+          <div id="p3-int-list">${stakeholderInputs(state.pia3.intStakeholders, 'p3-int', 'Internal stakeholder')}</div>
+          ${intAddBtn}
+          <div class="field" style="margin-top:1.25rem;">
+            <label for="p3-int-desc">Additional description</label>
+            <div class="input-wrapper">
+              <textarea id="p3-int-desc" class="${getFlagClass('PIA 3 - Internal Notes')}" placeholder="Describe internal stakeholders' roles or interactions with the data." maxlength="4000" style="min-height:96px" oninput="persistState();">${sanitizeText(state.pia3.intDescription||'',4000)}</textarea>
+              ${getFlagIconHtml('PIA 3 - Internal Notes')}
+            </div>
+          </div>
+        </div>
+        <div class="card ${getFlagClass('PIA 3 - External Stakeholders')}" style="position:relative;">
+          <div class="card-title">External stakeholders${infoTip('Third-party individuals, vendors, or organizations outside your company who interact with or receive this data.')}</div>
+          ${getFlagIconHtml('PIA 3 - External Stakeholders')}
+          <p style="font-size:12.5px; color:var(--text3); margin-bottom:12px; line-height:1.5;">Stakeholders outside the organization or group.</p>
+          <div id="p3-ext-list">${stakeholderInputs(state.pia3.extStakeholders, 'p3-ext', 'External stakeholder')}</div>
+          ${extAddBtn}
+          <div class="field" style="margin-top:1.25rem;">
+            <label for="p3-ext-desc">Additional description</label>
+            <div class="input-wrapper">
+              <textarea id="p3-ext-desc" class="${getFlagClass('PIA 3 - External Notes')}" placeholder="Describe external stakeholders' relationship to the program or data." maxlength="4000" style="min-height:96px" oninput="persistState();">${sanitizeText(state.pia3.extDescription||'',4000)}</textarea>
+              ${getFlagIconHtml('PIA 3 - External Notes')}
+            </div>
+          </div>
+        </div>
+        <div class="btn-row spread">
+          <button class="btn" onclick="goBack('pia2')">← Back</button>
+          <button class="btn btn-primary" onclick="savePIA3()">Next: Information Flow →</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function savePIA3() {
+  syncPIA3State();
+  // Validate that at least one stakeholder (internal or external) has a name filled in
+  const hasInternal = state.pia3.intStakeholders.some(s => s.name && s.name.trim());
+  const hasExternal = state.pia3.extStakeholders.some(s => s.name && s.name.trim());
+  if (!hasInternal && !hasExternal) {
+    showError('Please add at least one internal or external stakeholder with a name before proceeding.');
+    return;
+  }
+  // Validate email fields if provided
+  const allStakeholders = [...(state.pia3.intStakeholders||[]), ...(state.pia3.extStakeholders||[])];
+  const invalidEmails = allStakeholders.filter(s => s.email && s.email.trim() && !validateEmail(s.email));
+  if (invalidEmails.length) {
+    const names = invalidEmails.map(s => s.name || 'unnamed').join(', ');
+    showError('Invalid email format for: ' + names + '. Please provide valid email addresses or leave the field empty.');
+    return;
+  }
+  persistState();
+  show('pia4'); renderPIA4();
+}
+
+function addStakeholderField(prefix) {
+  syncPIA3State();
+  const target = prefix === 'p3-int' ? state.pia3.intStakeholders : state.pia3.extStakeholders;
+  if (target.length < 5) {
+    target.push({name: '', email: ''});
+    renderPIA3();
+    persistState();
+  }
+}
+
+function removeStakeholderField(prefix, idx) {
+  syncPIA3State();
+  const target = prefix === 'p3-int' ? state.pia3.intStakeholders : state.pia3.extStakeholders;
+  if (target.length > 1) {
+    target.splice(idx, 1);
+    renderPIA3();
+    persistState();
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 📋 PIA 4 – INFORMATION FLOW
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderPIA4() {
+  const flowMeta = [
+    { key:'collect',  label:'Collect',  hint:'Describe how personal data is collected in this program…', flagKey: 'PIA 4 - COLLECT', tooltip:'Describe how and where personal data is collected from data subjects or other sources.' },
+    { key:'use',      label:'Use',      hint:'How is personal data used once collected?', flagKey: 'PIA 4 - USE', tooltip:'Explain what purposes personal data is used for and any authorized processing activities.' },
+    { key:'retain',   label:'Retain',   hint:'How long and where is personal data retained?', flagKey: 'PIA 4 - RETAIN', tooltip:'Specify retention periods, storage locations, and conditions for keeping personal data.' },
+    { key:'disclose', label:'Disclose', hint:'To whom and how is personal data disclosed?', flagKey: 'PIA 4 - DISCLOSE', tooltip:'List recipients or categories of recipients who receive personal data and under what conditions.' },
+    { key:'dispose',  label:'Dispose',  hint:'How is personal data securely disposed of?', flagKey: 'PIA 4 - DISPOSE', tooltip:'Describe secure disposal or destruction methods when data is no longer needed.' },
+  ];
+  const rows = flowMeta.map(m => `
+    <div class="field">
+      <label for="p4-${m.key}">${m.label}${infoTip(m.tooltip)}</label>
+      <div class="input-wrapper">
+        <input id="p4-${m.key}" class="${getFlagClass(m.flagKey)}" value="${escapeHtml(state.pia4[m.key]||'')}" placeholder="${m.hint}" required oninput="this.classList.toggle('is-invalid', !this.value.trim()); state.pia4.${m.key}=sanitizeText(this.value,2500); persistState();" />
+        ${getFlagIconHtml(m.flagKey)}
+      </div>
+    </div>`).join('');
+  document.getElementById('screen-pia4').innerHTML = `
+    <div class="form-layout">
+      ${renderSidebarTracker(6)}
+      <div class="page-content">
+        <div class="page-header">
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+            <span class="step-badge" style="margin-bottom:0;">PIA Section 4</span>
+            ${getModeBadge()}
+          </div>
+          <h1>Information Flow</h1>
+          <p>Describe how personal information moves through each stage of your program.</p>
+        </div>
+        <div class="card">${rows}</div>
+        <div class="btn-row spread">
+          <button class="btn" onclick="goBack('pia3')">← Back</button>
+          <button class="btn btn-primary" onclick="savePIA4()">Next: Review Summary →</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function savePIA4() {
+  // Validate all five information flow fields are filled (read from DOM directly to ensure live values)
+  let hasError = false;
+  const fieldLabels = { collect:'Collect', use:'Use', retain:'Retain', disclose:'Disclose', dispose:'Dispose' };
+  ['collect','use','retain','disclose','dispose'].forEach(k => {
+    const el = document.getElementById('p4-'+k);
+    const val = el ? sanitizeText(el.value||'', 2500) : '';
+    state.pia4[k] = val;
+    if (!val) {
+      hasError = true;
+      if (el) el.classList.add('is-invalid');
+    } else {
+      if (el) el.classList.remove('is-invalid');
+    }
+  });
+  if (hasError) {
+    showError('All Information Flow fields (Collect, Use, Retain, Disclose, Dispose) must be filled in before proceeding to Summary.');
+    // Scroll to the first empty field
+    const firstEmpty = document.querySelector('#screen-pia4 .is-invalid');
+    if (firstEmpty) firstEmpty.focus({ preventScroll: true });
+    return;
+  }
+  persistState();
+  show('summary'); renderSummary();
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 📋 PIA 5 – COMPLIANCE SURVEY
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/**
+ * Checks whether all PIA5 questions have a selected answer in the DOM.
+ * Enables/disables the Continue button accordingly.
+ * @returns {boolean} True if all questions are answered.
+ */
+function validatePIA5Completeness() {
+  const allAnswered = pia5Questions.every((_, i) =>
+    document.querySelector(`input[name="q5-${i}"]:checked`) !== null
+  );
+  const btn = document.getElementById('pia5-continue-btn');
+  if (btn) btn.disabled = !allAnswered;
+  return allAnswered;
+}
+
+function renderPIA5Survey() {
+  const opts = ['YES','NO','N/A'];
+  const rows = pia5Questions.map((q, i) => {
+    const cells = opts.map(o => 
+      `<td class="center"><input type="radio" name="q5-${i}" value="${o}" ${state.pia5[i]===o?'checked':''} onchange="state.pia5[${i}]=this.value; validatePIA5Completeness(); persistState();" aria-label="${q.slice(0,40)}… ${o}" /></td>`
+    ).join('');
+    return `<tr><td style="line-height:1.6;padding:10px 10px;position:relative;padding-right:36px;" class="${getFlagClass('PIA 5: Q' + (i+1))}">${i+1}. ${q}${getFlagIconHtml('PIA 5: Q' + (i+1))}</td>${cells}</tr>`;
+  }).join('');
+  document.getElementById('screen-pia5').innerHTML = `
+    <div class="form-layout">
+      ${renderSidebarTracker(2)}
+      <div class="page-content">
+        <div class="page-header">
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+            <span class="step-badge" style="margin-bottom:0;">Step 2 of 7</span>
+            ${getModeBadge()}
+          </div>
+          <h1>Privacy Compliance Checklist</h1>
+          <p>Assess your program's compliance with privacy standards and obligations.</p>
+        </div>
+        <div class="card" style="padding:0.75rem; position:relative;">
+          <table class="check-table">
+            <thead><tr><th style="width:60%">Question${infoTip('Answer YES if your program fully complies with the requirement, NO if it does not, or N/A if the question does not apply to your program.')}</th><th class="center" style="width:80px; white-space:nowrap;">YES</th><th class="center" style="width:80px; white-space:nowrap;">NO</th><th class="center" style="width:80px; white-space:nowrap;">N/A</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div class="btn-row spread">
+          <div></div>
+          <button id="pia5-continue-btn" class="btn btn-primary" style="margin-left: auto;" disabled onclick="savePIA5Survey()">Continue to Program Info →</button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Check initial state (e.g., when restoring a draft with some answers)
+  validatePIA5Completeness();
+}
+
+function savePIA5Survey() {
+  // LAYER 1: Check DOM radio button state
+  let allAnswered = true;
+  pia5Questions.forEach((q, i) => {
+    const selected = document.querySelector(`input[name="q5-${i}"]:checked`);
+    state.pia5[i] = sanitizeChoice(selected?.value||'', ['YES','NO','N/A']);
+    if (!selected) allAnswered = false;
+  });
+  
+  // LAYER 2: Fallback — validate against state.pia5 object directly
+  // This catches edge cases where DOM query might fail (stale re-render, etc.)
+  if (allAnswered) {
+    allAnswered = pia5Questions.every((_, i) =>
+      ['YES', 'NO', 'N/A'].includes(state.pia5[i])
+    );
+  }
+  
+  // LAYER 3: Sync button state as a final visual guard
+  validatePIA5Completeness();
+  
+  if (!allAnswered) {
+    showError('Please answer ALL questions in the Privacy Compliance Checklist before proceeding.');
+    return;
+  }
+  persistState();
+  show('pia1'); renderPIA1();
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 📋 SUMMARY
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderSummary() {
+  // OPTIMIZATION: Precompute and cache sanitized values
+  const s = Object.fromEntries(Object.entries(state.pia1).map(([k,v]) => [k, escapeHtmlMemo(sanitizeText(v, 2500))]));
+  
+  // OPTIMIZATION: Build PII array efficiently
+  const piiYesArr = pii2Fields.filter((f,i) => state.pia2[i]==='YES').concat(
+    (Array.isArray(state.pia2CustomOthers) ? state.pia2CustomOthers.filter(e=>e.value==='YES').map(e=>sanitizeText(e.name||'',100)) : [])
+  );
+  const piiYes = piiYesArr.length > 0 ? piiYesArr.map(p => `<span class="pii-tag">${escapeHtmlMemo(p)}</span>`).join('') : '<span style="color:var(--text3)">(none selected)</span>';
+  
+  // OPTIMIZATION: Precompute stakeholder HTML
+  const stakeholderLine = items => {
+    if (!Array.isArray(items)) return sanitizeText(items||'',4000);
+    const valid = items.filter(v => typeof v === 'string' ? v : (v.name || v.email));
+    if (!valid.length) return '<span style="color:var(--text3)">—</span>';
+    return valid.map(v => {
+      if (typeof v === 'string') return `<span class="stakeholder-tag">${escapeHtmlMemo(v)}</span>`;
+      const label = [v.name, v.email].filter(Boolean).join(' - ');
+      return `<span class="stakeholder-tag">${escapeHtmlMemo(label)}</span>`;
+    }).join('');
+  };
+  
+  // OPTIMIZATION: Precompute PIA5 rows with cached values
+  const pia5rows = pia5Questions.map((q,i) => {
+    const v = state.pia5[i]||'—';
+    const cls = v==='YES'?'status-approved':v==='NO'?'status-denied':'status-pending';
+    return `<div class="summary-row" style="grid-template-columns: 4fr 1fr !important;"><div class="summary-label" style="font-size:12px">${i+1}. ${escapeHtmlMemo(q)}</div><div class="summary-value" style="flex:0; margin-left:auto; text-align: right;"><span class="status-badge ${cls}">${v}</span></div></div>`;
+  }).join('');
+
+  let dcsCardHtml = '';
+  if (typeof state.dcsData === 'string') {
+    try { state.dcsData = JSON.parse(state.dcsData); } catch(e) {}
+  }
+  const dcsReqId = state.dcsData?.reqId || state.parentID;
+  
+  if (state.dcsData && dcsReqId) {
+    // OPTIMIZATION: Precompute expensive values
+    const dateStr = state.dcsData.timestamp ? new Date(state.dcsData.timestamp).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
+    const escapedReqId = escapeHtmlMemo(dcsReqId);
+    const escapedRequestor = escapeHtmlMemo(state.dcsData.requestor || '—');
+    const escapedStatus = escapeHtmlMemo(state.dcsData.status || '—');
+    const escapedDept = escapeHtmlMemo(state.dcsData.department || '—');
+    const escapedLoc = escapeHtmlMemo(state.dcsData.locations || '—');
+    const escapedAccess = escapeHtmlMemo(state.dcsData.access || '—');
+    const escapedIhelp = escapeHtmlMemo(state.dcsData.ihelp || '—');
+    
+    // OPTIMIZATION: Single pass to collect accountable persons
+    let accountableHtml = '';
+    if (state.dcsData.accountable) {
+      const accountablePersons = [];
+      for (let i = 1; i <= 5; i++) {
+        const name = state.dcsData.accountable[`accountableName${i}`];
+        const email = state.dcsData.accountable[`accountableEmail${i}`];
+        if (name || email) {
+          accountablePersons.push(`${escapeHtmlMemo(name || '—')} (${escapeHtmlMemo(email || '—')})`);
+        }
+      }
+      if (accountablePersons.length > 0) {
+        accountableHtml = `<div class="summary-row"><div class="summary-label">Accountable Persons</div><div class="summary-value">${accountablePersons.join(', ')}</div></div>`;
+      }
+    }
+
+    dcsCardHtml = `
+      <div class="card">
+        <div class="card-title">DCS Request Details</div>
+        <div class="summary-row"><div class="summary-label">Request ID</div><div class="summary-value"><strong>${escapedReqId}</strong></div></div>
+        <div class="summary-row"><div class="summary-label">Requestor</div><div class="summary-value">${escapedRequestor}</div></div>
+        <div class="summary-row"><div class="summary-label">DCS Status</div><div class="summary-value"><span class="status-badge status-${String(state.dcsData.status).toLowerCase() === 'complete' ? 'complete' : 'pending'}">${escapedStatus}</span></div></div>
+        <div class="summary-row"><div class="summary-label">Date Submitted</div><div class="summary-value">${escapeHtmlMemo(dateStr)}</div></div>
+        <div class="summary-row"><div class="summary-label">Department</div><div class="summary-value">${escapedDept}</div></div>
+        <div class="summary-row"><div class="summary-label">Locations</div><div class="summary-value">${escapedLoc}</div></div>
+        <div class="summary-row"><div class="summary-label">Access Needed</div><div class="summary-value">${escapedAccess}</div></div>
+        <div class="summary-row"><div class="summary-label">iHelp Reference</div><div class="summary-value">${escapedIhelp}</div></div>
+        <div class="summary-row ${getFlagClass('DCS - Immediate Head')}">
+          <div class="summary-label" style="position:relative; padding-right:36px;">
+            Immediate Head
+            ${getFlagIconHtml('DCS - Immediate Head')}
+          </div>
+          <div class="summary-value">${escapeHtmlMemo(state.dcsData.immHeadName || '—')} (${escapeHtmlMemo(state.dcsData.immediateHeadEmail || '—')})</div>
+        </div>
+        <div class="summary-row ${getFlagClass('DCS - Department Head')}">
+          <div class="summary-label" style="position:relative; padding-right:36px;">
+            Department Head
+            ${getFlagIconHtml('DCS - Department Head')}
+          </div>
+          <div class="summary-value">${escapeHtmlMemo(state.dcsData.deptHeadName || '—')} (${escapeHtmlMemo(state.dcsData.deptHeadEmail || '—')})</div>
+        </div>
+        <div class="summary-row ${getFlagClass('DCS - Division Head')}">
+          <div class="summary-label" style="position:relative; padding-right:36px;">
+            Division Head
+            ${getFlagIconHtml('DCS - Division Head')}
+          </div>
+          <div class="summary-value">${escapeHtmlMemo(state.dcsData.divHeadName || '—')} (${escapeHtmlMemo(state.dcsData.divHeadEmail || '—')})</div>
+        </div>
+        ${accountableHtml}
+      </div>
+      ${state.dcsData?.metadataAgency && typeof state.dcsData.metadataAgency === 'object' && Object.keys(state.dcsData.metadataAgency).length > 0 ? (() => {
+        let agencyHtml = '';
+        const agency = state.dcsData.metadataAgency;
+        // Define field labels for known agency keys
+        const fieldLabels = {
+          agencyName: 'Agency Name',
+          agencyPersonnel: 'Agency Personnel',
+          agencyHead: 'Agency Head',
+          agencyEmail: 'Agency Email',
+          agencyPhone: 'Agency Phone',
+          division: 'Division / Office',
+          contractStartDate: 'Contract Start',
+          networkDrive: 'Network Drive',
+          immHeadRecoveryEmail: 'Recovery Email',
+          immHeadRecoveryNumber: 'Recovery Number'
+        };
+        // Build endorsement file button for Supporting Documents (skip in agency card)
+        if (agency.endorsementLetter && typeof agency.endorsementLetter === 'object' && agency.endorsementLetter.id) {
+          window._endorsementFileHtml = `<a href="https://drive.google.com/file/d/${escapeHtmlMemo(agency.endorsementLetter.id)}/view" target="_blank" class="btn btn-sm" style="color: var(--navy-bright); text-decoration: none; border-color: var(--navy-bright); margin-right: 8px;" title="${escapeHtmlMemo(agency.endorsementLetter.name || 'Endorsement Letter')}">📄 View Endorsement Letter</a>`;
+        }
+        // Dynamically render all fields
+        Object.keys(agency).forEach(key => {
+          if (key === 'endorsementLetter') return; // Shown in Supporting Documents
+          const val = agency[key];
+          if (val === null || val === undefined || val === '') return;
+          const label = fieldLabels[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+          agencyHtml += `<div class="summary-row"><div class="summary-label">${escapeHtmlMemo(label)}</div><div class="summary-value">${escapeHtmlMemo(String(val))}</div></div>`;
+        });
+        if (!agencyHtml) return '';
+        return `<div class="card"><div class="card-title">Agency Information</div>${agencyHtml}</div>`;
+      })() : ''}
+    `;
+  }
+  
+  document.getElementById('screen-summary').innerHTML = `
+    <div class="form-layout">
+      ${renderSidebarTracker(7)}
+      <div class="page-content">
+        <div class="page-header">
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+            <span class="step-badge" style="margin-bottom:0;">Review &amp; Confirm</span>
+            ${getModeBadge()}
+          </div>
+          <h1>Application Summary</h1>
+          <p>Review your responses before final submission. This action cannot be undone.</p>
+        </div>
+        <div class="alert alert-warn" role="alert"><strong>Submission is final.</strong> After confirming, this application will be locked and sent for approval.</div>
+        <div class="card">
+          <div class="card-title">Application reference</div>
+          <div class="summary-row"><div class="summary-label">Application ID</div><div class="summary-value" style="font-family:var(--font-mono);color:var(--navy-text)">${escapeHtmlMemo(state.sessionId || 'N/A')}</div></div>
+          <div class="summary-row"><div class="summary-label">Application Status</div><div class="summary-value"><span class="status-badge ${getStatusBadgeClass(state.status)}">${escapeHtmlMemo(state.status)}</span></div></div>
+          <div class="summary-row"><div class="summary-label">Date Drafted</div><div class="summary-value">${new Date().toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'})}</div></div>
+        </div>
+        ${dcsCardHtml}
+        <div class="card">
+          <div class="card-title">Survey — Privacy compliance checklist</div>
+          ${pia5rows}
+        </div>
+        <div class="card">
+          <div class="card-title">PIA 1 — Program information</div>
+          <div class="summary-row"><div class="summary-label">PIA drafter</div><div class="summary-value">${s.drafter||'—'} (${s.drafterEmail||'—'})</div></div>
+          <div class="summary-row"><div class="summary-label">Immediate head</div><div class="summary-value">${s.immediateHead||'—'} (${s.immediateHeadEmail||'—'})</div></div>
+          <div class="summary-row ${getFlagClass('PIA 1 - Immediate Head Phone')}">
+            <div class="summary-label" style="position:relative; padding-right:36px;">
+              Immediate Head Phone
+              ${getFlagIconHtml('PIA 1 - Immediate Head Phone')}
+            </div>
+            <div class="summary-value">${s.immediateHeadPhone||'—'}</div>
+          </div>
+          <div class="summary-row"><div class="summary-label">Department head</div><div class="summary-value">${s.deptHead||'—'} (${s.deptHeadEmail||'—'})</div></div>
+          <div class="summary-row ${getFlagClass('PIA 1 - Dept. Head Phone')}">
+            <div class="summary-label" style="position:relative; padding-right:36px;">
+              Dept. Head Phone
+              ${getFlagIconHtml('PIA 1 - Dept. Head Phone')}
+            </div>
+            <div class="summary-value">${s.deptHeadPhone||'—'}</div>
+          </div>
+          <div class="summary-row"><div class="summary-label">Division head</div><div class="summary-value">${s.divHead||'—'} (${s.divHeadEmail||'—'})</div></div>
+          <div class="summary-row ${getFlagClass('PIA 1 - Division Head Phone')}">
+            <div class="summary-label" style="position:relative; padding-right:36px;">
+              Division Head Phone
+              ${getFlagIconHtml('PIA 1 - Division Head Phone')}
+            </div>
+            <div class="summary-value">${s.divHeadPhone||'—'}</div>
+          </div>
+          <div class="summary-row"><div class="summary-label">Department</div><div class="summary-value">${s.dept||'—'}</div></div>
+          <div class="summary-row"><div class="summary-label">Program / process</div><div class="summary-value">${s.program||'—'}</div></div>
+          <div class="summary-row"><div class="summary-label">Purpose</div><div class="summary-value">${s.purpose||'—'}</div></div>
+          <div class="summary-row"><div class="summary-label">Scope</div><div class="summary-value">${s.scope||'—'}</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">PIA 2 — PII collected</div>
+          <div class="summary-row">
+            <div class="summary-label">Collected Fields</div>
+            <div class="summary-value" style="text-align: right;">${piiYes}</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">PIA 3 — Stakeholders</div>
+          <div style="background: var(--bg2); border: 1px solid var(--border); padding: 12px 14px; border-radius: var(--radius); margin-bottom: 12px;">
+            <div style="font-size: 11.5px; font-weight: 600; color: var(--navy); text-transform: uppercase; margin-bottom: 8px;">Internal Stakeholders</div>
+            <div class="summary-row" style="display: flex !important; border:none; padding:0 0 8px 0;"><div class="summary-value">${stakeholderLine(state.pia3.intStakeholders)}</div></div>
+            <div class="summary-row" style="border-top: 1px dashed var(--border); padding: 8px 0 0 0;"><div class="summary-label" style="min-width: 80px;">Notes</div><div class="summary-value">${escapeHtml(state.pia3.intDescription)||'<span style="color:var(--text3)">—</span>'}</div></div>
+          </div>
+          <div style="background: var(--bg2); border: 1px solid var(--border); padding: 12px 14px; border-radius: var(--radius);">
+            <div style="font-size: 11.5px; font-weight: 600; color: var(--navy); text-transform: uppercase; margin-bottom: 8px;">External Stakeholders</div>
+            <div class="summary-row" style="display: flex !important; border:none; padding:0 0 8px 0;"><div class="summary-value">${stakeholderLine(state.pia3.extStakeholders)}</div></div>
+            <div class="summary-row" style="border-top: 1px dashed var(--border); padding: 8px 0 0 0;"><div class="summary-label" style="min-width: 80px;">Notes</div><div class="summary-value">${escapeHtml(state.pia3.extDescription)||'<span style="color:var(--text3)">—</span>'}</div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">PIA 4 — Information flow</div>
+          ${['collect','use','retain','disclose','dispose'].map(k=>`<div class="summary-row"><div class="summary-label">${k.charAt(0).toUpperCase()+k.slice(1)}</div><div class="summary-value">${escapeHtml(state.pia4[k])||'—'}</div></div>`).join('')}
+        </div>
+        <div class="btn-row spread">
+          <button class="btn" onclick="goBack('pia4')">← Back</button>
+          <button class="btn btn-primary" id="btn-submit-application" onclick="submitApplication()">Confirm &amp; Submit →</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ⚙️ PROCESSING
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderProcessingScreen() {
+  document.getElementById('screen-processing').innerHTML = `
+    <div class="processing-screen" role="status" aria-live="assertive">
+      <div class="spinner spinner-lg" aria-hidden="true"></div>
+      <h2>Processing your submission…</h2>
+      <p>Generating application record and admin export.<br>Initiating approval workflow.</p>
+    </div>
+  `;
+}
+
+function submitApplication() {
+  if (state.isSubmitting) return;
+  state.isSubmitting = true;
+  const btn = document.getElementById('btn-submit-application');
+  if (btn) btn.disabled = true;
+  show('processing'); renderProcessingScreen();
+  persistState();
+  
+  // Safety timeout: if submission doesn't complete in 90s, force recovery
+  const timeoutId = setTimeout(() => {
+    if (state.isSubmitting) {
+      hideLoading();
+      state.isSubmitting = false;
+      state.currentScreen = 'summary';
+      persistState();
+      show('summary'); renderSummary();
+      if (btn) btn.disabled = false;
+      showError('Submission timed out. Please try again.');
+    }
+  }, 90000);
+  
+  // Store timeout ID so we can clear it on success
+  window._submitTimeoutId = timeoutId;
+  
+  setTimeout(() => { submitToBackend(); }, 800);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🏆 CERTIFICATE (UNUSED)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderCertificate() {
+  const now = new Date().toLocaleString('en-PH', { dateStyle:'long', timeStyle:'short' });
+  document.getElementById('screen-certificate').innerHTML = `
+    <div class="page-header">
+      <span class="step-badge">Fully Approved</span>
+      <h1>Certificate of PIA Compliance</h1>
+    </div>
+    <div class="cert" role="region" aria-label="PIA Compliance Certificate">
+      <div class="cert-seal" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </div>
+      <h2>Privacy Impact Assessment</h2>
+      <h2 style="margin-bottom:12px;font-weight:400;font-size:15px;color:var(--text2)">Certificate of Completion</h2>
+      <p>This certifies that the following program or process has successfully completed and been approved through the organization's Privacy Impact Assessment process in accordance with applicable data privacy requirements.</p>
+      <div class="cert-program-block">
+        <div style="font-size:12px; color:var(--text3); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.06em;">Program / Process</div>
+        <div style="font-size:16px; font-weight:600; color:var(--text); letter-spacing:-0.02em;">${escapeHtml(state.pia1.program || '(No name provided)')}</div>
+        <div style="font-size:12px; color:var(--text3); margin-top:5px;">${escapeHtml(state.pia1.dept)} · Prepared by ${escapeHtml(state.pia1.drafter)}</div>
+      </div>
+      <p style="font-size:12.5px">Issued on: <strong>${now}</strong></p>
+      <div class="cert-id">${escapeHtml(state.appId)}</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn" onclick="show('confirmation'); renderConfirmation()">View Receipt</button>
+      <button class="btn btn-primary" onclick="window.top.close()">Done ✓</button>
+    </div>
+  `;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🧾 CONFIRMATION
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderConfirmation() {
+  document.getElementById('screen-confirmation').innerHTML = `
+    <div class="page-header" style="margin-top:0.5rem">
+      <span class="step-badge">Submission receipt</span>
+      <h1>Application Submitted</h1>
+    </div>
+    <div class="alert alert-success" role="alert">Your application has been submitted successfully.</div>
+    <div class="card">
+      <div class="card-title">Receipt details</div>
+      <div class="summary-row"><div class="summary-label">Application ID</div><div class="summary-value" style="font-family:var(--font-mono);color:var(--navy-text)">${escapeHtml(state.appId)}</div></div>
+      <div class="summary-row"><div class="summary-label">Program</div><div class="summary-value">${escapeHtml(state.pia1.program||'—')}</div></div>
+      <div class="summary-row"><div class="summary-label">Department</div><div class="summary-value">${escapeHtml(state.pia1.dept||'—')}</div></div>
+      <div class="summary-row"><div class="summary-label">Submitted by</div><div class="summary-value">${escapeHtml(state.pia1.drafter||'—')}</div></div>
+      <div class="summary-row"><div class="summary-label">Submission date</div><div class="summary-value">${escapeHtml(state.submittedAt || '—')}</div></div>
+      <div class="summary-row"><div class="summary-label">Status</div><div class="summary-value"><span class="status-badge ${getStatusBadgeClass(state.status)}">${escapeHtml(state.status === 'Rejected' || state.status === 'Returned' ? 'Returned to Requestor' : state.status)}</span></div></div> 
+    </div>
+    <div class="alert alert-info" role="note" style="font-size:12px;">An admin export has been generated and stored in the designated secure Admin Drive folder. Sensitive data is not displayed on this page.</div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="window.top.close()">Close Window</button>
+    </div>
+  `;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 💬 UI FEEDBACK
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function showLoading(message = 'Processing…') {
+  const el = document.createElement('div');
+  el.id = 'loader-overlay';
+  el.className = 'loader-overlay';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-live', 'assertive');
+  el.setAttribute('aria-busy', 'true');
+  el.innerHTML = `<div class="loader-box"><div class="spinner" aria-hidden="true"></div><p>${escapeHtml(message)}</p></div>`;
+  document.body.appendChild(el);
+}
+function hideLoading() {
+  document.getElementById('loader-overlay')?.remove();
+}
+
+function _showToast(msg, type) {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  el.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+  const icon = type === 'error' ? 
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>' : 
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>';
+  el.innerHTML = `<span class="toast-icon" aria-hidden="true" style="display:flex;">${icon}</span><span>${escapeHtml(msg)}</span>`;
+  document.body.appendChild(el);
+  setTimeout(() => {
+    el.style.animation = 'toastOut 0.25s cubic-bezier(0.4,0,1,1) both';
+    setTimeout(() => el.remove(), 260);
+  }, type === 'error' ? 4500 : 3000);
+}
+function showError(msg)   { _showToast(msg, 'error'); }
+function showSuccess(msg) { _showToast(msg, 'success'); }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ✅ VALIDATION
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function validateEmail(email) {
+  // Comprehensive email validation: checks @ symbol, domain format, and rejects invalid patterns
+  if (!email || typeof email !== 'string') return false;
+  const trimmed = email.trim();
+  if (!trimmed) return false;
+  // RFC 5322 simplified pattern with domain requirement
+  const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!pattern.test(trimmed)) return false;
+  // Extract domain and validate it has proper structure (at least one dot after @)
+  const parts = trimmed.split('@');
+  if (parts.length !== 2) return false;
+  const domain = parts[1];
+  // Domain must have at least one dot and a valid TLD (at least 2 chars after last dot)
+  const domainParts = domain.split('.');
+  if (domainParts.length < 2) return false;
+  const tld = domainParts[domainParts.length - 1];
+  if (tld.length < 2) return false;
+  // No consecutive dots in domain
+  if (domain.includes('..')) return false;
+  return true;
+}
+function isValidEmail(email) { return validateEmail(email); }
+
+function validatePIA1() {
+  const errors = [];
+  if (!state.pia1.dept) errors.push('Department is required');
+  if (!state.pia1.program) errors.push('Program name is required');
+  if (state.pia1.program && state.pia1.program.length > 200) errors.push('Program name exceeds 200 characters');
+  if (!state.pia1.date) errors.push('Program date is required');
+  if (state.pia1.date) {
+    // Parse date string (YYYY-MM-DD) as local time to avoid UTC timezone shift
+    const parts = state.pia1.date.split('-').map(Number);
+    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) {
+      errors.push('Program date is invalid');
+    } else {
+      const d = new Date(parts[0], parts[1] - 1, parts[2]);
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const maxDate = new Date(today.getFullYear() + 10, today.getMonth(), today.getDate());
+      if (d < today) errors.push('Program date must be today or a future date');
+      else if (d > maxDate) errors.push('Program date must be within the next 10 years');
+    }
+  }
+  if (!state.pia1.drafter) errors.push('Drafter name is required');
+  if (!state.pia1.drafterEmail || !validateEmail(state.pia1.drafterEmail)) errors.push('Valid drafter email is required');
+  // Validate ALL email fields in PIA 1
+  if (state.pia1.deptHeadEmail && !validateEmail(state.pia1.deptHeadEmail)) errors.push('Invalid department head email');
+  if (state.pia1.immediateHeadEmail && !validateEmail(state.pia1.immediateHeadEmail)) errors.push('Invalid immediate head email');
+  if (state.pia1.divHeadEmail && !validateEmail(state.pia1.divHeadEmail)) errors.push('Invalid division head email');
+  // Trunk line / phone fields are required
+  if (!state.pia1.drafterPhone) errors.push('Drafter trunk line / phone is required');
+  if (!state.pia1.immediateHeadPhone) errors.push('Immediate head trunk line / phone is required');
+  if (!state.pia1.deptHeadPhone) errors.push('Department head trunk line / phone is required');
+  if (!state.pia1.divHeadPhone) errors.push('Division head trunk line / phone is required');
+  if (!state.pia1.description) errors.push('Program description is required');
+  if (!state.pia1.purpose) errors.push('Purpose is required');
+  if (errors.length) { showError(errors.join(' · ')); return false; }
+  return true;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🔗 BACKEND INTEGRATION
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function submitToBackend() {
+  showLoading('Submitting application…');
+  state.pia1.hasNDADPA = state.hasNDADPA; // Ensure it persists to the backend for the reviewer screen
+  google.script.run
+    .withSuccessHandler(onSubmitSuccess)
+    .withFailureHandler(onSubmitError)
+    .apiSubmitApplication({ appId:state.appId, baseSessionId:state.baseSessionId, isEditing:state.isEditing, pia1:state.pia1, pia2:state.pia2, pia2CustomOthers:state.pia2CustomOthers, pia3:state.pia3, pia4:state.pia4, pia5:state.pia5, isFlagged:state.isFlagged, linkedReqId: state.parentID });
+}
+
+function onSubmitSuccess(result) {
+  clearTimeout(window._submitTimeoutId);
+  if (result.success) {
+    state.submittedAt = result.timestamp;
+    state.status = 'Pending';
+    state.appId = result.appId;  // appId only set AFTER submission
+    // Keep sessionId/baseSessionId as is for draft tracking
+    state.revision = 0;
+    state.isIncomplete = false;  // Mark as complete - no more draft saves needed
+    state.draftStatus = 'completed';
+    state.isEditing = false;
+    state.approvalStep = 0;
+    state.approvers.forEach(a => { a.decision = null; a.comment = ''; });
+    
+    // Mark draft as completed on server if it exists
+    const cleanupId = state.baseSessionId || state.sessionId;
+    if (state.draftId || cleanupId) {
+      google.script.run
+        .withSuccessHandler(r => {})
+        .withFailureHandler(e => {})
+        .apiMarkDraftComplete(state.draftId || '', cleanupId || state.appId);
+    }
+    
+    persistState();
+    setTimeout(() => { show('confirmation'); renderConfirmation(); hideLoading(); showSuccess('Application submitted successfully!'); state.isSubmitting = false; }, 600);
+  } else {
+    state.isSubmitting = false;
+    hideLoading();
+    showError('Submission failed: ' + (result.errors?.join(', ') || result.error));
+  }
+}
+
+function onSubmitError(error) {
+  clearTimeout(window._submitTimeoutId);
+  hideLoading();
+  state.isSubmitting = false;
+  const btn = document.getElementById('btn-submit-application');
+  if (btn) btn.disabled = false;
+  state.currentScreen = 'summary';
+  persistState();
+  show('summary'); renderSummary();
+  // CRITICAL FIX: Show actual error instead of fake success
+  const errorMsg = String(error || 'Unknown error occurred during submission');
+  showError('Submission failed: ' + errorMsg);
+}
+
+function loadUserEmail() {
+  if (state.userEmail && isValidEmail(state.userEmail)) {
+    renderCurrentScreen();
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(result => {
+      if (result && result.email && isValidEmail(result.email)) {
+        state.userEmail = result.email; persistState();
+        renderCurrentScreen();
+      } else { promptForUserEmail(); }
+    })
+    .withFailureHandler(() => { promptForUserEmail(); })
+    .apiGetUserEmail();
+}
+
+function promptForUserEmail() {
+  if (document.getElementById('user-email-modal')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'user-email-modal';
+  overlay.className = 'modal-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'modal-title');
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <h3 id="modal-title">Confirm your email</h3>
+      <p>We couldn't automatically detect your email. Please enter the address you want associated with this submission.</p>
+      <div class="field" style="margin-bottom:12px"><label for="user-email-input">Email address <span aria-hidden="true" style="color:var(--danger-text)">*</span></label>
+        <input id="user-email-input" type="email" placeholder="name@domain.example" autocomplete="email" aria-required="true" />
+      </div>
+      <div class="btn-row">
+        <button id="user-email-skip" class="btn">Use anonymous</button>
+        <button id="user-email-save" class="btn btn-primary">Save email</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const input = document.getElementById('user-email-input');
+  input.focus();
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('user-email-save').click(); });
+  document.getElementById('user-email-save').addEventListener('click', () => {
+    const val = input.value.trim();
+    if (!isValidEmail(val)) { showError('Please enter a valid email address.'); return; }
+    state.userEmail = val; persistState(); overlay.remove();
+    renderCurrentScreen();
+  });
+  document.getElementById('user-email-skip').addEventListener('click', () => {
+    const anonId = 'anon-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15));
+    state.userEmail = anonId; persistState(); overlay.remove();
+    renderCurrentScreen();
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🚀 INIT
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+document.addEventListener('DOMContentLoaded', () => {
+  hideLoading(); // Clear any stuck loading overlay on init
+  
+  // ─── EVENT DELEGATION: Handle form changes efficiently ─────
+  // Instead of individual listeners on 1000s of inputs, use single delegated listener
+  document.addEventListener('change', (e) => {
+    if (e.target.matches('input[id^="p2-"], input[id^="p3-int-"], input[id^="p3-ext-"], input[id^="p4-"], input[name^="q5-"], input[id^="p2-custom-"]')) {
+      // Batch state updates and use debounced persist
+      debouncedPersistState();
+    }
+    if (e.target.matches('input[id^="p2-custom-"]')) {
+      // Custom fields: update state directly
+      const match = e.target.id.match(/p2-custom-(name|value)-(\d+)/);
+      if (match) {
+        const [, field, idx] = match;
+        if (!Array.isArray(state.pia2CustomOthers)) state.pia2CustomOthers = [];
+        if (!state.pia2CustomOthers[idx]) state.pia2CustomOthers[idx] = { name: '', value: '' };
+        state.pia2CustomOthers[idx][field] = e.target.value;
+      }
+    }
+  });
+  
+  // Use the parentID passed from the server-side template to avoid client-side URL parsing issues.
+  const parentId = <?!= parentID ? JSON.stringify(parentID) : 'null' ?>;
+
+  // Store parentID in state and show the guide/linking screen.
+  // This screen will handle the verification and allow the user to proceed.
+  state.parentID = parentId;
+  state.currentScreen = 'dcs';
+  show('dcs');
+  renderDCSCheck();
+  
+  loadUserEmail();
+});
+</script>
+</body>
+</html>
