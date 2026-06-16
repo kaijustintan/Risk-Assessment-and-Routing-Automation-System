@@ -1542,29 +1542,36 @@ const state = {
 };
 
 /*
-  deriveFirstName — best-effort first name from a corporate email local-part.
-  e.g. "john.doe@megaworldcorp.com" -> "John". Non firstname.lastname addresses degrade
-  gracefully (e.g. "jdoe@..." -> "Jdoe"). Falls back to "there" when nothing usable.
+  deriveSurname — best-effort surname from a corporate email local-part.
+  Megaworld emails are <initials><surname>, e.g. "drbisquera@megaworldcorp.com" -> "Bisquera"
+  (assumes 2 leading initials). Also handles "firstname.lastname" style -> last segment.
+  Best-effort: may be off for 1- or 3-initial addresses. Falls back to "there".
   Note: the backend only exposes the email (getUserIdentity), never a display name.
 */
-function deriveFirstName(email) {
+function deriveSurname(email) {
   if (!email || typeof email !== 'string') return 'there';
-  const local = (email.split('@')[0] || '').trim();
-  const first = local.split(/[._+\-]/)[0] || '';
-  if (!first) return 'there';
-  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+  const local = (email.split('@')[0] || '').toLowerCase().trim();
+  if (!local) return 'there';
+  let surname;
+  if (/[._+\-]/.test(local)) {
+    const parts = local.split(/[._+\-]/).filter(Boolean);
+    surname = parts[parts.length - 1] || local;
+  } else {
+    // Megaworld style: leading initials + surname (e.g. "drbisquera" -> "bisquera").
+    surname = local.length > 3 ? local.slice(2) : local;
+  }
+  return surname.charAt(0).toUpperCase() + surname.slice(1);
 }
 
 /*
-  greetingLine — renders a prominent, headline-scale personalized "Hi <Name>," line (navy,
-  bold) so it's clearly noticeable at the top of a screen. Returns '' until the signed-in
-  identity has loaded (so it never flashes blank). The `scale` arg is accepted for backward
-  compatibility but the styling is now uniform across all pages.
+  greetingLine — renders a prominent, headline-scale personalized "Hello, <Surname>!" line
+  (navy, bold) so it's clearly noticeable at the top of a screen. Returns '' until the
+  signed-in identity has loaded. The `scale` arg is accepted for backward compatibility.
 */
 function greetingLine(scale) {
   if (!state.userEmail) return '';
-  const name = escapeHtml(deriveFirstName(state.userEmail));
-  return `<p style="font-size:clamp(1.35rem, 1.1rem + 1.1vw, 1.9rem);font-weight:700;color:var(--navy);margin:0 0 6px;letter-spacing:-0.02em;line-height:1.2;">Hi ${name},</p>`;
+  const name = escapeHtml(deriveSurname(state.userEmail));
+  return `<p style="font-size:clamp(1.35rem, 1.1rem + 1.1vw, 1.9rem);font-weight:700;color:var(--navy);margin:0 0 6px;letter-spacing:-0.02em;line-height:1.2;">Hello, ${name}!</p>`;
 }
 
 // --- Custom Modals ---------------------------------
@@ -2035,8 +2042,11 @@ function getCombinedStatusBadge(dcsStatus, piaStatus) {
 
   // Handle progression to PIA
   if (dcs === 'approved' || dcs === 'complete') {
-    if (!pia || pia === 'pending' || pia === '') {
+    if (!pia || pia === '') {
       return makeBadge('status-processing', 'Ready for Phase 2 (PIA)', 'Please proceed to PIA assessment');
+    }
+    if (pia === 'pending') {
+      return makeBadge('status-pending', 'PIA In Progress', 'Awaiting Phase 2 approval');
     }
     if (pia === 'returned') {
       return makeBadge('status-returned', 'PIA Returned', 'Requires revision in Phase 2');
@@ -2853,7 +2863,7 @@ function renderLanding() {
 
 
     <div class="app-footer" role="contentinfo">
-      Megaworld Corporation &nbsp;&middot;&nbsp; Privacy Impact Assessment &nbsp;&middot;&nbsp; Build v0.0.3
+      Megaworld Corporation &nbsp;&middot;&nbsp; Privacy Impact Assessment &nbsp;&middot;&nbsp; Build v0.0.4
     </div>
     </div>
   `;
@@ -3093,7 +3103,7 @@ function renderGuide() {
     { configKey: 'LINK_CU_TEMPLATE', title: 'Confidentiality Undertaking', descSet: 'View agency document', descStyle: 'color: #6b7280;',
       iconStyle: 'background: #eff6ff; border: 1px solid #93c5fd; color: #2563eb; border-radius: 8px; padding: 6px; display: flex; justify-content: center; align-items: center;',
       icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' },
-    { configKey: 'LINK_OJT_NDA_TEMPLATE', title: 'OJT NDA', descSet: 'Click to download', descStyle: '',
+    { configKey: 'LINK_OJT_NDA_TEMPLATE', title: 'OJT Confidentiality Undertaking', descSet: 'Click to download', descStyle: '',
       iconStyle: 'background: #fef2f2; border-color: #fca5a5; color: #dc2626;',
       icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' },
   ];
@@ -3367,15 +3377,17 @@ function renderForm() {
           </div>
         </div>
       </div>
-      <div style="margin-top:12px;">
-        <label for="dcs-involvement" style="margin:0 0 5px; display:block; font-size:13px; font-weight:600; color:var(--navy-text);">Does this request involve an Agency or OJT? ${infoTip('Agency: on behalf of an external agency (adds an Agency Information section). OJT: on-the-job trainee — requires a Confidentiality Undertaking and an Endorsement Letter.')}</label>
-        <div class="select-wrap" style="max-width:340px;">
-          <select id="dcs-involvement">
-            <option value="" ${(!isAgency && !isOJT) ? 'selected' : ''}>No — standard request</option>
-            <option value="agency" ${isAgency ? 'selected' : ''}>This request involves an Agency</option>
-            <option value="ojt" ${isOJT ? 'selected' : ''}>This request involves an OJT</option>
-          </select>
-          <svg class="select-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      <div class="field" style="margin-top:14px;">
+        <label for="dcs-involvement">Does this request involve an Agency or OJT? ${infoTip('Agency: on behalf of an external agency (adds an Agency Information section). OJT: on-the-job trainee — requires a Confidentiality Undertaking and an Endorsement Letter.')}</label>
+        <div class="input-wrapper">
+          <div class="select-wrap">
+            <select id="dcs-involvement">
+              <option value="" ${(!isAgency && !isOJT) ? 'selected' : ''}>No — standard request</option>
+              <option value="agency" ${isAgency ? 'selected' : ''}>This request involves an Agency</option>
+              <option value="ojt" ${isOJT ? 'selected' : ''}>This request involves an OJT</option>
+            </select>
+            <svg class="select-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
         </div>
       </div>
     </div>
@@ -4345,7 +4357,7 @@ async function submitRequest() {
         throw new Error('Main document file error: ' + e.message);
       }
     }
-    if (dsaInput?.files?.length) {
+    if (state.dcs.access === 'External' && dsaInput?.files?.length) {
       try {
         payload.dsaFile = await readFileAsBase64(dsaInput.files[0]);
       } catch (e) {
@@ -4446,6 +4458,8 @@ function renderSuccess(reqId = '', submittedAt = '', phase2Url = '') {
     </div>
   `;
 }
+
+let _requestsCache = []; // loaded requests, for client-side search/status filtering
 
 function renderRequests() {
   const container = document.getElementById('screen-requests');
@@ -4551,41 +4565,41 @@ function renderRequests() {
         return;
       }
 
-      let requestsHtml = response.requests.map(req => {
-        const status = req.status;
-        const piaStatus = req.piaStatus;
-        
-        let badgesHtml = getCombinedStatusBadge(status, piaStatus);
-        
-        let remarksHtml = '';
-        if (req.remarks && (status === 'RETURNED' || String(piaStatus).toUpperCase() === 'RETURNED' || String(piaStatus).toUpperCase() === 'REJECTED')) {
-          remarksHtml = `<div style="font-size: 11.5px; color: var(--warn-text); margin-top: 8px; background: rgba(180, 109, 20, 0.1); padding: 6px 10px; border-radius: 4px; border-left: 2px solid var(--warn-text); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong>Note:</strong> ${escapeHtml(req.remarks)}</div>`;
-        }
-        return `
-          <div class="app-row" role="listitem" tabindex="0" onclick="viewRequestDetails('${escapeHtml(req.reqId)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewRequestDetails('${escapeHtml(req.reqId)}');}">
-            <div class="app-info">
-              <div class="app-name">${escapeHtml(req.name)}</div>
-              <div class="app-id" style="margin-top: 4px; margin-bottom: 4px;">${escapeHtml(req.reqId)}</div>
-              <div class="app-date">Submitted: ${new Date(req.timestamp).toLocaleDateString()}</div>
-              ${remarksHtml}
-            </div>
-              <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
-              ${badgesHtml}
-            </div>
-          </div>
-        `;
-      }).join('');
+      _requestsCache = response.requests || [];
 
-      if (response.requests.length === 0) {
-        requestsHtml = `<div style="text-align: center; padding: 2rem 1rem; color: var(--text2);">You have not submitted any requests yet.</div>`;
+      if (_requestsCache.length === 0) {
+        requestsListContainer.innerHTML = `<div class="card"><div style="text-align: center; padding: 2rem 1rem; color: var(--text2);">You have not submitted any requests yet.</div></div>`;
+        return;
       }
 
-      const requestsListContent = document.createElement('div');
-      requestsListContent.id = 'requests-list-content'; // Optional, but good for consistency
-      requestsListContent.className = 'card';
-      requestsListContent.setAttribute('role', 'list');
-      requestsListContent.innerHTML = requestsHtml;
-      requestsListContainer.appendChild(requestsListContent);
+      // Filter bar + list + empty-state. Rows are rendered by applyRequestFilters().
+      requestsListContainer.innerHTML = `
+        <div class="card" style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:1.25rem; padding:1rem 1.25rem;">
+          <div class="field" style="flex:1; min-width:200px; margin-bottom:0;">
+            <label for="req-search">Search</label>
+            <input id="req-search" type="text" placeholder="Search by name or Request ID" oninput="applyRequestFilters()">
+          </div>
+          <div class="field" style="min-width:190px; margin-bottom:0;">
+            <label for="req-status-filter">Filter by status</label>
+            <div class="input-wrapper"><div class="select-wrap">
+              <select id="req-status-filter" onchange="applyRequestFilters()">
+                <option value="">All statuses</option>
+                <option value="pending">Pending Immediate Head</option>
+                <option value="ready">Ready for Phase 2</option>
+                <option value="in-progress">PIA In Progress</option>
+                <option value="escalated">Escalated</option>
+                <option value="returned">Returned</option>
+                <option value="certified">Fully Certified</option>
+                <option value="denied">Denied / Rejected</option>
+              </select>
+              <svg class="select-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </div></div>
+          </div>
+        </div>
+        <div id="requests-list-content" class="card" role="list"></div>
+        <div id="requests-empty-filter" class="hidden" style="text-align:center; padding:1.5rem 1rem; color:var(--text2); font-size:13px;">No requests match your filters.</div>
+      `;
+      applyRequestFilters();
     })
     .withFailureHandler(err => {
       const loadingIndicator = document.getElementById('requests-loading-indicator');
@@ -4595,6 +4609,74 @@ function renderRequests() {
       requestsListContainer.innerHTML = `<div class="card"><p>Error loading requests: ${escapeHtml(err.message)}</p></div>`;
     })
     .apiListUserRequests();
+}
+
+// Maps a request's DCS+PIA status to a single filter key (mirrors getCombinedStatusBadge).
+function getStatusKey(dcsStatus, piaStatus) {
+  const dcs = String(dcsStatus || '').toLowerCase().trim();
+  const pia = String(piaStatus || '').toLowerCase().trim();
+  if (dcs === 'pending') return 'pending';
+  if (dcs === 'returned') return 'returned';
+  if (dcs === 'denied') return 'denied';
+  if (dcs === 'escalated to division head') return 'escalated';
+  if (dcs === 'approved by ism') return 'certified';
+  if (dcs === 'rejected by ism') return 'denied';
+  if (dcs === 'approved' || dcs === 'complete') {
+    if (!pia) return 'ready';
+    if (pia === 'pending') return 'in-progress';
+    if (pia === 'returned') return 'returned';
+    if (pia === 'denied' || pia === 'rejected by ism') return 'denied';
+    if (pia === 'approved') return 'in-progress';
+    if (pia === 'approved by ism' || pia === 'complete') return 'certified';
+    if (pia === 'escalated to division head') return 'escalated';
+    return 'in-progress';
+  }
+  return 'other';
+}
+
+function renderRequestRow(req) {
+  const badgesHtml = getCombinedStatusBadge(req.status, req.piaStatus);
+  let remarksHtml = '';
+  if (req.remarks && (req.status === 'RETURNED' || String(req.piaStatus).toUpperCase() === 'RETURNED' || String(req.piaStatus).toUpperCase() === 'REJECTED')) {
+    remarksHtml = `<div style="font-size: 11.5px; color: var(--warn-text); margin-top: 8px; background: rgba(180, 109, 20, 0.1); padding: 6px 10px; border-radius: 4px; border-left: 2px solid var(--warn-text); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong>Note:</strong> ${escapeHtml(req.remarks)}</div>`;
+  }
+  return `
+    <div class="app-row" role="listitem" tabindex="0" onclick="viewRequestDetails('${escapeHtml(req.reqId)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewRequestDetails('${escapeHtml(req.reqId)}');}">
+      <div class="app-info">
+        <div class="app-name">${escapeHtml(req.name)}</div>
+        <div class="app-id" style="margin-top: 4px; margin-bottom: 4px;">${escapeHtml(req.reqId)}</div>
+        <div class="app-date">Submitted: ${new Date(req.timestamp).toLocaleDateString()}</div>
+        ${remarksHtml}
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
+        ${badgesHtml}
+      </div>
+    </div>
+  `;
+}
+
+function applyRequestFilters() {
+  const listEl = document.getElementById('requests-list-content');
+  if (!listEl) return;
+  const searchEl = document.getElementById('req-search');
+  const statusEl = document.getElementById('req-status-filter');
+  const emptyEl = document.getElementById('requests-empty-filter');
+  const q = (searchEl ? searchEl.value : '').toLowerCase().trim();
+  const statusKey = statusEl ? statusEl.value : '';
+  const filtered = (_requestsCache || []).filter(req => {
+    const matchesSearch = !q || String(req.name || '').toLowerCase().includes(q) || String(req.reqId || '').toLowerCase().includes(q);
+    const matchesStatus = !statusKey || getStatusKey(req.status, req.piaStatus) === statusKey;
+    return matchesSearch && matchesStatus;
+  });
+  if (filtered.length === 0) {
+    listEl.innerHTML = '';
+    listEl.classList.add('hidden');
+    if (emptyEl) emptyEl.classList.remove('hidden');
+    return;
+  }
+  if (emptyEl) emptyEl.classList.add('hidden');
+  listEl.classList.remove('hidden');
+  listEl.innerHTML = filtered.map(renderRequestRow).join('');
 }
 
 function viewRequestDetails(reqId) {
