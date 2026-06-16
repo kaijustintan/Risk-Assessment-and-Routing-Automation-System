@@ -1,16 +1,125 @@
-/**
- * Admin SPA System - Server-side Google Apps Script
- * 
- * Fetches data from multiple sheets and serves an admin view.
- * 
- * Script Properties Required:
- *   SPREADSHEET_ID  - ID of the Google Spreadsheet containing all PIA sheets
- *   SHEET_PREFIX    - Prefix for sheet names (e.g., "PIA System Database - ")
- *   ALLOWED_DOMAIN  - (optional) Domain to restrict access to, e.g.
- *   DOMAIN          - (optional) Domain for authorization check, e.g. "companycorp.com"
- *                     Required when ENABLED_DOMAIN_CHECK is true.
- */
+// ============================================================
+//  admin_code.js  (Admin — Phase 3 backend)
+// ============================================================
+/*
+  [ OUTLINE ]
+  FILE: admin_code.js
+  PURPOSE (Layman): This is the server brain of the Admin app, the ISM control
+    tower for Megaworld's access-request system. It pulls every request from the
+    shared Google Spreadsheet, joins the DCS form data with the PIA assessment and
+    the approval decisions, and hands a clean dashboard to the admin page. It also
+    lets ISM admins resend stuck emails, re-route a finished request's Certificate
+    of Approval to DCOPS/TechServe, edit system settings, read audit logs, and
+    delete entries. Only INFOSEC-001 / INFOSEC-002 accounts get in.
 
+  TECHNICAL: Google Apps Script web-app backend (doGet/doPost) plus a JSON REST API
+    and google.script.run handlers. Data layer is the shared Spreadsheet read through
+    sheetToObjects_ / sheetToObjectsFiltered_ helpers; no ORM, header-indexed row
+    arrays. Email sending goes through MailApp wrapped in sendEmailWithRetry_ (5-try
+    backoff) and rendered with the navy buildAdminEmailHtml_ / buildCertificateHtml_
+    templates. Access is gated by two layers: isAuthorizedDomain() (domain) then
+    checkAccess_() (INFOSEC member ID). The Risk_Audit sheet doubles as both the audit
+    log and the email queue. Constraints: returns must be plain-string POJOs (GAS V8
+    drops non-serializable values / returns null on uncaught throw), so almost every
+    function is wrapped in try/catch and stringifies sheet cells defensively.
+
+  CATEGORY: SHEET NAME CONSTANTS & CONFIG
+    - SHEET_NAMES (constant)              canonical sheet tab names
+    - ENABLED_DOMAIN_CHECK (constant)     master switch for the domain gate
+    - ADMIN_API_KEY (constant)            shared secret for the JSON REST API
+    - getPrefix()                         optional sheet-name prefix from Script Properties
+    - getProp_(key)                       raw Script Property reader
+
+  CATEGORY: DISPATCH / ENTRY
+    - doGet(e)                            serve AdminView (or access-denied / setup page)
+    - doPost(e)                           route JSON API, submitDCS, or deny
+    - handleAdminApi_(request)            authenticate + switch() the JSON REST actions
+
+  CATEGORY: ACCESS CONTROL
+    - checkAccess_(email)                 allow only INFOSEC-001 / INFOSEC-002
+    - isAuthorizedDomain(userEmail)       domain-suffix gate (fail-secure)
+    - submitDCS(payload)                  re-validates domain (defense-in-depth stub)
+
+  CATEGORY: EMAIL QUEUE & ROUTING (Risk_Audit as queue)
+    - adminApi_getEmailQueue(params)      list Email* audit rows as a queue
+    - adminApi_getQueueSummary(params)    queue health / counts
+    - adminApi_getFailedEmails(sinceDays) wrapper -> adminGetFailedEmails
+    - adminApi_getEmailLog(sessionId)     wrapper -> adminGetEmailLog
+    - adminApi_resendEmail(...)           wrapper -> adminResendEmail
+    - adminApi_retryQueuedEmail(queueId)  flip one Failed row back to Pending
+    - adminApi_retryAllForSession(...)    flip many rows back to Pending
+    - adminApi_cancelQueuedEmails(...)    mark rows Cancelled
+    - adminApi_resendToStage(...)         re-notify approver / ISM / DivHead stage
+    - adminApi_getPipelineView(sessionId) full per-session pipeline snapshot
+
+  CATEGORY: CONFIG (notification + System_Configuration)
+    - adminApi_getNotificationConfig()    read ADMIN_NOTIFY_EMAIL / NOTIFY_* flags
+    - adminApi_setNotificationConfig(cfg) write those flags
+    - getConfigData()                     read System_Configuration + InfoSec_Email_Config
+    - saveConfigData(sysUpdates, info)    write/append those two config sheets
+
+  CATEGORY: SHEET HELPERS & UTILS
+    - getSpreadsheet_()                   open the DB by SPREADSHEET_ID
+    - getSheet_(name)                     resolve a sheet by exact-then-prefixed name
+    - sheetToObjects_(sheet)              rows -> array of header-keyed objects
+    - sheetToObjectsFiltered_(...)        same, filtered by one column value
+    - deleteRowsBySessionId_(...)         bottom-up row deletion by SessionID
+    - include(filename)                   inline an HTML partial into the template
+    - escapeHtml_(str)                    HTML-escape a string
+    - getOptionalUrl_(key)                optional URL Script Property for CTA buttons
+
+  CATEGORY: AUTH / DIAGNOSTICS
+    - forceAuthorize()                    touch every service to trigger OAuth consent
+    - ping()                              spreadsheet reachability check
+    - getAdminDataDebug()                 report which sheets resolve
+    - debugSheets()                       list actual tab names
+    - checkProperties()                   log whether ADMIN_API_KEY is set
+    - testAdminApi()                      end-to-end self-test of the API surface
+
+  CATEGORY: DASHBOARD DATA
+    - getAdminData()                      main join: DCS + PIA + approvals -> rows
+    - parseMetadata_(jsonStr)             safe JSON.parse of a metadata cell
+    - normalizeDcsStatus_(rawStatus)      canonicalize DCS status text
+    - computePiaStatus_(app)              Not Started / In Progress / Complete
+    - computePiaDisplay_(app, sessionId)  "n/5 Submitted" badge text
+    - computeApprovalStatus_(...)         Pending / In Progress / Approved / Denied
+    - getAuditLogs(reqId, sessionId)      audit rows + workflow rows for one entry
+    - exportToSheet(rows)                 dump the dashboard to a new Spreadsheet
+
+  CATEGORY: DELETE
+    - deleteEntry(...)                    remove one request across all sheets + notify
+    - batchDeleteEntries(items)           loop deleteEntry over many items
+
+  CATEGORY: CERTIFICATE ROUTING
+    - apiAdmin_GetRoutingStatus(sessionId)        routing eligibility snapshot
+    - apiAdmin_RerouteApprovedRequest(...)        regenerate cert + email DCOPS/TechServe
+    - apiAdmin_GetApprovedApplications()          all apps ranked by route-readiness
+    - apiAdmin_DownloadCertificate(sessionId)     cert as base64 PDF (no email)
+
+  CATEGORY: EMAIL SENDERS & TEMPLATE
+    - getStyledHtmlWrapper(header, body)  full-page navy HTML (access-denied pages)
+    - sendEmailWithRetry_(...)            MailApp with 5-try backoff
+    - buildAdminEmailHtml_(opts)          shared navy HTML email shell
+    - buildCertificateHtml_(...)          Certificate of Approval HTML body
+    - logAuditTrail(sessionId, action, flags)  append an Email* audit row
+    - getApplicationData(sessionId)       fetch one Applications row
+    - notifyApprover(sessionId, stepIndex)        email a department approver
+    - notifyApplicant(sessionId, status)          email the applicant
+    - apiPhase3_NotifyISMember(sessionId, step)   email an ISM member
+    - adminGetEmailLog(sessionId)         Email* audit rows for a session
+    - adminGetFailedEmails(sinceDays)     recent 'Email Failed' rows
+    - adminResendEmail(...)               re-trigger the right notify* for a recipient
+*/
+
+/*
+  Constant: SHEET_NAMES
+  LAYMAN:    The canonical list of tab names inside the shared spreadsheet. Code
+             references SHEET_NAMES.APPLICATIONS instead of typing "Applications"
+             everywhere, so a tab rename only has to change here.
+  TECHNICAL: Frozen-by-convention lookup map. Values must match the real tab names
+             exactly (getSheet_ also tries a prefixed fallback). Do NOT repurpose
+             these to point at different tabs — PIA and DCS read the same sheets.
+*/
 // ─── Sheet Name Constants (must match actual sheet tab names exactly) ─────────
 var SHEET_NAMES = {
   DATA_COLLECTION:      'Data_Collection',
@@ -23,18 +132,58 @@ var SHEET_NAMES = {
   SYSTEM_CONFIG:        'System_Configuration'
 };
 
+/*
+  Constant: ENABLED_DOMAIN_CHECK
+  LAYMAN:    Master on/off switch for the "must be a company email" gate. Set true
+             in production. Flip to false only for local testing.
+  TECHNICAL: When true, isAuthorizedDomain() enforces the DOMAIN / ALLOWED_DOMAIN
+             suffix check; when false it returns true for everyone (bypass).
+*/
 // ─── Domain Authorization Configuration ───────────────────────────────────────
 // DOMAIN Script Property — e.g. "companycorp.com" (no leading @)
 // Set in Project Settings → Script Properties.
 const ENABLED_DOMAIN_CHECK = true;
 
+/*
+  Function: getPrefix
+  LAYMAN:    Returns the optional text stuck in front of sheet names for legacy
+             databases (most tabs have no prefix, so this is usually unused).
+  TECHNICAL: Reads SHEET_PREFIX from Script Properties, defaulting to
+             'PIA System Database - '. Used only by getSheet_'s fallback lookup.
+  PARAMS:    (none)
+  RETURNS:   String prefix (never null).
+*/
 function getPrefix() {
   return PropertiesService.getScriptProperties().getProperty('SHEET_PREFIX') || 'PIA System Database - ';
 }
 
+/*
+  Function: doGet
+  LAYMAN:    The front door of the Admin web app. When an ISM admin opens the URL,
+             this checks they are using a company account AND are an authorized
+             INFOSEC member; if both pass it serves the dashboard page, otherwise it
+             shows a styled "Access Denied" screen. It also has a one-time setup mode
+             to record which email domain is allowed.
+  TECHNICAL: GAS web-app GET handler. Order: (1) optional ?setup=domain writes
+             ALLOWED_DOMAIN/DOMAIN; (2) auto-config ALLOWED_DOMAIN from the caller's
+             email if they appear in InfoSec_Email_Config; (3) Layer-1 domain gate
+             via isAuthorizedDomain; (4) Layer-2 member gate via checkAccess_;
+             (5) serve the AdminView templated HTML. Denied responses are built with
+             getStyledHtmlWrapper.
+  PARAMS:    - e — GAS event; reads e.parameter.setup.
+  RETURNS:   HtmlOutput (the dashboard, a setup-complete page, or access-denied).
+  EXAMPLE:   GET ?setup=companycorp.com -> "Domain Configured" page
+
+  STEPS
+    Step 1 — Optional setup: persist ALLOWED_DOMAIN/DOMAIN, render confirmation.
+    Step 2 — Auto-config domain from caller if found in InfoSec_Email_Config.
+    Step 3 — Layer 1: reject non-corporate domains.
+    Step 4 — Layer 2: reject non-INFOSEC members.
+    Step 5 — Serve the AdminView template.
+*/
 // ─── doGet() - Serve Admin View ────────────────────────────────────────────────
 function doGet(e) {
-  // One-time setup: visit ?setup=domain to configure ALLOWED_DOMAIN
+  // Step 1 — One-time setup: visit ?setup=domain to configure ALLOWED_DOMAIN
   if (e && e.parameter && e.parameter.setup) {
     var domain = String(e.parameter.setup).trim().toLowerCase();
     if (domain) {
@@ -50,7 +199,7 @@ function doGet(e) {
     }
   }
 
-  // Auto-configure ALLOWED_DOMAIN if not set and user is a known admin
+  /* Step 2 — Auto-configure ALLOWED_DOMAIN if not set and user is a known admin */
   var domainProps = PropertiesService.getScriptProperties().getProperty('ALLOWED_DOMAIN');
   if (!domainProps) {
     try {
@@ -110,9 +259,29 @@ function doGet(e) {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
+/*
+  Function: doPost
+  LAYMAN:    Handles POST requests to the Admin web app. There are two real callers:
+             the separate Admin Panel project sending JSON commands (with an API key),
+             and a legacy DCS submission path. Everything else, or any non-corporate
+             account, gets an "Access Denied" page.
+  TECHNICAL: GAS web-app POST handler. (1) If the body is application/json with an
+             apiKey, parse it and delegate to handleAdminApi_, returning JSON.
+             (2) Otherwise enforce the domain gate. (3) If ?action=submitDCS, run the
+             submitDCS stub and return JSON. (4) Default: styled access-denied HTML.
+  PARAMS:    - e — GAS event; reads e.postData and e.parameter.action.
+  RETURNS:   ContentService JSON (API / submitDCS) or HtmlOutput (denied).
+  EXAMPLE:   POST {apiKey, action:'getQueueSummary'} -> {success:true, data:{...}}
+
+  STEPS
+    Step 1 — JSON API: parse body, dispatch to handleAdminApi_.
+    Step 2 — Domain gate for non-API posts.
+    Step 3 — Route ?action=submitDCS to submitDCS.
+    Step 4 — Default deny.
+*/
 // ─── doPost() - Handle POST Requests ───────────────────────────────────────────
 function doPost(e) {
-  // ── Admin API: detect JSON payloads and route to handleAdminApi_ ──
+  // Step 1 — Admin API: detect JSON payloads and route to handleAdminApi_
   var postData = e && e.postData;
   if (postData && postData.type === 'application/json' && postData.contents) {
     try {
@@ -160,9 +329,27 @@ function doPost(e) {
   ).setTitle('Invalid Request');
 }
 
+/*
+  Function: checkAccess_
+  LAYMAN:    Layer-2 gate: confirms the caller is one of the two authorized ISM
+             admins (INFOSEC-001 or INFOSEC-002) by matching their email against the
+             InfoSec_Email_Config sheet. The domain check already happened before
+             this runs.
+  TECHNICAL: Requires SPREADSHEET_ID set. Reads InfoSec_Email_Config and allows only
+             rows whose Member_ID is INFOSEC-001/002 AND Member_Email matches the
+             caller (case-insensitive). Fail-closed: any error or no match denies.
+  PARAMS:    - email — the active user's email.
+  RETURNS:   {allowed:true} or {allowed:false, reason:string}.
+  EXAMPLE:   checkAccess_('ism@companycorp.com') -> {allowed:true}
+
+  STEPS
+    Step 1 — Require SPREADSHEET_ID, else deny.
+    Step 2 — Scan InfoSec_Email_Config for an INFOSEC-001/002 row matching the email.
+    Step 3 — No match -> deny.
+*/
 // ─── Access Control ────────────────────────────────────────────────────────────
 function checkAccess_(email) {
-  // 1. SPREADSHEET_ID must be set, or deny immediately
+  // Step 1 — SPREADSHEET_ID must be set, or deny immediately
   var ssId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   if (!ssId) {
     return { allowed: false, reason: 'SPREADSHEET_ID not configured.' };
@@ -192,11 +379,30 @@ function checkAccess_(email) {
   return { allowed: false, reason: 'Access restricted to authorized ISM administrators (INFOSEC-001 / INFOSEC-002).' };
 }
 
+/*
+  Function: getProp_
+  LAYMAN:    One-liner that reads a single Script Property value.
+  TECHNICAL: Thin wrapper over PropertiesService.getScriptProperties().getProperty.
+  PARAMS:    - key — property name.
+  RETURNS:   String value, or null if unset.
+*/
 // ─── Script Properties Helper ──────────────────────────────────────────────────
 function getProp_(key) {
   return PropertiesService.getScriptProperties().getProperty(key);
 }
 
+/*
+  Function: isAuthorizedDomain
+  LAYMAN:    Layer-1 gate: returns true only if the email ends with the company's
+             allowed domain. Outside accounts are turned away.
+  TECHNICAL: If ENABLED_DOMAIN_CHECK is false, allows everyone. Otherwise reads
+             DOMAIN (then ALLOWED_DOMAIN as fallback) and checks the email ends with
+             '@' + that domain (case-insensitive). Fail-secure: missing config or any
+             error returns false.
+  PARAMS:    - userEmail — the active user's email.
+  RETURNS:   Boolean.
+  EXAMPLE:   isAuthorizedDomain('a@companycorp.com') -> true
+*/
 // ─── Domain Authorization ──────────────────────────────────────────────────────
 function isAuthorizedDomain(userEmail) {
   if (!ENABLED_DOMAIN_CHECK) return true; // Skip check if disabled for testing
@@ -212,11 +418,17 @@ function isAuthorizedDomain(userEmail) {
   }
 }
 
-/**
- * submitDCS() — Defense-in-depth: re-validates domain authorization even when
- * called programmatically (e.g., via google.script.run or a POST request).
- * This is a second layer of protection on the backend submission path.
- */
+/*
+  Function: submitDCS
+  LAYMAN:    Placeholder backend submission entry point. Right now it only confirms
+             the caller is on the company domain; the actual DCS write lives in the
+             Phase 1 project, not here.
+  TECHNICAL: Defense-in-depth stub. Re-checks isAuthorizedDomain even on the
+             programmatic path (google.script.run / POST), then returns a success
+             marker without persisting anything (real logic is a TODO).
+  PARAMS:    - payload — raw submission body (currently unused).
+  RETURNS:   {success:false, error} if domain fails, else {success:true, message}.
+*/
 function submitDCS(payload) {
   var userEmail = Session.getActiveUser().getEmail();
 
@@ -234,12 +446,34 @@ function submitDCS(payload) {
 // ADMIN REST API — called via JSON POST from the separate Admin Panel project
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/*
+  Constant: ADMIN_API_KEY
+  LAYMAN:    The shared secret the separate Admin Panel project must send with every
+             JSON request. Loaded once from Script Properties.
+  TECHNICAL: Module-level snapshot of the ADMIN_API_KEY Script Property ('' if unset).
+             Compared against request.apiKey in handleAdminApi_.
+*/
 var ADMIN_API_KEY = PropertiesService.getScriptProperties().getProperty('ADMIN_API_KEY') || '';
 
-/**
- * Main dispatcher for Admin API requests.
- * Called from doPost() when a JSON payload with an apiKey is detected.
- */
+/*
+  Function: handleAdminApi_
+  LAYMAN:    The switchboard for the JSON REST API. It checks the API key, then runs
+             whichever admin action was requested (get the email queue, retry emails,
+             read/save notification config, re-route a stage, etc.) and returns the
+             result.
+  TECHNICAL: Authenticates request.apiKey against ADMIN_API_KEY, then switch()es on
+             request.action, forwarding request.params to the matching adminApi_*
+             function. Unknown actions and thrown errors return {success:false,error}.
+  PARAMS:    - request — {apiKey, action, params}.
+  RETURNS:   The chosen handler's result, or an error object.
+  EXAMPLE:   handleAdminApi_({apiKey, action:'getQueueSummary', params:{}})
+             -> {success:true, data:{...}}
+
+  STEPS
+    Step 1 — Reject if apiKey missing or mismatched.
+    Step 2 — Dispatch action -> adminApi_* handler.
+    Step 3 — Unknown action / caught error -> error object.
+*/
 function handleAdminApi_(request) {
   try {
     // Authenticate
@@ -293,6 +527,21 @@ function handleAdminApi_(request) {
 
 // ─── Email Queue (Risk_Audit sheet as queue) ───────────────────────────────────
 
+/*
+  Function: adminApi_getEmailQueue
+  LAYMAN:    Lists the email "queue" for the Admin Panel. There is no real queue
+             table — every email attempt is logged in Risk_Audit, so this reads those
+             "Email ..." log rows and presents them as queue entries (recipient, type,
+             status, attempts, last error), with optional filters.
+  TECHNICAL: Reads Risk_Audit via sheetToObjects_, keeps rows whose Action starts with
+             'email ', then filters by params.status (Action prefix), params.type and
+             params.q (recipient substring) pulled from the InternalFlags JSON. Maps
+             each to a queue DTO, applies params.limit, sorts by timestamp desc.
+  PARAMS:    - params — {status?, type?, q?, limit?}.
+  RETURNS:   {success:true, data:[queueEntry...], count} or {success:false, error}.
+  EXAMPLE:   adminApi_getEmailQueue({type:'ism', limit:5})
+             -> {success:true, data:[...], count:3}
+*/
 function adminApi_getEmailQueue(params) {
   try {
     var auditSheet;
@@ -329,6 +578,19 @@ function adminApi_getEmailQueue(params) {
   } catch (e) { return { success: false, error: e.toString() }; }
 }
 
+/*
+  Function: adminApi_getQueueSummary
+  LAYMAN:    Computes the small stat tiles at the top of the email-queue page: how
+             many sent today, how many failed, cancelled, an overall "health" %, and
+             a breakdown by email type.
+  TECHNICAL: Reads Risk_Audit, walks 'email ' rows, buckets by Action prefix
+             ('email sent'/'email failed'/'email cancelled') and counts sent-today
+             against midnight. Tallies flags.type. queueHealth = pending/total * 100.
+             (Note: the "pending" tally here counts 'email sent' rows.)
+  PARAMS:    - params — unused; kept for signature uniformity.
+  RETURNS:   {success:true, data:{totalPending, sentToday, totalFailed,
+             totalCancelled, queueHealth, byType}} or {success:false, error}.
+*/
 function adminApi_getQueueSummary(params) {
   try {
     var ss = getSpreadsheet_();
@@ -364,20 +626,52 @@ function adminApi_getQueueSummary(params) {
   } catch (e) { return { success: false, error: e.toString() }; }
 }
 
+/*
+  Function: adminApi_getFailedEmails
+  LAYMAN:    Thin REST alias for the failed-email lookup.
+  TECHNICAL: Delegates to adminGetFailedEmails(sinceDays).
+  PARAMS:    - sinceDays — lookback window in days.
+  RETURNS:   adminGetFailedEmails' result.
+*/
 function adminApi_getFailedEmails(sinceDays) {
   return adminGetFailedEmails(sinceDays);
 }
 
+/*
+  Function: adminApi_getEmailLog
+  LAYMAN:    Thin REST alias for one session's email log.
+  TECHNICAL: Delegates to adminGetEmailLog(sessionId).
+  PARAMS:    - sessionId — session/application ID.
+  RETURNS:   adminGetEmailLog' result.
+*/
 function adminApi_getEmailLog(sessionId) {
   return adminGetEmailLog(sessionId);
 }
 
+/*
+  Function: adminApi_resendEmail
+  LAYMAN:    Thin REST alias for resending one email.
+  TECHNICAL: Delegates to adminResendEmail(sessionId, recipient, type).
+  PARAMS:    - sessionId, recipient, type.
+  RETURNS:   adminResendEmail' result.
+*/
 function adminApi_resendEmail(sessionId, recipient, type) {
   return adminResendEmail(sessionId, recipient, type);
 }
 
 // ─── Queue Entry Actions ──────────────────────────────────────────────────────
 
+/*
+  Function: adminApi_retryQueuedEmail
+  LAYMAN:    Marks one failed email-queue row as "retry": it bumps the attempt
+             counter, clears the error, and flips its status to pending so the system
+             will try again.
+  TECHNICAL: Locates the Risk_Audit row by LogID whose Action starts with
+             'Email Failed', increments InternalFlags.attempts, nulls flags.error,
+             and sets Action to 'Email Pending (Retried)'. Writes only the two cells.
+  PARAMS:    - queueId — the LogID of the failed row.
+  RETURNS:   {success:true, message} or {success:false, error} (incl. not-found).
+*/
 function adminApi_retryQueuedEmail(queueId) {
   try {
     var ss = getSpreadsheet_();
@@ -406,6 +700,18 @@ function adminApi_retryQueuedEmail(queueId) {
   } catch (e) { return { success: false, error: e.toString() }; }
 }
 
+/*
+  Function: adminApi_retryAllForSession
+  LAYMAN:    Like retryQueuedEmail but for every email row tied to one session
+             (optionally only those in a given status). Resets their attempts and
+             flips them back to pending.
+  TECHNICAL: Scans Risk_Audit for rows matching SessionID (and, if status given, whose
+             Action starts with that status). For each, resets InternalFlags.attempts
+             to 0, clears error, sets Action to 'Email Pending (Retried)'.
+  PARAMS:    - sessionId — required.
+             - status — optional Action-prefix filter (e.g. 'Email Failed').
+  RETURNS:   {success:true, retried:n, message} or {success:false, error}.
+*/
 function adminApi_retryAllForSession(sessionId, status) {
   try {
     if (!sessionId) return { success: false, error: 'Session ID required.' };
@@ -439,6 +745,18 @@ function adminApi_retryAllForSession(sessionId, status) {
   } catch (e) { return { success: false, error: e.toString() }; }
 }
 
+/*
+  Function: adminApi_cancelQueuedEmails
+  LAYMAN:    Cancels the still-active (sent/pending) email rows for a session so they
+             won't be retried. Optionally limited to one email type.
+  TECHNICAL: Scans Risk_Audit for the session's rows, skips already-cancelled ones,
+             targets only Action starting with 'email sent' or 'email pending', and
+             (if type given) matches InternalFlags.type. Sets Action to
+             'Email Cancelled'.
+  PARAMS:    - sessionId — required.
+             - type — optional flags.type filter.
+  RETURNS:   {success:true, cancelled:n, message} or {success:false, error}.
+*/
 function adminApi_cancelQueuedEmails(sessionId, type) {
   try {
     if (!sessionId) return { success: false, error: 'Session ID required.' };
@@ -472,6 +790,17 @@ function adminApi_cancelQueuedEmails(sessionId, type) {
 
 // ─── Notification Config ──────────────────────────────────────────────────────
 
+/*
+  Function: adminApi_getNotificationConfig
+  LAYMAN:    Reads the three notification settings shown on the Admin settings page:
+             the admin notify address, whether to alert on failures, and whether to
+             notify the requestor.
+  TECHNICAL: Scans System_Configuration key/value rows for ADMIN_NOTIFY_EMAIL,
+             NOTIFY_ON_FAILURE, NOTIFY_REQUESTOR; YES/NO -> boolean.
+  PARAMS:    (none)
+  RETURNS:   {success:true, data:{adminEmail, notifyOnFailure, notifyRequestor}}
+             or {success:false, error}.
+*/
 function adminApi_getNotificationConfig() {
   try {
     var sysSheet;
@@ -489,6 +818,17 @@ function adminApi_getNotificationConfig() {
   } catch (e) { return { success: false, error: e.toString() }; }
 }
 
+/*
+  Function: adminApi_setNotificationConfig
+  LAYMAN:    Saves the notification settings back to the sheet. Updates existing rows
+             and appends any setting that doesn't have a row yet.
+  TECHNICAL: Maps the config object to ADMIN_NOTIFY_EMAIL / NOTIFY_ON_FAILURE /
+             NOTIFY_REQUESTOR (booleans -> YES/NO), rewrites matching
+             System_Configuration rows in one setValues, then appendRow for any
+             missing keys. Only provided fields are touched.
+  PARAMS:    - config — {adminEmail?, notifyOnFailure?, notifyRequestor?}.
+  RETURNS:   {success:true, message} or {success:false, error}.
+*/
 function adminApi_setNotificationConfig(config) {
   try {
     if (!config || typeof config !== 'object') return { success: false, error: 'config object required.' };
@@ -525,6 +865,27 @@ function adminApi_setNotificationConfig(config) {
 
 // ─── Resend to Stage ───────────────────────────────────────────────────────────
 
+/*
+  Function: adminApi_resendToStage
+  LAYMAN:    Re-sends the notification for a particular stage of a request — the
+             department approver, the ISM reviewer, or the Division Head — when an
+             email got stuck.
+  TECHNICAL: Validates stageType in {approver, ism, divhead}, confirms the
+             application exists, then dispatches: 'approver' -> notifyApprover(.,0),
+             'ism' -> apiPhase3_NotifyISMember(.,1), 'divhead' -> verifies a
+             DivisionHead_Approval_Workflow row then notifyApplicant(., 'Escalated to
+             Division Head'). On success, logs an 'Email Resend (Admin API)' audit row.
+  PARAMS:    - sessionId — required.
+             - stageType — 'approver' | 'ism' | 'divhead'.
+             - approverEmail — optional, recorded in the audit flags.
+  RETURNS:   The underlying notify result, or {success:false, error}.
+
+  STEPS
+    Step 1 — Validate sessionId and stageType.
+    Step 2 — Confirm the application exists.
+    Step 3 — Dispatch to the stage-appropriate notifier.
+    Step 4 — Log audit on success.
+*/
 function adminApi_resendToStage(sessionId, stageType, approverEmail) {
   try {
     if (!sessionId) return { success: false, error: 'Session ID required.' };
@@ -565,6 +926,25 @@ function adminApi_resendToStage(sessionId, stageType, approverEmail) {
 
 // ─── Pipeline View ─────────────────────────────────────────────────────────────
 
+/*
+  Function: adminApi_getPipelineView
+  LAYMAN:    Gathers EVERYTHING about one request into a single object for the
+             Admin Panel's detail view: the application, each approval stage, the
+             email log, and the audit trail.
+  TECHNICAL: For a sessionId, loads the Applications row (getApplicationData) plus
+             filtered rows from Approval_Workflow, ISM_Approval_Workflow,
+             DivisionHead_Approval_Workflow, the email log (adminGetEmailLog) and audit
+             logs (getAuditLogs). safeObj_ stringifies every cell to keep the GAS
+             return serializable.
+  PARAMS:    - sessionId — required.
+  RETURNS:   {success:true, data:{application, approvals, ismWorkflow,
+             divHeadWorkflow, emailQueue, auditTrail}} or {success:false, error}.
+
+  STEPS
+    Step 1 — Load application (404 if missing).
+    Step 2-4 — Load approval / ISM / DivHead workflow rows.
+    Step 5-6 — Load email log and audit trail.
+*/
 function adminApi_getPipelineView(sessionId) {
   try {
     if (!sessionId) return { success: false, error: 'Session ID required.' };
@@ -623,12 +1003,29 @@ function adminApi_getPipelineView(sessionId) {
 }
 
 // ─── Sheet Helpers ─────────────────────────────────────────────────────────────
+/*
+  Function: getSpreadsheet_
+  LAYMAN:    Opens the one shared database spreadsheet.
+  TECHNICAL: Reads SPREADSHEET_ID from Script Properties and opens it by ID; throws
+             if the property is missing.
+  PARAMS:    (none)
+  RETURNS:   Spreadsheet object (throws on missing ID).
+*/
 function getSpreadsheet_() {
   var ssId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   if (!ssId) throw new Error('SPREADSHEET_ID not set in Script Properties.');
   return SpreadsheetApp.openById(ssId);
 }
 
+/*
+  Function: getSheet_
+  LAYMAN:    Finds a tab by name. Tries the plain name first, then a prefixed version
+             for older databases.
+  TECHNICAL: ss.getSheetByName(name) then getSheetByName(getPrefix()+name); throws a
+             descriptive error if neither resolves.
+  PARAMS:    - name — bare tab name (usually a SHEET_NAMES value).
+  RETURNS:   Sheet object (throws if not found).
+*/
 function getSheet_(name) {
   var ss = getSpreadsheet_();
   var prefix = getPrefix();
@@ -644,17 +1041,17 @@ function getSheet_(name) {
   throw new Error('Sheet not found. Tried "' + name + '" and "' + prefix + name + '".');
 }
 
-/**
- * Simple ping / health-check for the frontend to call first.
- */
-/**
- * Force (re-)authorization for all required scopes by touching every service
- * the script uses. Run this once from the Apps Script editor when permissions
- * are missing or MailApp silently fails to send. After running, re-deploy
- * the web app so the new scopes take effect for all users.
- *
- * Usage: Select this function in the editor → Run → Review permissions → Allow.
- */
+/*
+  Function: forceAuthorize
+  LAYMAN:    A one-click "wake up the permissions" helper. Run it once from the editor
+             when emails stop sending or sheets won't open; it touches every Google
+             service so Apps Script prompts you to re-approve the needed scopes.
+  TECHNICAL: Calls a harmless method on MailApp, SpreadsheetApp, DriveApp,
+             UrlFetchApp and PropertiesService to force the OAuth consent for all
+             scopes the app uses. Re-deploy afterward so new scopes apply to all users.
+  PARAMS:    (none)
+  RETURNS:   {success:true, message}.
+*/
 function forceAuthorize() {
   // MailApp — email sending
   MailApp.getRemainingDailyQuota();
@@ -671,9 +1068,13 @@ function forceAuthorize() {
   return { success: true, message: 'Authorization check complete. Re-deploy the web app if scopes changed.' };
 }
 
-/**
- * Simple ping / health-check for the frontend to call first.
- */
+/*
+  Function: ping
+  LAYMAN:    A quick "is the database reachable?" check the frontend can call first.
+  TECHNICAL: Attempts getSpreadsheet_() and reports success/failure.
+  PARAMS:    (none)
+  RETURNS:   {success:true, message} or {success:false, error}.
+*/
 function ping() {
   try {
     getSpreadsheet_();
@@ -683,6 +1084,16 @@ function ping() {
   }
 }
 
+/*
+  Function: getAdminDataDebug
+  LAYMAN:    A diagnostics report that tells you which expected tabs exist (and their
+             row counts), both with and without the name prefix. Handy when the
+             dashboard comes up empty.
+  TECHNICAL: Opens the spreadsheet, probes the five core sheets by bare and prefixed
+             names, and returns a status string per sheet.
+  PARAMS:    (none)
+  RETURNS:   {success:true, debug:{...}} or {success:false, error}.
+*/
 function getAdminDataDebug() {
   try {
     var info = { steps: [] };
@@ -719,6 +1130,16 @@ function getAdminDataDebug() {
   }
 }
 
+/*
+  Function: sheetToObjects_
+  LAYMAN:    Turns a whole sheet into a list of row objects, using the header row as
+             the keys. The workhorse for reading data everywhere in this file.
+  TECHNICAL: getDataRange().getValues(); first row = headers; each subsequent row
+             becomes {header: cellValue}. Returns [] for empty/header-only sheets.
+             Values stay raw (Dates, numbers) — callers stringify as needed.
+  PARAMS:    - sheet — a Sheet object.
+  RETURNS:   Array of plain objects (possibly empty).
+*/
 function sheetToObjects_(sheet) {
   var data = sheet.getDataRange().getValues();
   if (!data || data.length < 2) return [];
@@ -735,6 +1156,15 @@ function sheetToObjects_(sheet) {
   return result;
 }
 
+/*
+  Function: sheetToObjectsFiltered_
+  LAYMAN:    Same as sheetToObjects_ but only returns rows where one column equals a
+             given value (e.g. all rows for a SessionID).
+  TECHNICAL: Finds filterKey's column index; returns [] if the column is missing.
+             String-compares each row's value to filterValue.
+  PARAMS:    - sheet, filterKey (column name), filterValue (compared as string).
+  RETURNS:   Array of matching row objects (possibly empty).
+*/
 function sheetToObjectsFiltered_(sheet, filterKey, filterValue) {
   var data = sheet.getDataRange().getValues();
   if (!data || data.length < 2) return [];
@@ -755,6 +1185,14 @@ function sheetToObjectsFiltered_(sheet, filterKey, filterValue) {
   return result;
 }
 
+/*
+  Function: debugSheets
+  LAYMAN:    Lists the real tab names in the spreadsheet — useful for spotting a typo
+             or rename.
+  TECHNICAL: Iterates ss.getSheets() and returns their names.
+  PARAMS:    (none)
+  RETURNS:   {success:true, sheets:[name...]} or {success:false, error}.
+*/
 // ─── Debug: list actual sheet names ────────────────────────────────────────────
 function debugSheets() {
   try {
@@ -770,6 +1208,30 @@ function debugSheets() {
   }
 }
 
+/*
+  Function: getAdminData
+  LAYMAN:    The big one. Builds the entire admin dashboard table: it reads the DCS
+             requests, the PIA applications, and all the approval sheets, then stitches
+             them together one row per request — name, department, access type, DCS
+             status, PIA progress, approval status, dates — plus the raw data each
+             modal needs. It also swaps stored Drive file IDs for real file names.
+  TECHNICAL: Single-pass join. Reads Data_Collection, Applications, Approval_Workflow,
+             ISM_Approval_Workflow, DivisionHead_Approval_Workflow; builds lookup maps
+             keyed by ReqID/SessionID; for up to MAX_ROWS (500) DCS rows computes
+             piaStatus / approvalStatus / pia display via the compute*_ helpers and
+             produces string-only POJOs (dcsData/piaData) so the GAS return never
+             carries Date/object values. FileID and Metadata_Agency JSON are parsed and
+             Drive file names resolved (cached). EVERYTHING is wrapped in try/catch
+             because GAS V8 returns null on any uncaught throw.
+  PARAMS:    (none)
+  RETURNS:   {success:true, data:[row...]} or {success:false, error}.
+
+  STEPS
+    Step 1 — Validate spreadsheet access.
+    Step 2 — Read all five sheets (each individually validated).
+    Step 3 — Build ReqID/SessionID lookup maps.
+    Step 4 — For each DCS row: join, compute statuses, serialize to safe POJOs.
+*/
 // ─── getAdminData() - Main Data Fetch ──────────────────────────────────────────
 function getAdminData() {
   // CRITICAL: outer try-catch wrapping EVERYTHING. GAS V8 returns null if any
@@ -989,6 +1451,14 @@ function getAdminData() {
 }
 
 // ─── Parsing Helpers ───────────────────────────────────────────────────────────
+/*
+  Function: parseMetadata_
+  LAYMAN:    Safely turns a Metadata_JSON cell into an object; returns {} if it's
+             empty or unparseable.
+  TECHNICAL: JSON.parse if string; passes through if already an object; {} on error.
+  PARAMS:    - jsonStr — string or object.
+  RETURNS:   Object (never null).
+*/
 function parseMetadata_(jsonStr) {
   if (!jsonStr) return {};
   try {
@@ -999,11 +1469,15 @@ function parseMetadata_(jsonStr) {
   }
 }
 
-/**
- * Normalize DCS status values for consistent display on the admin dashboard.
- * Spreadsheet values vary in casing — "COMPLETE", "Complete", "completed" all
- * mean the same thing. The canonical display value is "DCS Completed".
- */
+/*
+  Function: normalizeDcsStatus_
+  LAYMAN:    Cleans up the DCS status text so the dashboard shows one consistent label.
+             "COMPLETE", "Complete", "completed" all become "DCS Completed".
+  TECHNICAL: Uppercases and maps COMPLETE/COMPLETED -> 'DCS Completed'; otherwise
+             returns the trimmed original or 'Unknown'.
+  PARAMS:    - rawStatus — the stored Data_Collection.Status value.
+  RETURNS:   Display string.
+*/
 function normalizeDcsStatus_(rawStatus) {
   var s = String(rawStatus || '').trim();
   var upper = s.toUpperCase();
@@ -1011,6 +1485,18 @@ function normalizeDcsStatus_(rawStatus) {
   return s || 'Unknown';
 }
 
+/*
+  Function: computePiaStatus_
+  LAYMAN:    Works out how far along the PIA questionnaire is: Not Started, In
+             Progress, or Complete — used only as a fallback when the application has
+             no explicit Status.
+  TECHNICAL: Inspects PIA_1_Data..PIA_5_Data. A section counts as completed if its
+             cell text is COMPLETED/COMPLETE/APPROVED, or its JSON .status is one of
+             those, or it is malformed JSON (lenient). Complete when completed===total
+             of the filled sections.
+  PARAMS:    - app — Applications row object (or null).
+  RETURNS:   'No Application' | 'Not Started' | 'In Progress' | 'Complete'.
+*/
 function computePiaStatus_(app) {
   if (!app) return 'No Application';
   var piaFields = ['PIA_1_Data', 'PIA_2_Data', 'PIA_3_Data', 'PIA_4_Data', 'PIA_5_Data'];
@@ -1047,6 +1533,16 @@ function computePiaStatus_(app) {
   return 'In Progress';
 }
 
+/*
+  Function: computePiaDisplay_
+  LAYMAN:    Produces the little "3/5 Submitted" badge text for the PIA column, or a
+             dash when nothing's filled.
+  TECHNICAL: Counts non-empty PIA_1..5_Data cells; returns 'n/5 Submitted' or an
+             em-dash. sessionId is currently unused.
+  PARAMS:    - app \u2014 Applications row (or null).
+             - sessionId \u2014 unused.
+  RETURNS:   Display string.
+*/
 function computePiaDisplay_(app, sessionId) {
   if (!app) return '\u2014';
   var piaFields = ['PIA_1_Data', 'PIA_2_Data', 'PIA_3_Data', 'PIA_4_Data', 'PIA_5_Data'];
@@ -1058,6 +1554,20 @@ function computePiaDisplay_(app, sessionId) {
   return filled > 0 ? filled + '/5 Submitted' : '\u2014';
 }
 
+/*
+  Function: computeApprovalStatus_
+  LAYMAN:    Decides the single approval label shown per row: Pending, In Progress,
+             Approved, or Denied. It trusts the application's own Status first, then
+             falls back to reading the individual approver decisions.
+  TECHNICAL: If app.Status is terminal ('Approved by ISM' -> Approved; 'Rejected by'
+             /'Denied' -> Denied; 'Escalated to Division Head' -> In Progress), use it.
+             Otherwise collects each row's Status||Decision across approvals / ISM /
+             DivHead: any Denied/Rejected/Return(ed) -> 'Denied'; all 'Approved' ->
+             'Approved'; none -> 'Pending'; mixed -> 'In Progress'.
+  PARAMS:    - app — Applications row (or null).
+             - approvals, ismApprovals, dhApprovals — arrays of workflow rows.
+  RETURNS:   'Pending' | 'In Progress' | 'Approved' | 'Denied'.
+*/
 function computeApprovalStatus_(app, approvals, ismApprovals, dhApprovals) {
   // FIRST: check the application's own Status column — it's the authoritative signal
   if (app) {
@@ -1098,6 +1608,27 @@ function computeApprovalStatus_(app, approvals, ismApprovals, dhApprovals) {
   return 'In Progress';
 }
 
+/*
+  Function: getAuditLogs
+  LAYMAN:    Pulls the audit/history rows for one request, plus the approval-stage rows,
+             so the Admin Panel can show a timeline. Matches by SessionID when known,
+             otherwise by ReqID, and deliberately returns nothing if given neither (so
+             it never leaks the whole log).
+  TECHNICAL: Reads Risk_Audit. If sessionId, filters by SessionID column; else if
+             reqId, matches SessionID OR an InternalFlags substring (different event
+             types store IDs in different columns); else returns empty. When sessionId
+             is present, also loads filtered Approval / ISM / DivHead rows. safeRow_
+             stringifies every cell.
+  PARAMS:    - reqId — linked DCS ReqID (used when sessionId absent).
+             - sessionId — preferred key.
+  RETURNS:   {success:true, auditLogs, approvals, ismApprovals, dhApprovals}
+             or {success:false, error}.
+
+  STEPS
+    Step 1 — Open sheet; read Risk_Audit.
+    Step 2 — Filter rows by sessionId, then reqId, else empty.
+    Step 3 — If sessionId, attach the three workflow row sets.
+*/
 // ─── getAuditLogs() ────────────────────────────────────────────────────────────
 function getAuditLogs(reqId, sessionId) {
   try {
@@ -1200,6 +1731,30 @@ function getAuditLogs(reqId, sessionId) {
   }
 }
 
+/*
+  Function: deleteEntry
+  LAYMAN:    Permanently removes one request from the system — its DCS row, its
+             application, all its approval-stage rows, and its old audit logs — then
+             writes a single DELETE_ENTRY record and (optionally) emails the requestor
+             to tell them it was removed.
+  TECHNICAL: Captures requestor email + a display name from Data_Collection BEFORE
+             deleting that row. Deletes the Applications row by SessionID, then the
+             three workflow sheets via deleteRowsBySessionId_. Purges linked Risk_Audit
+             rows, appends a DELETE_ENTRY audit row (actor = active user). If sendEmail,
+             sends a styled notice via sendEmailWithRetry_ + buildAdminEmailHtml_.
+             Whole thing is try/catch wrapped.
+  PARAMS:    - reqId, logId — identify the DCS row (either may match).
+             - sessionId — links the application + workflow + audit rows (optional).
+             - sendEmail — whether to email the requestor.
+             - ismComment — optional note included in the email/audit.
+  RETURNS:   {success:true, message, emailSent} or {success:false, error}.
+
+  STEPS
+    Step 1 — Capture requestor info, then delete the Data_Collection row.
+    Step 2 — Delete Applications + the three workflow sheets by SessionID.
+    Step 3 — Purge old audit rows, then append the DELETE_ENTRY record.
+    Step 4 — Optionally email the requestor.
+*/
 // ─── deleteEntry() ─────────────────────────────────────────────────────────────
 // Extracts the requestor email FROM the row before deleting, so we can notify them.
 function deleteEntry(reqId, logId, sessionId, sendEmail, ismComment) {
@@ -1330,6 +1885,17 @@ function deleteEntry(reqId, logId, sessionId, sendEmail, ismComment) {
   }
 }
 
+/*
+  Function: deleteRowsBySessionId_
+  LAYMAN:    Deletes every row in a given sheet that belongs to a session. Used to wipe
+             a request's approval-stage rows during deletion.
+  TECHNICAL: Finds the SessionID column and deletes matching rows bottom-up (so row
+             indices stay valid). Silent no-op if the sheet or column is missing.
+  PARAMS:    - ss — Spreadsheet.
+             - sheetName — tab to clean.
+             - sessionId — value to match.
+  RETURNS:   undefined (mutates the sheet).
+*/
 function deleteRowsBySessionId_(ss, sheetName, sessionId) {
   try {
     var sheet = ss.getSheetByName(sheetName);
@@ -1346,6 +1912,17 @@ function deleteRowsBySessionId_(ss, sheetName, sessionId) {
   } catch (e) {}
 }
 
+/*
+  Function: batchDeleteEntries
+  LAYMAN:    Deletes many requests in one server call instead of one round-trip per
+             request, and reports how many succeeded, failed, and got an email.
+  TECHNICAL: Loops over items calling deleteEntry for each, collecting per-item
+             results and tallying deleted / failed / emailsSent. Per-item errors are
+             caught so one bad item doesn't abort the batch.
+  PARAMS:    - items — array of {reqId, logId, sessionId, sendEmail, ismComment}.
+  RETURNS:   {success:true, deleted, failed, emailsSent, total, results[]}
+             or {success:false, error} if items isn't an array.
+*/
 // ─── batchDeleteEntries() — Server-side batch processing ──────────────────────
 // Accepts an array of {reqId, logId, sessionId, sendEmail, ismComment} objects.
 // Returns a summary: {success, deleted, failed, emailsSent, results[]}.
@@ -1397,6 +1974,24 @@ function batchDeleteEntries(items) {
   }
 }
 
+/*
+  Function: exportToSheet
+  LAYMAN:    Takes the dashboard rows and dumps them into a brand-new Google Sheet for
+             download/sharing, flattening the nested DCS and PIA data into readable
+             columns, then moves that new file next to the source database.
+  TECHNICAL: Creates a new Spreadsheet, builds a header set from baseHeaders plus the
+             union of dcsData/piaData keys (dropping FileID and a few ID/Status cols),
+             writes one row per record (formatExportCell pretty-prints JSON cells),
+             auto-resizes, and relocates the file into the source DB's Drive folder.
+  PARAMS:    - rows — the dashboard rows array (or its JSON string).
+  RETURNS:   {success:true, url, sheetName} or {success:false, error}.
+
+  STEPS
+    Step 1 — Parse input; bail if empty.
+    Step 2 — Create sheet; compute the union header set.
+    Step 3 — Append a formatted row per record.
+    Step 4 — Move the export file beside the source database.
+*/
 // ─── exportToSheet() ───────────────────────────────────────────────────────────
 function exportToSheet(rows) {
   try {
@@ -1490,6 +2085,15 @@ function exportToSheet(rows) {
   }
 }
 
+/*
+  Function: getConfigData
+  LAYMAN:    Loads the two config tables the Admin Settings page edits: system settings
+             (template links, flags) and the ISM member roster.
+  TECHNICAL: Reads System_Configuration and InfoSec_Email_Config via sheetToObjects_;
+             missing sheets degrade to [].
+  PARAMS:    (none)
+  RETURNS:   {success:true, sys:[...], info:[...]} or {success:false, error}.
+*/
 // ─── CONFIGURATION SETTINGS ────────────────────────────────────────────────────
 function getConfigData() {
   try {
@@ -1507,10 +2111,27 @@ function getConfigData() {
   }
 }
 
+/*
+  Function: saveConfigData
+  LAYMAN:    Saves edits from the Admin Settings page back to both config tables —
+             updating rows that exist and adding rows for brand-new keys or members
+             (e.g. a new LINK_* template link, or an added INFOSEC-003).
+  TECHNICAL: For System_Configuration, rewrites Value cells for keys present in
+             sysUpdates, then appendRow for new non-empty keys (filling a Description
+             column if present). For InfoSec_Email_Config, updates Member_Name/Email by
+             Member_ID, then appends new members (defaulting Role/IsActive columns).
+  PARAMS:    - sysUpdates — {Configuration_Key: value, ...}.
+             - infoUpdates — {Member_ID: {name, email}, ...}.
+  RETURNS:   {success:true} or {success:false, error}.
+
+  STEPS
+    Step 1 — Update + append System_Configuration rows.
+    Step 2 — Update + append InfoSec_Email_Config rows.
+*/
 function saveConfigData(sysUpdates, infoUpdates) {
   try {
     var ss = getSpreadsheet_();
-    
+
     // 1. System Config
     var sysSheet;
     try { sysSheet = getSheet_(SHEET_NAMES.SYSTEM_CONFIG); } catch(e){}
@@ -1594,6 +2215,14 @@ function saveConfigData(sysUpdates, infoUpdates) {
   }
 }
 
+/*
+  Function: include
+  LAYMAN:    Lets the AdminView template pull in another HTML file inline (partials).
+  TECHNICAL: Returns the raw content of another HtmlService file; called from
+             <?!= include('name') ?> in the template.
+  PARAMS:    - filename — partial file name (no extension).
+  RETURNS:   HTML string.
+*/
 // ─── Utility: Include HTML partials ────────────────────────────────────────────
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
@@ -1604,14 +2233,17 @@ function include(filename) {
 // resend the routing email to DCOPS, TechServe, or Both.
 // ───────────────────────────────────────────────────────────────────────────────
 
-/**
- * getStyledHtmlWrapper() — Wraps header + body content in a full HTML page
- * styled with the application's design system (navy palette, DM Sans, cards).
- * 
- * @param {string} headerContent  — HTML for the header area (badge + title).
- * @param {string} bodyContent    — HTML for the main card body.
- * @returns {string} A complete <html> document string.
- */
+/*
+  Function: getStyledHtmlWrapper
+  LAYMAN:    Wraps a header + body into a full, good-looking HTML page using the navy
+             design system. Used for the access-denied / restricted screens.
+  TECHNICAL: Returns a complete <html> document string with an inline <style> block
+             (navy palette, DM Sans/Mono, card + alert styles) and the supplied
+             header/body injected into a .card.
+  PARAMS:    - headerContent — HTML for the badge + title area.
+             - bodyContent — HTML for the card body.
+  RETURNS:   Full HTML document string.
+*/
 function getStyledHtmlWrapper(headerContent, bodyContent) {
   return '<!DOCTYPE html><html lang="en">' +
   '<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -1674,9 +2306,15 @@ function getStyledHtmlWrapper(headerContent, bodyContent) {
   '</body></html>';
 }
 
-/**
- * Escape a string for safe HTML embedding.
- */
+/*
+  Function: escapeHtml_
+  LAYMAN:    Makes user text safe to drop into HTML by escaping the dangerous
+             characters.
+  TECHNICAL: Replaces & < > " ' with their HTML entities. Used throughout the email
+             and access-denied HTML builders.
+  PARAMS:    - str — any value (coerced to string).
+  RETURNS:   Escaped string.
+*/
 function escapeHtml_(str) {
   return String(str || '')
     .replace(/&/g, '&amp;')
@@ -1686,12 +2324,20 @@ function escapeHtml_(str) {
     .replace(/'/g, '&#39;');
 }
 
-/**
- * Send email with retry logic (5 attempts, extended backoff ~75s window).
- * Gmail transient failures (rate limiting, internal queue backup, auth glitches)
- * typically self-resolve within 30-90s. The longer window with bigger gaps
- * gives Gmail breathing room between retries.
- */
+/*
+  Function: sendEmailWithRetry_
+  LAYMAN:    Sends an email, and if Gmail hiccups, waits and tries again — up to five
+             times — before giving up. The single choke point every Admin email goes
+             through.
+  TECHNICAL: Calls MailApp.sendEmail up to 5 times with increasing backoff
+             (5s,10s,15s,20s; ~75s total incl. API overhead). Returns true on success;
+             re-throws the last error after the final attempt so callers can log
+             'Email Failed'.
+  PARAMS:    - recipients — comma-joined address string.
+             - subject, plainText — message basics.
+             - options — MailApp options (htmlBody, replyTo, attachments, ...).
+  RETURNS:   true on success (throws if all attempts fail).
+*/
 function sendEmailWithRetry_(recipients, subject, plainText, options) {
   var maxRetries = 5;
   for (var attempt = 1; attempt <= maxRetries; attempt++) {
@@ -1709,11 +2355,27 @@ function sendEmailWithRetry_(recipients, subject, plainText, options) {
   return false;
 }
 
-/**
- * ADMIN API: Get the current routing status for an application.
- * Returns what destination was last used, destination emails, application info,
- * ISM approval state, Division Head escalation state, and routing eligibility.
- */
+/*
+  Function: apiAdmin_GetRoutingStatus
+  LAYMAN:    For one request, tells the Email Routing page everything it needs to draw
+             the routing controls: where it was last sent, the DCOPS/TechServe
+             addresses, the ISM approval tally, Division Head state, and whether it's
+             eligible to be routed yet.
+  TECHNICAL: Loads the Applications row by SessionID, walks ISM_Approval_Workflow
+             (Status||Decision; routing dest read from the CurrentStep=2 row), reads
+             DivisionHead_Approval_Workflow, derives canRoute from status + ISM/DH
+             approval, pulls dcops/techserve emails from active InfoSec_Email_Config
+             rows, and joins DCS metadata for display.
+  PARAMS:    - sessionId — required.
+  RETURNS:   {success:true, data:{...routing snapshot...}} or {success:false, error}.
+
+  STEPS
+    Step 1 — Read the application (404 if missing).
+    Step 2 — Tally ISM approvals + last routing destination.
+    Step 3 — Read Division Head decision.
+    Step 4 — Compute routing eligibility.
+    Step 5-6 — Resolve destination emails + DCS display fields.
+*/
 function apiAdmin_GetRoutingStatus(sessionId) {
   try {
     if (!sessionId || String(sessionId).trim() === '') {
@@ -1898,19 +2560,33 @@ function apiAdmin_GetRoutingStatus(sessionId) {
   }
 }
 
-/**
- * ADMIN API: Regenerate the Certificate of Approval and resend the routing email.
- * Can also be used to re-route to a different destination.
- * Returns the delivery status.
- *
- * Idempotency: uses a static cache on the function object to prevent
- * duplicate reroute calls for the same session+destination within 30 seconds.
- * Pass force=true to bypass the cache for admin recovery resends.
- *
- * @param {string} sessionId
- * @param {string} destination — DCOPS, TECHSERVE, or BOTH
- * @param {boolean} [force] — Bypass idempotency cache (admin recovery)
- */
+/*
+  Function: apiAdmin_RerouteApprovedRequest
+  LAYMAN:    Re-creates the Certificate of Approval for an approved request and emails
+             it (with a PDF copy) to the implementation team — DCOPS, TechServe, or
+             both. The admin uses this to (re)route a finished request.
+  TECHNICAL: Validates destination in {DCOPS,TECHSERVE,BOTH}; a 30s per
+             session+destination idempotency cache (on the function object) blocks
+             accidental double-sends unless force=true. Confirms the app is in a
+             routable state (Approved* / Complete / DH-approved), gathers DCS metadata,
+             InfoSec destination emails, and approval rows, builds the certificate via
+             buildCertificateHtml_, attaches a generated PDF, sends through
+             sendEmailWithRetry_, and writes an ADMIN_REROUTE audit row.
+  PARAMS:    - sessionId — required.
+             - destination — 'DCOPS' | 'TECHSERVE' | 'BOTH'.
+             - force — optional; bypass the idempotency cache.
+  RETURNS:   {success:true, message, sentTo, destination, certificateFile}
+             or {success:false, error}.
+
+  STEPS
+    Step 0 — Validate inputs + idempotency cache.
+    Step 1 — Read application; confirm routable status (incl. DH approval).
+    Step 2-3 — Read DCS metadata + InfoSec destination/ISM emails.
+    Step 4 — Resolve recipient list for the chosen destination.
+    Step 5-6 — Build approver tables + certificate HTML.
+    Step 7-8 — Generate PDF + send the email.
+    Step 9 — Log ADMIN_REROUTE audit entry.
+*/
 function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
   try {
     if (!sessionId || String(sessionId).trim() === '') {
@@ -2218,11 +2894,19 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
   }
 }
 
-/**
- * ADMIN API: Fetch all applications with their current workflow status, ISM approval,
- * Division Head escalation info, and routing eligibility.
- * Used by the Email Routing page to track every application through the pipeline.
- */
+/*
+  Function: apiAdmin_GetApprovedApplications
+  LAYMAN:    Builds the full list for the Email Routing page — every application with
+             its status, ISM/Division-Head progress, and whether it's ready to route —
+             sorted so the ones most ready to send sit at the top.
+  TECHNICAL: Reads Applications and groups ISM + DivHead workflow rows by SessionID,
+             plus DCS metadata by ReqID and InfoSec destination emails. Per app
+             computes ismApprovedCount / allIsmApproved / escalation / DH approval and
+             canRoute, then sorts by a route-readiness weight (0=ready ... 9=terminal),
+             tiebreaking on sessionId.
+  PARAMS:    (none)
+  RETURNS:   {success:true, data:[appSummary...]} or {success:false, error}.
+*/
 function apiAdmin_GetApprovedApplications() {
   try {
     var ss = getSpreadsheet_();
@@ -2424,10 +3108,17 @@ function apiAdmin_GetApprovedApplications() {
   }
 }
 
-/**
- * ADMIN API: Generate and return a Certificate of Approval as a PDF base64 blob.
- * The frontend can use this to trigger a download without sending an email.
- */
+/*
+  Function: apiAdmin_DownloadCertificate
+  LAYMAN:    Generates the Certificate of Approval PDF and hands it straight back to
+             the browser for download — no email sent.
+  TECHNICAL: Mirrors the data-gathering of apiAdmin_RerouteApprovedRequest (app, DCS
+             metadata, approver tables), builds the certificate via
+             buildCertificateHtml_, renders a PDF, and returns it base64-encoded.
+             Does not enforce the routable-status gate.
+  PARAMS:    - sessionId — required.
+  RETURNS:   {success:true, data:{fileName, base64, mimeType}} or {success:false, error}.
+*/
 function apiAdmin_DownloadCertificate(sessionId) {
   try {
     if (!sessionId || String(sessionId).trim() === '') {
@@ -2594,16 +3285,19 @@ function apiAdmin_DownloadCertificate(sessionId) {
   }
 }
 
-/**
- * Shared helper: Build the certificate HTML body from gathered data.
- * Used by both RerouteApprovedRequest and DownloadCertificate.
- */
-/**
- * buildAdminEmailHtml_ — shared professional HTML shell for ALL Admin-sent emails.
- * Matches the navy style of buildCertificateHtml_. Pass the result as options.htmlBody to
- * sendEmailWithRetry_, keeping a plain-text body as the fallback for non-HTML clients.
- * opts: { heading, accent, intro, bodyHtml, detailRows:[[label,value]...], ctaText, ctaUrl, footerNote }
- */
+/*
+  Function: buildAdminEmailHtml_
+  LAYMAN:    The single shared template for ALL emails the Admin app sends. Give it a
+             heading, a greeting, a body line, a small label/value table, and an
+             optional button, and it returns a polished navy-styled HTML email.
+  TECHNICAL: Pure string builder. Escapes text fields, renders detailRows as a table,
+             optionally a CTA button (ctaText+ctaUrl), and a footer. Pass the result as
+             options.htmlBody to sendEmailWithRetry_, keeping a plain-text fallback for
+             non-HTML clients. Matches the navy palette of buildCertificateHtml_.
+  PARAMS:    - opts — {heading, accent, intro, bodyHtml, detailRows:[[label,value]...],
+             ctaText, ctaUrl, footerNote}; all optional.
+  RETURNS:   HTML string.
+*/
 function buildAdminEmailHtml_(opts) {
   opts = opts || {};
   function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -2632,11 +3326,32 @@ function buildAdminEmailHtml_(opts) {
     '</div></div>';
 }
 
-/** Reads an optional URL script property (for email CTA buttons); '' if unset — so the button is simply omitted. */
+/*
+  Function: getOptionalUrl_
+  LAYMAN:    Reads an optional link from settings for email buttons. If it's not set,
+             returns '' so the button is simply left out.
+  TECHNICAL: Safe getter over a URL Script Property; '' on missing or error.
+  PARAMS:    - key — property name (e.g. 'WEB_APP_URL').
+  RETURNS:   URL string or ''.
+*/
 function getOptionalUrl_(key) {
   try { return PropertiesService.getScriptProperties().getProperty(key) || ''; } catch (e) { return ''; }
 }
 
+/*
+  Function: buildCertificateHtml_
+  LAYMAN:    Builds the full "Certificate of Approval" HTML — the formal document
+             showing the request brief, agency info, and every approver who signed off.
+             Shared by both the reroute-email and download-PDF paths.
+  TECHNICAL: Pure string builder. Renders an application-brief table, an optional
+             agency section (only if metadataAgency has keys), and pre-built approver
+             table bodies (headApproversHtml, ismApproversHtml). Escapes all dynamic
+             text via escapeHtml_.
+  PARAMS:    - sessionId, pia1, linkedReqId, applicantEmail, requestorName, department,
+             accessNeeded, iHelpReference, accountableRowsHtml, metadataAgency,
+             headApproversHtml, ismApproversHtml, nowStr.
+  RETURNS:   HTML string for the certificate body.
+*/
 function buildCertificateHtml_(sessionId, pia1, linkedReqId, applicantEmail,
   requestorName, department, accessNeeded, iHelpReference, accountableRowsHtml,
   metadataAgency, headApproversHtml, ismApproversHtml, nowStr) {
@@ -2704,14 +3419,18 @@ function buildCertificateHtml_(sessionId, pia1, linkedReqId, applicantEmail,
 // EMAIL NOTIFICATION HELPERS (used by admin failover API)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Log an audit trail entry to Risk_Audit sheet.
- * Every email send attempt from notifyApprover/notifyApplicant calls this.
- *
- * @param {string} sessionId — The session/application ID.
- * @param {string} action    — e.g. 'Email Sent', 'Email Failed', 'Email Resend'.
- * @param {Object} flagsObj  — Object with {recipient, type, attempts, error}.
- */
+/*
+  Function: logAuditTrail
+  LAYMAN:    Writes one row into the audit/queue sheet recording an email event (sent,
+             failed, resent) with who/what/when. Every notify* call ends here.
+  TECHNICAL: Appends to Risk_Audit: [UUID LogID, sessionId, flagsJson InternalFlags,
+             action, active-user email, 'Email System' UserAgent, ISO timestamp].
+             flagsObj is JSON-stringified if not already a string. Silent on failure.
+  PARAMS:    - sessionId — session/application ID.
+             - action — e.g. 'Email Sent' | 'Email Failed' | 'Email Resend'.
+             - flagsObj — {recipient, type, attempts, error}.
+  RETURNS:   undefined.
+*/
 function logAuditTrail(sessionId, action, flagsObj) {
   try {
     var ss = getSpreadsheet_();
@@ -2733,12 +3452,15 @@ function logAuditTrail(sessionId, action, flagsObj) {
   }
 }
 
-/**
- * Get application data from Applications sheet for a session.
- *
- * @param {string} sessionId
- * @returns {Object|null} Row object or null if not found.
- */
+/*
+  Function: getApplicationData
+  LAYMAN:    Fetches the one Applications row for a given session, or null if there
+             isn't one.
+  TECHNICAL: Reads Applications via sheetToObjects_ and returns the first row whose
+             SessionID matches; null on any error.
+  PARAMS:    - sessionId — session/application ID.
+  RETURNS:   Row object or null.
+*/
 function getApplicationData(sessionId) {
   try {
     var ss = getSpreadsheet_();
@@ -2757,14 +3479,18 @@ function getApplicationData(sessionId) {
   }
 }
 
-/**
- * Send a notification email to an approver at a specific step.
- * Try-catch wrapped for fail-safe operation.
- *
- * @param {string} sessionId
- * @param {number} stepIndex — 0-based index into the Approval_Workflow rows for this session.
- * @returns {Object} {success, error}
- */
+/*
+  Function: notifyApprover
+  LAYMAN:    Emails a department approver that a request is waiting on their decision,
+             and records whether the email went out.
+  TECHNICAL: Reads the session's Approval_Workflow rows, takes the row at stepIndex,
+             builds program context from the app's PIA_1_Data, sends a navy
+             buildAdminEmailHtml_ message via sendEmailWithRetry_, and logs
+             'Email Sent' / 'Email Failed'. Fully try/catch wrapped.
+  PARAMS:    - sessionId — session/application ID.
+             - stepIndex — 0-based index into the session's workflow rows.
+  RETURNS:   {success:true} or {success:false, error}.
+*/
 function notifyApprover(sessionId, stepIndex) {
   try {
     var ss = getSpreadsheet_();
@@ -2825,14 +3551,17 @@ function notifyApprover(sessionId, stepIndex) {
   }
 }
 
-/**
- * Send a notification email to the applicant about their application status.
- * Try-catch wrapped for fail-safe operation.
- *
- * @param {string} sessionId
- * @param {string} currentStatus — e.g. 'Pending', 'Approved', 'Denied'.
- * @returns {Object} {success, error}
- */
+/*
+  Function: notifyApplicant
+  LAYMAN:    Emails the person who made the request a status update (approved, denied,
+             returned, etc.), with the email color matching the status.
+  TECHNICAL: Looks up the app + applicant email, derives an accent color from the
+             status keyword, sends a buildAdminEmailHtml_ message via
+             sendEmailWithRetry_, and logs the audit row. Try/catch wrapped.
+  PARAMS:    - sessionId — session/application ID.
+             - currentStatus — display status; falls back to app.Status / 'Updated'.
+  RETURNS:   {success:true} or {success:false, error}.
+*/
 function notifyApplicant(sessionId, currentStatus) {
   try {
     var app = getApplicationData(sessionId);
@@ -2883,14 +3612,18 @@ function notifyApplicant(sessionId, currentStatus) {
   }
 }
 
-/**
- * Send a notification email to an ISM member at a specific step.
- * Try-catch wrapped for fail-safe operation.
- *
- * @param {string} sessionId
- * @param {number} stepNumber — The step number (1-based) in ISM_Approval_Workflow.
- * @returns {Object} {success, error}
- */
+/*
+  Function: apiPhase3_NotifyISMember
+  LAYMAN:    Emails an ISM reviewer that a request needs their review at a particular
+             step.
+  TECHNICAL: Finds the ISM_Approval_Workflow row whose CurrentStep equals stepNumber
+             (1-based), builds program context, sends a buildAdminEmailHtml_ message
+             via sendEmailWithRetry_, and logs 'Email Sent' / 'Email Failed'.
+             Try/catch wrapped.
+  PARAMS:    - sessionId — session/application ID.
+             - stepNumber — 1-based step matching the CurrentStep column.
+  RETURNS:   {success:true} or {success:false, error}.
+*/
 function apiPhase3_NotifyISMember(sessionId, stepNumber) {
   try {
     var ss = getSpreadsheet_();
@@ -2960,13 +3693,17 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
 // ADMIN EMAIL FAILOVER API — called by Admin Panel via google.script.run
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * ADMIN API: Fetch all email-related audit log entries for a given session.
- * Returns entries where Action starts with 'Email ' (e.g. 'Email Sent', 'Email Failed', 'Email Resend').
- *
- * @param {string} sessionId — Session / Application ID.
- * @returns {Array<{logId, action, flags: {recipient, type, attempts, error}, timestamp}>}
- */
+/*
+  Function: adminGetEmailLog
+  LAYMAN:    Returns the email history (sent/failed/resent) for one session, oldest
+             first, for the Admin Panel's email log view.
+  TECHNICAL: Reads Risk_Audit, keeps rows whose Action starts with 'Email ' (or equals
+             'Email Resend') AND whose SessionID matches, parses InternalFlags into
+             {recipient,type,attempts,error}, and sorts by timestamp ascending.
+  PARAMS:    - sessionId — required.
+  RETURNS:   {success:true, data:[{logId,action,flags,timestamp}...]}
+             or {success:false, error}.
+*/
 function adminGetEmailLog(sessionId) {
   try {
     if (!sessionId || String(sessionId).trim() === '') {
@@ -3024,12 +3761,16 @@ function adminGetEmailLog(sessionId) {
   }
 }
 
-/**
- * ADMIN API: Fetch all 'Email Failed' entries from Risk_Audit within the last N days.
- *
- * @param {number} [sinceDays=7] — How many days back to search (default 7).
- * @returns {Array<{sessionId, recipient, type, error, timestamp, attempts}>}
- */
+/*
+  Function: adminGetFailedEmails
+  LAYMAN:    Lists the emails that failed to send in the last N days, newest first, so
+             an admin can retry them.
+  TECHNICAL: Reads Risk_Audit, keeps rows with Action exactly 'Email Failed' whose
+             timestamp is within sinceDays (default 7), maps InternalFlags fields, and
+             sorts by timestamp descending.
+  PARAMS:    - sinceDays — lookback window in days (default 7; invalid -> 7).
+  RETURNS:   {success:true, data:[...], sinceDays} or {success:false, error}.
+*/
 function adminGetFailedEmails(sinceDays) {
   try {
     if (sinceDays === undefined || sinceDays === null) sinceDays = 7;
@@ -3084,14 +3825,26 @@ function adminGetFailedEmails(sinceDays) {
   }
 }
 
-/**
- * ADMIN API: Resend a failed email notification for a given session.
- *
- * @param {string} sessionId  — Session / Application ID.
- * @param {string} recipient  — Email address of the intended recipient.
- * @param {string} type       — 'approver', 'applicant', or 'ism'.
- * @returns {{success: boolean, error: string|null, message: string}}
- */
+/*
+  Function: adminResendEmail
+  LAYMAN:    Re-sends a stuck notification to a specific person, figuring out which
+             kind of email it should be (approver, applicant, or ISM) and finding the
+             right pending step for that recipient.
+  TECHNICAL: Validates type in {approver,applicant,ism} and that the app exists. For
+             'approver'/'ism' it locates the recipient's pending step in the relevant
+             workflow sheet and calls notifyApprover / apiPhase3_NotifyISMember; for
+             'applicant' it calls notifyApplicant with the current status. Logs an
+             'Email Resend' audit row regardless of outcome.
+  PARAMS:    - sessionId — required.
+             - recipient — intended email address.
+             - type — 'approver' | 'applicant' | 'ism'.
+  RETURNS:   {success, error, message}.
+
+  STEPS
+    Step 1 — Validate sessionId, type, and application existence.
+    Step 2 — Resolve the recipient's pending step (approver/ism) and notify.
+    Step 3 — Log the resend; return the outcome.
+*/
 function adminResendEmail(sessionId, recipient, type) {
   try {
     if (!sessionId || String(sessionId).trim() === '') {
@@ -3202,6 +3955,13 @@ function adminResendEmail(sessionId, recipient, type) {
   }
 }
 
+/*
+  Function: checkProperties
+  LAYMAN:    Quick editor check that logs whether the API key is configured (masked).
+  TECHNICAL: Logs ADMIN_API_KEY presence with a 6-char prefix; no return value.
+  PARAMS:    (none)
+  RETURNS:   undefined (logs only).
+*/
 function checkProperties() {
   var key = PropertiesService.getScriptProperties().getProperty('ADMIN_API_KEY');
   Logger.log('ADMIN_API_KEY: ' + (key ? '✅ SET (' + key.substring(0, 6) + '...)' : '❌ MISSING'));
@@ -3211,6 +3971,19 @@ function checkProperties() {
 // ADMIN API — Self-Test (run from Apps Script editor to verify all endpoints)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/*
+  Function: testAdminApi
+  LAYMAN:    A self-test you run from the Apps Script editor to confirm the whole Admin
+             API is wired up: API key set, spreadsheet reachable, all sheets present,
+             auth rejects bad keys, and the main endpoints respond. Prints a pass/fail
+             report to the log.
+  TECHNICAL: Sequentially asserts config, getSpreadsheet_, sheet existence, auth
+             rejection/acceptance, unknown-action handling, and a sampling of
+             adminApi_* endpoints (with dummy IDs), plus doPost JSON routing. Tallies
+             passed/failed via the local assert_ helper and logs results.
+  PARAMS:    (none)
+  RETURNS:   {passed, failed, total, details:[...]}.
+*/
 function testAdminApi() {
   Logger.log('═══════════════════════════════════════════');
   Logger.log('ADMIN API SELF-TEST');

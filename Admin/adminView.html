@@ -1,6 +1,128 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!--
+  [ OUTLINE ]
+  FILE: adminView.html  (Admin — Phase 3 frontend)
+
+  PURPOSE (Layman): This is the ISM control tower — the single dashboard the
+    InfoSec admins (INFOSEC-001 / INFOSEC-002) open to oversee the whole RARS
+    pipeline. From here they browse every DCS + PIA record, drill into the full
+    privacy assessment, watch approval/email progress, re-send or re-route the
+    Certificate of Approval, retry failed emails, and edit system links + InfoSec
+    contacts. It is read-mostly oversight plus a few high-trust actions.
+
+  TECHNICAL: Single-page Google Apps Script web app served as one HTML file.
+    All data and actions go through google.script.run to the Admin backend
+    (admin_code.js); there is no other server channel. The UI is split into 4
+    screens toggled by switchPage(): Dashboard, Analytics, Email Routing
+    (3 sub-tabs: Certificate / Failover / Queue), and Settings. Design tokens
+    live in :root (navy palette, semantic colors, motion). State is held in
+    module-level vars near the top of the script block. Access is restricted
+    server-side to INFOSEC-001/002; this file assumes the caller is authorized.
+
+  SCREENS: Dashboard, Analytics, Email Routing, Settings
+
+  CATEGORY: STATE & BOOT
+    - window.onload (boot)   first paint: refreshData() + prefetch settings
+    - module vars            allRows/filteredRows/selectedIds/sort/page state
+    - *_LABELS / *_FIELDS    static label maps + field lists for PIA/DCS rendering
+
+  CATEGORY: NAV / ROUTER
+    - toggleSidebar()        collapse/expand the left nav rail
+    - switchPage(page)       show one .page-section, sync nav + breadcrumb, lazy-load
+
+  CATEGORY: DASHBOARD — DATA FETCH
+    - refreshData()          (re)load the active screen's data
+    - onDataLoaded(result)   success path; on null, runs ping/debug diagnostics
+    - onDataError(err)       show the error state panel
+    - showLoading()          show the loading spinner state
+
+  CATEGORY: DASHBOARD — FILTER / SORT
+    - populateFilterDropdowns()  fill Dept/Location selects from loaded rows
+    - toggleFilterPanel()        open/close the advanced filter drawer
+    - clearSearch()              empty the search box and re-filter
+    - resetFilters()             clear every filter control
+    - getActiveFilters()         collect active filters as chip descriptors
+    - renderActiveFilters()      paint the active-filter chip bar + count badge
+    - clearFilter(id)            clear one filter by control id
+    - applyFilters()             compute filteredRows from allRows + controls
+    - parseDateMs(dateStr)       safe Date->ms parse (null on bad input)
+    - filterTable()              reset to page 1 and re-render
+    - sortTable(key)             toggle sort on a column, re-render table
+
+  CATEGORY: DASHBOARD — RENDER
+    - render()                   master paint: stats, chips, table, pagination
+    - renderStats()              top stat cards (totals by status)
+    - statCard(value,label,cls,icon)  one stat-card HTML builder
+    - renderTable()              paint the current page of rows
+    - changePageSize(size) / changePage(page) / renderPagination(totalPages)
+
+  CATEGORY: BADGE HELPERS
+    - getDcsBadgeClass(s) / getPiaBadgeClass(s) / getApprovalBadgeClass(s)
+    - getStatusBadgeClass(s)     routing-screen variant
+    - getQueueStatusBadgeClass(status)  email-queue variant
+
+  CATEGORY: SELECTION
+    - toggleRow(logId) / toggleSelectAll() / getSelectedRows() / updateSelectedLabel()
+
+  CATEGORY: FORMATTERS
+    - esc(str) / escAttr(str)    HTML / attribute escaping
+    - formatDate(dateStr)        en-PH short date
+    - resolveLabel(key)          map a raw key to a human label
+    - answerBadge(val)           YES/NO/N-A badge
+    - formatCellValue(val,key)   dispatch a raw cell to the right renderer
+
+  CATEGORY: PIA / DCS DETAIL RENDERERS
+    - renderPia1..renderPia5     per-section assessment renderers
+    - renderApproverFlags(str) / renderJsonGrid(str) / renderAgencyMetadata(str)
+    - viewDcsDetail / renderDcsModal       DCS record modal
+    - viewPiaDetail / renderPiaModal / switchPiaTab   tabbed PIA modal
+    - detailSection(title,icon,contentHtml)  modal section wrapper
+    - viewAudit / renderAuditLogs          audit-trail modal
+
+  CATEGORY: MODALS / UTILITY
+    - openModal(id) / closeModal(id)   + global backdrop & Escape listeners
+
+  CATEGORY: ANALYTICS
+    - renderAnalytics()          build the charts screen from allRows
+
+  CATEGORY: EXPORT
+    - exportSelected()           export selected rows to a Google Sheet
+
+  CATEGORY: CLOSE TICKET (DELETE)
+    - getRowByLogId / setupDeleteModal / showDeleteConfirm
+    - confirmDelete() / deleteSelected() / batchConfirmDelete()
+
+  CATEGORY: EMAIL ROUTING — CERTIFICATE REROUTE
+    - resetRoutingPage / clearRoutingForm
+    - loadApprovedApplications / populateRoutingDeptFilter
+    - filterRoutingTable / sortRoutingTable / getCurrentlyFilteredApps / renderRoutingTable
+    - selectApprovedApp / closeRoutingDetail / checkRoutingStatus / renderRoutingStatus
+    - confirmRerouteFromModal / confirmReroute / executeReroute
+    - downloadCertificate / downloadCertificateFromModal
+    - switchRoutingTab(tab)      switch Certificate / Failover / Queue sub-tabs
+
+  CATEGORY: EMAIL ROUTING — QUEUE
+    - loadEmailQueue / renderQueueStats / filterQueueTable / renderQueueTable
+    - retryQueueItem / cancelQueueItem / retryAllInSession
+    - viewPipeline / renderPipeline    full per-session pipeline modal
+
+  CATEGORY: EMAIL ROUTING — NOTIFICATION CONFIG
+    - loadNotificationConfig / saveNotificationConfig
+
+  CATEGORY: EMAIL ROUTING — FAILOVER (resend failed emails)
+    - loadFailedEmails / filterFailoverTable / renderFailoverStats / renderFailoverTable
+    - viewEmailLog / renderEmailLog
+    - openFailoverResend / confirmResendFailover / executeFailoverResend
+
+  CATEGORY: TOAST
+    - showToast(message,type)    transient bottom-corner notification
+
+  CATEGORY: SETTINGS (SYSTEM LINKS + INFOSEC CONFIG)
+    - disableSettingsFields / requestEditSettings / confirmEditSettings / cancelEditSettings
+    - loadSettings(force) / saveSettings()
+-->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com https://accounts.google.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; frame-src 'self' https://docs.google.com;">
@@ -2544,6 +2666,15 @@ var PIA_COL_LABELS = {
 // ════════════════════════════
 // SIDEBAR / NAVIGATION
 // ════════════════════════════
+/*
+  Function: toggleSidebar
+  LAYMAN: Collapses or expands the left navigation rail and flips the
+    Collapse/Expand label + accessibility hint accordingly.
+  TECHNICAL: Toggles the 'collapsed' class on #sidebar, then rewrites the
+    .toggle-label text and the .sidebar-toggle aria-label from the resulting state.
+  PARAMS: (none)
+  RETURNS: undefined (DOM side-effects only).
+*/
 function toggleSidebar() {
   var sb = document.getElementById('sidebar');
   sb.classList.toggle('collapsed');
@@ -2552,6 +2683,18 @@ function toggleSidebar() {
   lbl.textContent = isCollapsed ? 'Expand' : 'Collapse';
   sb.querySelector('.sidebar-toggle').setAttribute('aria-label', isCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
 }
+/*
+  Function: switchPage
+  LAYMAN: The screen router. Shows the chosen screen (Dashboard / Analytics /
+    Email Routing / Settings), highlights its nav item, updates the breadcrumb,
+    and kicks off that screen's lazy load (charts, settings, routing reset).
+  TECHNICAL: Removes 'active' from all .page-section + .nav-item, then activates
+    #page-<page> and the matching .nav-item[data-page]. Sets #breadcrumbCurrent.
+    Lazy-triggers renderAnalytics / loadSettings / resetRoutingPage by page id.
+  PARAMS:
+    - page — screen key: 'dashboard' | 'analytics' | 'email-routing' | 'config'.
+  RETURNS: undefined (DOM side-effects only).
+*/
 function switchPage(page) {
   var pages = {'dashboard':'Dashboard','analytics':'Analytics','email-routing':'Email Routing','config':'Settings'};
   document.querySelectorAll('.page-section').forEach(function(el){ el.classList.remove('active'); });
@@ -2568,6 +2711,16 @@ function switchPage(page) {
 // ════════════════════════════
 // DATA FETCH
 // ════════════════════════════
+/*
+  Function: refreshData
+  LAYMAN: Reloads data for whichever screen is currently open — pulls the full
+    admin dataset for the Dashboard, or re-runs the routing screen's reset.
+  TECHNICAL: Checks which .page-section is active. If Dashboard, shows the loader,
+    resets to page 1, and calls getAdminData() with success/failure handlers. If
+    Email Routing, delegates to resetRoutingPage(). No-op for other screens.
+  PARAMS: (none)
+  RETURNS: undefined (async; results arrive via onDataLoaded / onDataError).
+*/
 function refreshData() {
   var dashboardPage = document.getElementById('page-dashboard');
   var routingPage   = document.getElementById('page-email-routing');
@@ -2585,6 +2738,24 @@ function refreshData() {
     resetRoutingPage();
   }
 }
+/*
+  Function: onDataLoaded
+  LAYMAN: Success handler for the dashboard data load. On good data it stores the
+    rows and paints the table. If the server hands back nothing (a common GAS sheet
+    mismatch symptom), it runs a chain of diagnostics (ping -> debug -> sheet list)
+    so the error message tells the admin what is actually wrong.
+  TECHNICAL: If result is null, fans out nested google.script.run calls
+    (ping -> getAdminDataDebug -> debugSheets) to assemble a diagnostic message,
+    then routes to onDataError. On result.success, sets allRows, clears selection,
+    and calls populateFilterDropdowns() + render().
+  PARAMS:
+    - result — {success, data:[], error?} from getAdminData(), or null.
+  RETURNS: undefined (renders or surfaces an error).
+  STEPS
+    Step 1 — Null guard: run ping/debug/sheet diagnostics, then onDataError.
+    Step 2 — Error guard: surface result.error via onDataError.
+    Step 3 — Happy path: store rows, reset selection, populate filters, render.
+*/
 function onDataLoaded(result) {
   if (!result) {
     google.script.run
@@ -2624,6 +2795,16 @@ function onDataLoaded(result) {
   populateFilterDropdowns();
   render();
 }
+/*
+  Function: onDataError
+  LAYMAN: Shows the dashboard's red error panel with a readable message when a
+    data load fails.
+  TECHNICAL: Normalizes err (string | Error | unknown) to text, hides loading/
+    table/empty states, and reveals #errorState with the message in #errorMessage.
+  PARAMS:
+    - err — error string, Error object, or arbitrary value.
+  RETURNS: undefined (DOM side-effects only).
+*/
 function onDataError(err) {
   var msg = (typeof err === 'string') ? err : (err && err.message ? err.message : 'Unknown error occurred.');
   document.getElementById('loadingState').style.display = 'none';
@@ -2633,6 +2814,14 @@ function onDataError(err) {
   errorEl.style.display = 'flex';
   document.getElementById('errorMessage').textContent = msg;
 }
+/*
+  Function: showLoading
+  LAYMAN: Shows the dashboard spinner and hides table/error/empty states.
+  TECHNICAL: Sets display on #loadingState (flex) and #tableContainer / #errorState
+    / #emptyState (none).
+  PARAMS: (none)
+  RETURNS: undefined.
+*/
 function showLoading() {
   document.getElementById('loadingState').style.display = 'flex';
   document.getElementById('tableContainer').style.display = 'none';
@@ -2643,6 +2832,16 @@ function showLoading() {
 // ════════════════════════════
 // POPULATE DYNAMIC FILTER OPTIONS
 // ════════════════════════════
+/*
+  Function: populateFilterDropdowns
+  LAYMAN: Fills the Department and Location filter dropdowns with the distinct
+    values actually present in the loaded rows (sorted), keeping their first
+    "All" option.
+  TECHNICAL: Builds dedup sets of trimmed dept/location from allRows, preserves
+    options[0] of #f-dept / #f-location, then appends sorted <option>s.
+  PARAMS: (none — reads global allRows)
+  RETURNS: undefined.
+*/
 function populateFilterDropdowns() {
   var depts = {}, locs = {};
   allRows.forEach(function(r) {
@@ -2671,6 +2870,15 @@ function populateFilterDropdowns() {
 // ════════════════════════════
 // FILTER PANEL
 // ════════════════════════════
+/*
+  Function: toggleFilterPanel
+  LAYMAN: Opens or closes the advanced filter drawer and toggles the button's
+    active/expanded state.
+  TECHNICAL: Toggles 'open' on #filterPanel and 'active' on #filterToggleBtn,
+    and sets aria-expanded to the new state.
+  PARAMS: (none)
+  RETURNS: undefined.
+*/
 function toggleFilterPanel() {
   var panel = document.getElementById('filterPanel');
   var btn   = document.getElementById('filterToggleBtn');
@@ -2679,11 +2887,25 @@ function toggleFilterPanel() {
   btn.classList.toggle('active');
   btn.setAttribute('aria-expanded', !isOpen);
 }
+/*
+  Function: clearSearch
+  LAYMAN: Empties the dashboard search box, re-filters, and refocuses it.
+  TECHNICAL: Clears #searchInput, calls filterTable(), focuses #searchInput.
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function clearSearch() {
   document.getElementById('searchInput').value = '';
   filterTable();
   document.getElementById('searchInput').focus();
 }
+/*
+  Function: resetFilters
+  LAYMAN: Clears every filter control (search, all dropdowns, and the date range)
+    and re-filters the table.
+  TECHNICAL: Empties #searchInput, the six select filters, and both date inputs,
+    then calls filterTable().
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function resetFilters() {
   document.getElementById('searchInput').value = '';
   ['f-dcsStatus','f-piaStatus','f-approval','f-dept','f-location','f-flagged'].forEach(function(id) {
@@ -2693,6 +2915,15 @@ function resetFilters() {
   document.getElementById('f-dateTo').value = '';
   filterTable();
 }
+/*
+  Function: getActiveFilters
+  LAYMAN: Reads all the filter controls and returns a small list describing which
+    ones are currently set — used to draw the removable filter chips.
+  TECHNICAL: Inspects #searchInput, the labeled selects, and the date inputs;
+    returns an array of {id, label} for each non-empty control.
+  PARAMS: (none)
+  RETURNS: Array<{id:string, label:string}> (empty array when nothing is set).
+*/
 function getActiveFilters() {
   var active = [];
   var q = document.getElementById('searchInput').value.trim();
@@ -2715,6 +2946,15 @@ function getActiveFilters() {
   if (dt) active.push({id:'f-dateTo',   label:'To: ' + dt});
   return active;
 }
+/*
+  Function: renderActiveFilters
+  LAYMAN: Draws the row of "active filter" chips (each with an X to remove it) and
+    updates the little count badge. Hides the bar when no filters are set.
+  TECHNICAL: Calls getActiveFilters(); writes the count to #filterCountBadge,
+    toggles 'visible' on #activeFiltersBar, and renders chips into #filterChips.
+    Each chip's X calls clearSearch() (search) or clearFilter(id) (everything else).
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function renderActiveFilters() {
   var active = getActiveFilters();
   var bar = document.getElementById('activeFiltersBar');
@@ -2738,6 +2978,15 @@ function renderActiveFilters() {
       '<svg><use href="#ic-x"/></svg></button></span>';
   }).join('');
 }
+/*
+  Function: clearFilter
+  LAYMAN: Clears a single filter control by its element id, then re-filters.
+  TECHNICAL: Sets the value of #<id> to '' and calls filterTable(). (Both branches
+    do the same thing; the date-id branch is kept for clarity.)
+  PARAMS:
+    - id — element id of the filter control to clear.
+  RETURNS: undefined.
+*/
 function clearFilter(id) {
   if (id === 'f-dateFrom' || id === 'f-dateTo') {
     document.getElementById(id).value = '';
@@ -2750,6 +2999,23 @@ function clearFilter(id) {
 // ════════════════════════════
 // FILTERING & SORTING
 // ════════════════════════════
+/*
+  Function: applyFilters
+  LAYMAN: The actual filtering engine. Reads every filter control and narrows
+    allRows down to filteredRows — matching the free-text search, the status/
+    dept/location dropdowns, the flagged toggle, and the date range.
+  TECHNICAL: Reads all controls; precomputes from/to ms (toMs extended to end of
+    day). Filters allRows: text search over a joined field string; exact/substring
+    status matches; flagged via piaData.IsFlagged; date range via parseDateMs.
+    Writes the result to global filteredRows.
+  PARAMS: (none — reads DOM controls + global allRows)
+  RETURNS: undefined (mutates filteredRows).
+  STEPS
+    Step 1 — Read controls: gather query + 6 filters + date range -> ms bounds.
+    Step 2 — Text search: skip rows whose joined searchable string omits query.
+    Step 3 — Field filters: drop rows failing any status/dept/location match.
+    Step 4 — Flagged + date: apply IsFlagged toggle and from/to ms window.
+*/
 function applyFilters() {
   var query      = document.getElementById('searchInput').value.toLowerCase().trim();
   var dcsF       = document.getElementById('f-dcsStatus').value;
@@ -2795,12 +3061,39 @@ function applyFilters() {
     return true;
   });
 }
+/*
+  Function: parseDateMs
+  LAYMAN: Safely turns a date string into a millisecond timestamp, or null if it
+    is empty/unparseable.
+  TECHNICAL: Guards empty/'undefined' input, then new Date(dateStr).getTime();
+    returns null when isNaN.
+  PARAMS:
+    - dateStr — a date-like string.
+  RETURNS: number (ms) | null.
+*/
 function parseDateMs(dateStr) {
   if (!dateStr || dateStr === 'undefined' || dateStr === '') return null;
   var d = new Date(dateStr);
   return isNaN(d.getTime()) ? null : d.getTime();
 }
+/*
+  Function: filterTable
+  LAYMAN: Resets to the first page and repaints — call this after any filter change.
+  TECHNICAL: Sets currentPage = 1 and calls render().
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function filterTable() { currentPage = 1; render(); }
+/*
+  Function: sortTable
+  LAYMAN: Sorts the table by a column. Clicking the same column again flips the
+    direction. Dates sort chronologically; everything else sorts as text.
+  TECHNICAL: Toggles sortAsc when key repeats (else sets new key, asc). Resets to
+    page 1, updates aria-sort on the header, sorts filteredRows in place (date via
+    parseDateMs, otherwise case-insensitive string compare), then renderTable().
+  PARAMS:
+    - key — the row property to sort on (e.g. 'name', 'date').
+  RETURNS: undefined.
+*/
 function sortTable(key) {
   if (sortKey === key) { sortAsc = !sortAsc; } else { sortKey = key; sortAsc = true; }
   currentPage = 1;
@@ -2826,6 +3119,17 @@ function sortTable(key) {
 // ════════════════════════════
 // RENDER
 // ════════════════════════════
+/*
+  Function: render
+  LAYMAN: The dashboard's master repaint. Applies filters, then redraws the stat
+    cards, filter chips, table, pagination, and the "Showing X-Y of N" counter —
+    swapping in the empty state when nothing matches.
+  TECHNICAL: Hides loading/error states, runs applyFilters(), clamps currentPage to
+    totalPages, then calls renderStats / renderActiveFilters / renderTable /
+    renderPagination and updates #rowCount. Toggles table vs #emptyState vs
+    #paginationBar based on filteredRows.length.
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function render() {
   document.getElementById('loadingState').style.display = 'none';
   document.getElementById('errorState').style.display   = 'none';
@@ -2851,6 +3155,15 @@ function render() {
     document.getElementById('paginationBar').style.display = 'flex';
   }
 }
+/*
+  Function: renderStats
+  LAYMAN: Builds the row of summary stat cards at the top of the dashboard (Total,
+    PIA Complete, Approved, Pending, Denied, plus Escalated/Flagged when > 0).
+  TECHNICAL: Counts categories over allRows (substring matches on emailApproval,
+    piaStatus === 'Complete', IsFlagged), then writes statCard() HTML into #statsBar.
+    Escalated/Flagged cards render only when their count is positive.
+  PARAMS: (none — reads allRows)  RETURNS: undefined.
+*/
 function renderStats() {
   var total     = allRows.length;
   var complete  = allRows.filter(function(r){ return r.piaStatus === 'Complete'; }).length;
@@ -2868,6 +3181,18 @@ function renderStats() {
     (escalated > 0 ? statCard(escalated, 'Escalated', 'purple', 'ic-users') : '') +
     (flagged > 0 ? statCard(flagged, 'Flagged', 'danger', 'ic-flag') : '');
 }
+/*
+  Function: statCard
+  LAYMAN: Builds the HTML for a single stat card (icon + big number + label).
+  TECHNICAL: Returns a .stat-card string with an <svg><use> icon and accessible
+    role="figure"/aria-label.
+  PARAMS:
+    - value — the number/text to display big.
+    - label — the caption.
+    - cls — modifier class ('success'|'danger'|'warning'|'purple'|'').
+    - icon — symbol id (without '#'), e.g. 'ic-check'.
+  RETURNS: HTML string.
+*/
 function statCard(value, label, cls, icon) {
   return '<div class="stat-card ' + cls + '" role="figure" aria-label="' + label + ': ' + value + '">' +
     '<div class="stat-icon" aria-hidden="true"><svg><use href="#' + icon + '"/></svg></div>' +
@@ -2878,6 +3203,19 @@ function statCard(value, label, cls, icon) {
 // ════════════════════════════
 // TABLE RENDERING
 // ════════════════════════════
+/*
+  Function: renderTable
+  LAYMAN: Draws the current page of dashboard rows — each row shows the requestor,
+    control numbers (DCS ReqID + PIA SessionID), location/dept/access, three
+    clickable status badges (open DCS / PIA modals), the date, and per-row actions
+    (audit trail, close ticket). Also syncs the select-all checkbox.
+  TECHNICAL: Slices filteredRows by currentPage/pageSize, builds each <tr> with
+    escaped values, selection + flagged classes, badge classes from the get*Badge
+    helpers, and inline onclick handlers (toggleRow, viewDcsDetail, viewPiaDetail,
+    viewAudit, showDeleteConfirm). Writes to #tableBody and recomputes #selectAll.
+  PARAMS: (none — reads filteredRows / selectedIds / pagination state)
+  RETURNS: undefined.
+*/
 function renderTable() {
   var tbody = document.getElementById('tableBody');
   if (filteredRows.length === 0) { tbody.innerHTML = ''; return; }
@@ -2939,12 +3277,24 @@ function renderTable() {
 // ════════════════════════════
 // PAGINATION
 // ════════════════════════════
+/*
+  Function: changePageSize
+  LAYMAN: Changes how many rows show per page (5/10/25) and jumps back to page 1.
+  TECHNICAL: Parses size to pageSize (default 10), resets currentPage, render().
+  PARAMS: - size — page size (string|number).  RETURNS: undefined.
+*/
 function changePageSize(size) {
   pageSize = parseInt(size, 10) || 10;
   currentPage = 1;
   render();
 }
 
+/*
+  Function: changePage
+  LAYMAN: Jumps to a specific page and scrolls back to the top of the table.
+  TECHNICAL: Sets currentPage, render(), then resets #mainContent.scrollTop.
+  PARAMS: - page — 1-based page number.  RETURNS: undefined.
+*/
 function changePage(page) {
   currentPage = page;
   render();
@@ -2953,6 +3303,17 @@ function changePage(page) {
   if (mainContent) mainContent.scrollTop = 0;
 }
 
+/*
+  Function: renderPagination
+  LAYMAN: Draws the pagination controls — prev/next arrows, up to 5 numbered page
+    buttons centered on the current page, and an "X / Y" label.
+  TECHNICAL: If totalPages <= 1 shows a single-page label. Otherwise builds a
+    windowed range (max 5 buttons) around currentPage with prev/next that call
+    changePage(); marks the active page with aria-current. Writes to #pageControls.
+  PARAMS:
+    - totalPages — total number of pages.
+  RETURNS: undefined.
+*/
 function renderPagination(totalPages) {
   var container = document.getElementById('pageControls');
   if (!container) return;
@@ -2982,6 +3343,14 @@ function renderPagination(totalPages) {
 // ════════════════════════════
 // BADGE HELPERS
 // ════════════════════════════
+/*
+  Function: getDcsBadgeClass
+  LAYMAN: Picks the colored badge class for a DCS status string (green = done,
+    red = denied, amber = pending/returned, purple = escalated, blue = in progress).
+  TECHNICAL: Uppercases s and maps known DCS status values + substrings to a
+    badge-* class; falls back to badge-neutral.
+  PARAMS: - s — DCS status string.  RETURNS: badge class string.
+*/
 function getDcsBadgeClass(s) {
   if (!s || s === 'Unknown') return 'badge-neutral';
   var su = String(s).toUpperCase();
@@ -2993,6 +3362,14 @@ function getDcsBadgeClass(s) {
   if (su === 'IN PROGRESS' || su === 'PROCESSING') return 'badge-info';
   return 'badge-neutral';
 }
+/*
+  Function: getPiaBadgeClass
+  LAYMAN: Picks the badge color for a PIA status string. Handles the PIA-specific
+    states like "Approved (ISM Pending)" and "No Application".
+  TECHNICAL: Uppercases s and maps the full set of PIA status strings + substring
+    fallbacks to a badge-* class; defaults to badge-neutral.
+  PARAMS: - s — PIA status string.  RETURNS: badge class string.
+*/
 function getPiaBadgeClass(s) {
   if (!s) return 'badge-neutral';
   var su = String(s).toUpperCase();
@@ -3013,6 +3390,14 @@ function getPiaBadgeClass(s) {
   if (su.indexOf('PENDING') !== -1)   return 'badge-warning';
   return 'badge-neutral';
 }
+/*
+  Function: getApprovalBadgeClass
+  LAYMAN: Picks the badge color for the combined email-approval status shown in the
+    dashboard's Approval column.
+  TECHNICAL: Same mapping shape as getPiaBadgeClass (uppercase + known values +
+    substring fallbacks); defaults to badge-neutral.
+  PARAMS: - s — approval status string.  RETURNS: badge class string.
+*/
 function getApprovalBadgeClass(s) {
   if (!s) return 'badge-neutral';
   var su = String(s).toUpperCase();
@@ -3035,6 +3420,12 @@ function getApprovalBadgeClass(s) {
 // ════════════════════════════
 // SELECTION
 // ════════════════════════════
+/*
+  Function: toggleRow
+  LAYMAN: Checks/unchecks a single row's selection box, then repaints the table.
+  TECHNICAL: Flips selectedIds[logId] and calls renderTable().
+  PARAMS: - logId — the row's LogID.  RETURNS: undefined.
+*/
 function toggleRow(logId) {
   if (selectedIds[logId]) { delete selectedIds[logId]; }
   else { selectedIds[logId] = true; }
@@ -3042,6 +3433,13 @@ function toggleRow(logId) {
   // re-render just to keep things clean
   renderTable();
 }
+/*
+  Function: toggleSelectAll
+  LAYMAN: Selects or clears every row currently shown (all filtered rows).
+  TECHNICAL: Reads #selectAll.checked and adds/removes each filteredRows logId in
+    selectedIds, then renderTable().
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function toggleSelectAll() {
   var checked = document.getElementById('selectAll').checked;
   filteredRows.forEach(function(r) {
@@ -3050,9 +3448,21 @@ function toggleSelectAll() {
   });
   renderTable();
 }
+/*
+  Function: getSelectedRows
+  LAYMAN: Returns the row objects that are currently checked.
+  TECHNICAL: Filters filteredRows by selectedIds[r.logId].
+  PARAMS: (none)  RETURNS: Array of row objects.
+*/
 function getSelectedRows() {
   return filteredRows.filter(function(r){ return selectedIds[r.logId]; });
 }
+/*
+  Function: updateSelectedLabel
+  LAYMAN: Shows/hides the "N selected" label in the toolbar.
+  TECHNICAL: Counts selectedIds keys; toggles #selectedCountLabel display + text.
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function updateSelectedLabel() {
   var count = Object.keys(selectedIds).length;
   var el = document.getElementById('selectedCountLabel');
@@ -3067,16 +3477,39 @@ function updateSelectedLabel() {
 // ════════════════════════════
 // FORMATTERS
 // ════════════════════════════
+/*
+  Function: esc
+  LAYMAN: Escapes a value so it is safe to drop inside HTML text (prevents broken
+    markup / injection from user data).
+  TECHNICAL: Stringifies and replaces & < > " ' with their HTML entities; null/
+    undefined become ''.
+  PARAMS: - str — any value.  RETURNS: HTML-escaped string.
+*/
 function esc(str) {
   if (str == null) return '';
   return String(str)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+/*
+  Function: escAttr
+  LAYMAN: Escapes a value for safe use inside an HTML attribute / inline onclick
+    argument (only the quote characters).
+  TECHNICAL: Replaces ' and " with entities; null/undefined become ''.
+  PARAMS: - str — any value.  RETURNS: attribute-safe string.
+*/
 function escAttr(str) {
   if (str == null) return '';
   return String(str).replace(/'/g,'&#39;').replace(/"/g,'&quot;');
 }
+/*
+  Function: formatDate
+  LAYMAN: Turns a stored date string into a clean "Jun 16, 2026" (en-PH) display.
+    Falls back to the first 16 chars if it can't be parsed.
+  TECHNICAL: Strips surrounding quotes, new Date(); on NaN returns the raw slice,
+    else toLocaleDateString('en-PH', {year,month:'short',day}). Empty -> em dash.
+  PARAMS: - dateStr — a date-like string.  RETURNS: formatted date string.
+*/
 function formatDate(dateStr) {
   if (!dateStr || dateStr === 'undefined' || dateStr === '') return '—';
   var cleanStr = String(dateStr).replace(/^"|"$/g, '');
@@ -3084,6 +3517,14 @@ function formatDate(dateStr) {
   if (isNaN(d.getTime())) return String(dateStr).slice(0, 16);
   return d.toLocaleDateString('en-PH', { year:'numeric', month:'short', day:'numeric' });
 }
+/*
+  Function: resolveLabel
+  LAYMAN: Turns a raw data key (like 'immHeadName' or 'PIA_2_Data') into a friendly
+    label. Checks all the known label maps first, then humanizes the key as a fallback.
+  TECHNICAL: Looks up key across the DCS/PIA label maps in order; if none match,
+    de-snake/de-camel-cases and title-cases the key.
+  PARAMS: - key — raw field/column key.  RETURNS: human-readable label string.
+*/
 function resolveLabel(key) {
   return DCS_COL_LABELS[key] || DCS_META_LABELS[key] || DCS_AGENCY_LABELS[key]
     || PIA_COL_LABELS[key] || PIA1_LABELS[key] || PIA3_LABELS[key] || PIA4_LABELS[key]
@@ -3094,6 +3535,14 @@ function resolveLabel(key) {
 // ════════════════════════════
 // ANSWER BADGE
 // ════════════════════════════
+/*
+  Function: answerBadge
+  LAYMAN: Renders a small YES / NO / N-A badge from a messy value (boolean, the
+    strings "true"/"false"/"YES"/"NO", or blank). Unknown values show as a neutral badge.
+  TECHNICAL: Normalizes val to an uppercase token and returns the matching badge-*
+    HTML; empty renders an em dash; anything else renders the escaped raw value.
+  PARAMS: - val — boolean | string | null.  RETURNS: badge HTML string.
+*/
 function answerBadge(val) {
   // Normalize: handle boolean true/false, "YES"/"NO"/"N/A", "true"/"false"
   var s;
@@ -3110,6 +3559,22 @@ function answerBadge(val) {
 // ════════════════════════════
 // PIA 2 — PII INVENTORY (FIXED)
 // ════════════════════════════
+/*
+  Function: renderPia2
+  LAYMAN: Renders the PIA-2 PII inventory — which categories of personal data the
+    program collects. Shows a YES/NO/unanswered ratio bar, a legend (sensitive
+    fields flagged), the full field grid, and any custom "Others" entries.
+  TECHNICAL: Parses str (JSON or object). Normalizes each of PII2_FIELDS (array or
+    keyed forms) and obj.customOthers to YES/NO/'' while counting yes/no. Marks
+    indexes in SENSITIVE_PII. Builds summary bar + legend + .pii-grid via answerBadge.
+  PARAMS: - str — PIA_2_Data (JSON string or object).
+  RETURNS: HTML string (or an error/empty <p> when unparseable/missing).
+  STEPS
+    Step 1 — Parse + guard against bad/empty JSON.
+    Step 2 — Normalize the predefined fields (two shapes) -> YES/NO/'' + counts.
+    Step 3 — Normalize custom "Others" fields the same way.
+    Step 4 — Build the ratio bar, legend, and PII grid HTML.
+*/
 function renderPia2(str) {
   var obj;
   try { obj = (typeof str === 'string') ? JSON.parse(str) : str; } catch(e) {
@@ -3233,6 +3698,19 @@ function renderPia2(str) {
 // ════════════════════════════
 // PIA 3 — STAKEHOLDERS
 // ════════════════════════════
+/*
+  Function: renderPia3
+  LAYMAN: Renders the PIA-3 stakeholders section — two avatar lists (Internal and
+    External) plus any free-text notes.
+  TECHNICAL: Parses str; uses the inner renderList() to render each stakeholder
+    array (string or {name,email}) with an avatar + type badge; appends int/ext
+    description note boxes when present.
+  PARAMS: - str — PIA_3_Data (JSON string or object).
+  RETURNS: HTML string (error/empty <p> when unparseable/missing).
+
+  Inner: renderList(list, type) — builds one stakeholder list ('internal'/'external'),
+    or a "None specified" line when the list is empty.
+*/
 function renderPia3(str) {
   var obj;
   try { obj = (typeof str === 'string') ? JSON.parse(str) : str; } catch(e) {
@@ -3277,6 +3755,15 @@ function renderPia3(str) {
 // ════════════════════════════
 // PIA 4 — DATA LIFECYCLE
 // ════════════════════════════
+/*
+  Function: renderPia4
+  LAYMAN: Renders the PIA-4 data lifecycle — how data is collected, used, retained,
+    disclosed, and disposed — as a labeled key/value grid.
+  TECHNICAL: Parses str; iterates the fixed phases array, labeling via PIA4_LABELS
+    and showing "Not specified" for blanks. Returns a .detail-grid HTML string.
+  PARAMS: - str — PIA_4_Data (JSON string or object).
+  RETURNS: HTML string (error/empty <p> when unparseable/missing).
+*/
 function renderPia4(str) {
   var obj;
   try { obj = (typeof str === 'string') ? JSON.parse(str) : str; } catch(e) {
@@ -3306,6 +3793,21 @@ function renderPia4(str) {
 // ════════════════════════════
 // PIA 5 — COMPLIANCE SURVEY (FIXED)
 // ════════════════════════════
+/*
+  Function: renderPia5
+  LAYMAN: Renders the PIA-5 privacy compliance survey — the 8 yes/no policy
+    questions with their answers, a YES/NO/N-A/unanswered summary, and a warning
+    box when 3 or more answers are NO (a compliance-gap signal).
+  TECHNICAL: Parses str as array or {index:answer} object aligned to PIA5_QUESTIONS.
+    Resolves each answer to YES/NO/N/A/'' (counting), renders a .compliance-grid
+    with answerBadge, a summary row, and a conditional warning note (noCount >= 3).
+  PARAMS: - str — PIA_5_Data (JSON string/array/object).
+  RETURNS: HTML string (error/empty <p> when unparseable/missing).
+  STEPS
+    Step 1 — Parse + coerce to an answers array aligned to the question list.
+    Step 2 — Resolve each answer + tally YES/NO/N/A counts.
+    Step 3 — Build the question grid, summary, and (if >=3 NO) the warning box.
+*/
 function renderPia5(str) {
   var arr;
   try { arr = (typeof str === 'string') ? JSON.parse(str) : str; } catch(e) {
@@ -3366,6 +3868,15 @@ function renderPia5(str) {
 // ════════════════════════════
 // APPROVER FLAGS
 // ════════════════════════════
+/*
+  Function: renderApproverFlags
+  LAYMAN: Renders the list of fields an approver flagged for revision, each with the
+    field name and the approver's reason.
+  TECHNICAL: Parses str ({field: reason}); renders a .flag-list of items, or a
+    "No flags" line when empty/missing.
+  PARAMS: - str — ApproverFlags (JSON string or object).
+  RETURNS: HTML string.
+*/
 function renderApproverFlags(str) {
   var obj;
   try { obj = (typeof str === 'string') ? JSON.parse(str) : str; } catch(e) {
@@ -3389,6 +3900,16 @@ function renderApproverFlags(str) {
 // ════════════════════════════
 // PIA 1 — PROGRAM INFORMATION
 // ════════════════════════════
+/*
+  Function: renderPia1
+  LAYMAN: Renders the PIA-1 program information (program name, purpose, scope,
+    and the head contacts) as a labeled grid, in a sensible field order.
+  TECHNICAL: Parses str; renders the keys in a fixed 'order' first (labeled via
+    PIA1_LABELS/resolveLabel), then any remaining keys (skipping 'hasNDADPA').
+    Falls back to renderJsonGrid on parse failure.
+  PARAMS: - str — PIA_1_Data (JSON string or object).
+  RETURNS: HTML string (.detail-grid).
+*/
 function renderPia1(str) {
   var obj;
   try { obj = (typeof str === 'string') ? JSON.parse(str) : str; } catch(e) {
@@ -3427,6 +3948,16 @@ function renderPia1(str) {
 // ════════════════════════════
 // GENERIC JSON GRID
 // ════════════════════════════
+/*
+  Function: renderJsonGrid
+  LAYMAN: A generic fallback renderer that turns any JSON object or array into a
+    readable labeled grid — recursing into nested objects/arrays.
+  TECHNICAL: Parses str; for arrays renders #index rows, for objects renders
+    label(resolveLabel)/value rows; nested objects recurse via JSON.stringify.
+    Non-objects / parse failures return the escaped raw string.
+  PARAMS: - str — JSON string or object/array.
+  RETURNS: HTML string.
+*/
 function renderJsonGrid(str) {
   var obj;
   try { obj = (typeof str === 'string') ? JSON.parse(str) : str; } catch(e) { return esc(String(str)); }
@@ -3459,6 +3990,20 @@ function renderJsonGrid(str) {
 // ════════════════════════════
 // FORMAT CELL VALUE (DISPATCH)
 // ════════════════════════════
+/*
+  Function: formatCellValue
+  LAYMAN: The "smart cell" formatter — given a raw value and its column key, it
+    decides how to render it: PIA sub-sections, flagged badge, dates, Drive file
+    links, email mailto links, embedded JSON, or plain escaped text.
+  TECHNICAL: Dispatch by key: PIA_1..5_Data / ApproverFlags to their renderers;
+    IsFlagged -> badge; Timestamp/SubmissionDate -> formatDate; FileID/AdminExportID
+    -> Drive links (array or single); Metadata_* or any JSON-looking string ->
+    renderJsonGrid; email-keys with '@' -> mailto; else escaped text.
+  PARAMS:
+    - val — the raw cell value.
+    - key — the column/field key driving the dispatch.
+  RETURNS: HTML string.
+*/
 function formatCellValue(val, key) {
   if (val == null || val === '') return '<span class="dg-empty">—</span>';
   var str = String(val);
@@ -3516,6 +4061,14 @@ function formatCellValue(val, key) {
 // ════════════════════════════
 // DCS DETAIL MODAL
 // ════════════════════════════
+/*
+  Function: viewDcsDetail
+  LAYMAN: Opens the DCS record modal for a clicked row (its program details,
+    agency info, attachments).
+  TECHNICAL: Finds the row by logId; guards missing dcsData with a toast. Sets the
+    modal subtitle, fills #dcsModalBody via renderDcsModal(), opens 'dcsModal'.
+  PARAMS: - logId — the row's LogID.  RETURNS: undefined.
+*/
 function viewDcsDetail(logId) {
   var row = allRows.find(function(r){ return r.logId === logId; });
   if (!row || !row.dcsData) { showToast('No DCS data available for this entry.', 'info'); return; }
@@ -3523,6 +4076,15 @@ function viewDcsDetail(logId) {
   document.getElementById('dcsModalBody').innerHTML = renderDcsModal(row.dcsData);
   openModal('dcsModal');
 }
+/*
+  Function: renderDcsModal
+  LAYMAN: Builds the DCS modal body: a core info section plus optional sections for
+    program metadata, agency/accountability info, and attachments.
+  TECHNICAL: Renders coreKeys via formatCellValue into a detailSection, then
+    conditionally appends Metadata_JSON (renderJsonGrid), Metadata_Agency
+    (renderAgencyMetadata), and FileID sections.
+  PARAMS: - data — the DCS record object.  RETURNS: HTML string.
+*/
 function renderDcsModal(data) {
   var html = '';
   // Core DCS info section
@@ -3551,6 +4113,14 @@ function renderDcsModal(data) {
   }
   return html;
 }
+/*
+  Function: renderAgencyMetadata
+  LAYMAN: Renders the DCS agency/accountability block — agency contacts plus any
+    attached files (e.g. endorsement letter) as Drive links.
+  TECHNICAL: Parses str; for each key labels via DCS_AGENCY_LABELS/resolveLabel and
+    renders object values as Drive file links (array or single), else escaped text.
+  PARAMS: - str — Metadata_Agency (JSON string or object).  RETURNS: HTML string.
+*/
 function renderAgencyMetadata(str) {
   var obj;
   try { obj = (typeof str === 'string') ? JSON.parse(str) : str; } catch(e) { return esc(str); }
@@ -3584,6 +4154,13 @@ function renderAgencyMetadata(str) {
 // ════════════════════════════
 // PIA DETAIL MODAL (TABBED)
 // ════════════════════════════
+/*
+  Function: viewPiaDetail
+  LAYMAN: Opens the tabbed PIA modal for a clicked row (the full privacy assessment).
+  TECHNICAL: Finds the row by logId; guards missing piaData with a toast. Sets the
+    subtitle, fills #piaModalBody via renderPiaModal(), opens 'piaModal'.
+  PARAMS: - logId — the row's LogID.  RETURNS: undefined.
+*/
 function viewPiaDetail(logId) {
   var row = allRows.find(function(r){ return r.logId === logId; });
   if (!row || !row.piaData) { showToast('No PIA data available for this entry.', 'info'); return; }
@@ -3591,6 +4168,15 @@ function viewPiaDetail(logId) {
   document.getElementById('piaModalBody').innerHTML = renderPiaModal(row.piaData);
   openModal('piaModal');
 }
+/*
+  Function: renderPiaModal
+  LAYMAN: Builds the tabbed PIA modal: Overview, Privacy Survey, PIA 1-4, and Flags
+    (with a count badge), each tab wired to switchPiaTab().
+  TECHNICAL: Defines tabDefs; counts ApproverFlags for the Flags badge; builds the
+    tab buttons and panel divs (Overview from session keys via formatCellValue, the
+    rest via the render* functions). Returns tabs + panels HTML.
+  PARAMS: - data — the PIA application object.  RETURNS: HTML string.
+*/
 function renderPiaModal(data) {
   var tabDefs = [
     { id:'pia-overview', label:'Overview', icon:'ic-file' },
@@ -3644,6 +4230,13 @@ function renderPiaModal(data) {
 
   return tabsHtml + panelsHtml;
 }
+/*
+  Function: switchPiaTab
+  LAYMAN: Switches which tab is shown inside the PIA modal.
+  TECHNICAL: Clears active state on all #piaModalBody tabs/panels, then activates the
+    button (aria-controls=tabId) and the #tabId panel.
+  PARAMS: - tabId — the panel id to show.  RETURNS: undefined.
+*/
 function switchPiaTab(tabId) {
   document.querySelectorAll('#piaModalBody .modal-tab').forEach(function(t) {
     t.classList.remove('active');
@@ -3659,6 +4252,17 @@ function switchPiaTab(tabId) {
 // ════════════════════════════
 // DETAIL SECTION HELPER
 // ════════════════════════════
+/*
+  Function: detailSection
+  LAYMAN: Wraps content in a titled card section (icon + heading) used inside modals.
+  TECHNICAL: Returns a .detail-section with a .section-header (svg icon + escaped
+    title) followed by contentHtml.
+  PARAMS:
+    - title — section heading text.
+    - icon — symbol id (without '#').
+    - contentHtml — pre-built inner HTML.
+  RETURNS: HTML string.
+*/
 function detailSection(title, icon, contentHtml) {
   return '<div class="detail-section">' +
     '<div class="section-header">' +
@@ -3672,6 +4276,18 @@ function detailSection(title, icon, contentHtml) {
 // ════════════════════════════
 // AUDIT LOGS
 // ════════════════════════════
+/*
+  Function: viewAudit
+  LAYMAN: Opens the audit-trail modal for an entry and fetches its full history
+    (risk-audit logs + every approval table) from the server.
+  TECHNICAL: Opens 'auditModal' with a spinner, then getAuditLogs(reqId, sessionId);
+    on success calls renderAuditLogs(), on error/null shows an inline message.
+  PARAMS:
+    - reqId — DCS ReqID.
+    - sessionId — PIA SessionID.
+    - name — display name for the header.
+  RETURNS: undefined (async).
+*/
 function viewAudit(reqId, sessionId, name) {
   openModal('auditModal');
   document.getElementById('auditModalBody').innerHTML =
@@ -3689,6 +4305,21 @@ function viewAudit(reqId, sessionId, name) {
     })
     .getAuditLogs(reqId, sessionId);
 }
+/*
+  Function: renderAuditLogs
+  LAYMAN: Renders the audit-trail modal body — a risk-audit log table plus three
+    approval tables (main workflow, ISM, Division Head), color-coded by action/decision.
+  TECHNICAL: Builds the risk-audit table (action -> badge class by keyword), then
+    uses the inner approvalTable() helper for data.approvals / ismApprovals /
+    dhApprovals, each with a name-resolver. Writes to #auditModalBody.
+  PARAMS:
+    - data — {auditLogs, approvals, ismApprovals, dhApprovals}.
+    - name — display name for the summary line.
+  RETURNS: undefined.
+
+  Inner: approvalTable(rows, title, icon, nameFn) — renders one approval table,
+    deriving the decision from Decision/Status (default 'Pending') and its badge class.
+*/
 function renderAuditLogs(data, name) {
   var html = '';
   // Summary
@@ -3753,12 +4384,27 @@ function renderAuditLogs(data, name) {
 // ════════════════════════════
 // MODALS
 // ════════════════════════════
+/*
+  Function: openModal
+  LAYMAN: Opens a modal by id and locks page scroll behind it.
+  TECHNICAL: Adds 'active' to #id and sets body overflow hidden.
+  PARAMS: - id — modal element id.  RETURNS: undefined.
+*/
 function openModal(id) {
   document.getElementById(id).classList.add('active');
   document.body.style.overflow = 'hidden';
 }
 var _batchDeleteInProgress = false;
 
+/*
+  Function: closeModal
+  LAYMAN: Closes a modal and restores page scroll once no modals remain open. Also
+    resets the delete modal's confirm handler if a batch flow was abandoned.
+  TECHNICAL: Removes 'active' from #id; restores body overflow when no .modal-overlay
+    is active. Special-cases the deleteModal: if a 'batch' delete was pending but not
+    in progress, clears pendingDelete and restores #confirmDeleteBtn.onclick.
+  PARAMS: - id — modal element id.  RETURNS: undefined.
+*/
 function closeModal(id) {
   document.getElementById(id).classList.remove('active');
   if (!document.querySelector('.modal-overlay.active')) document.body.style.overflow = '';
@@ -3783,6 +4429,20 @@ document.addEventListener('keydown', function(e) {
 // ════════════════════════════
 // ANALYTICS
 // ════════════════════════════
+/*
+  Function: renderAnalytics
+  LAYMAN: Builds the entire Analytics screen from the already-loaded dashboard rows:
+    a completion donut, an approval-breakdown bar chart, top locations, DCS-status
+    and access-type breakdowns, and a key-metrics grid. All hand-rolled SVG/CSS bars.
+  TECHNICAL: Requires allRows (prompts to load otherwise). Computes counts/rates and
+    aggregates by location/access/dcsStatus, then assembles an .analytics-grid of
+    .chart-card blocks (inline SVG donut, percentage bars). Writes #analyticsContent.
+  PARAMS: (none — reads allRows)  RETURNS: undefined.
+  STEPS
+    Step 1 — Guard: if no rows loaded, show a "load from dashboard first" message.
+    Step 2 — Aggregate: totals/rates + location/access/dcsStatus maps.
+    Step 3 — Build cards: donut, approval bars, top locations, DCS/access, key metrics.
+*/
 function renderAnalytics() {
   if (allRows.length === 0) {
     document.getElementById('analyticsContent').innerHTML =
@@ -3942,6 +4602,13 @@ function renderAnalytics() {
 // ════════════════════════════
 // EXPORT
 // ════════════════════════════
+/*
+  Function: exportSelected
+  LAYMAN: Exports the checked rows to a new Google Sheet and opens it in a new tab.
+  TECHNICAL: Guards empty selection; calls exportToSheet(selected); on success opens
+    result.url, else toasts the error.
+  PARAMS: (none — reads selection)  RETURNS: undefined (async).
+*/
 function exportSelected() {
   var selected = getSelectedRows();
   if (selected.length === 0) { showToast('Select rows to export first.', 'info'); return; }
@@ -3958,9 +4625,31 @@ function exportSelected() {
 // ════════════════════════════
 // DELETE
 // ════════════════════════════
+/*
+  Function: getRowByLogId
+  LAYMAN: Finds a loaded row by its LogID.
+  TECHNICAL: allRows.find on r.logId.
+  PARAMS: - logId — LogID.  RETURNS: the row object | undefined.
+*/
 function getRowByLogId(logId) {
   return allRows.find(function(r){ return r.logId === logId; });
 }
+/*
+  Function: setupDeleteModal
+  LAYMAN: Prepares the "Close Ticket" confirmation modal — resets the notify-email
+    toggle + ISM comment, shows/hides the recipient line, and (for batch) sets the
+    multi-ticket message. Then opens the modal.
+  TECHNICAL: Resets #deleteSendEmail/#deleteIsmComment; toggles #deleteEmailSection
+    based on email; for isBatch writes a count message into #deleteMessage; opens
+    'deleteModal'. (Single-ticket message is set by the caller.)
+  PARAMS:
+    - email — recipient to notify ('' to hide the email section).
+    - reqId — DCS ReqID (unused here; kept for call-site symmetry).
+    - logId — LogID (unused here).
+    - isBatch — true for multi-ticket close.
+    - batchCount — number of tickets when batch.
+  RETURNS: undefined.
+*/
 function setupDeleteModal(email, reqId, logId, isBatch, batchCount) {
   // Reset modal fields
   document.getElementById('deleteSendEmail').checked = true;
@@ -3981,6 +4670,17 @@ function setupDeleteModal(email, reqId, logId, isBatch, batchCount) {
   }
   openModal('deleteModal');
 }
+/*
+  Function: showDeleteConfirm
+  LAYMAN: Opens the single-ticket close confirmation for a specific entry, recording
+    what to close and showing the requestor's email.
+  TECHNICAL: Looks up the row's applicantEmail, stores pendingDelete = {reqId, logId,
+    sessionId, email}, writes the confirm message, and calls setupDeleteModal(single).
+  PARAMS:
+    - reqId — DCS ReqID.   - logId — LogID.
+    - sessionId — PIA SessionID.   - name — display name.
+  RETURNS: undefined.
+*/
 function showDeleteConfirm(reqId, logId, sessionId, name) {
   var row = getRowByLogId(logId);
   var email = (row && row.applicantEmail) || '';
@@ -3990,6 +4690,15 @@ function showDeleteConfirm(reqId, logId, sessionId, name) {
     '<span style="font-size:12px;color:var(--color-text-2);">ReqID: ' + esc(reqId) + '  •  LogID: ' + esc(logId) + '</span>';
   setupDeleteModal(email, reqId, logId, false, 1);
 }
+/*
+  Function: confirmDelete
+  LAYMAN: Actually closes a single ticket after confirmation — optionally emailing
+    the requestor with an ISM comment — then refreshes the dashboard.
+  TECHNICAL: Delegates to batchConfirmDelete when pendingDelete === 'batch'. Else
+    reads the notify toggle + comment and calls deleteEntry(reqId, logId, sessionId,
+    sendEmail, comment); on success clears the selection and refreshData().
+  PARAMS: (none — reads pendingDelete)  RETURNS: undefined (async).
+*/
 function confirmDelete() {
   if (!pendingDelete) return;
   if (pendingDelete === 'batch') { batchConfirmDelete(); return; }
@@ -4013,6 +4722,15 @@ function confirmDelete() {
     .withFailureHandler(function(err){ showToast('Delete error: ' + String(err), 'error'); pendingDelete = null; })
     .deleteEntry(pendingDelete.reqId, pendingDelete.logId, pendingDelete.sessionId, sendEmail, comment);
 }
+/*
+  Function: deleteSelected
+  LAYMAN: Starts a batch close for all checked tickets — opens the confirmation with
+    a count and rewires the confirm button to the batch handler.
+  TECHNICAL: Guards empty selection; sets pendingDelete='batch', writes the count
+    message, calls setupDeleteModal(batch), and sets #confirmDeleteBtn.onclick to
+    batchConfirmDelete.
+  PARAMS: (none — reads selection)  RETURNS: undefined.
+*/
 function deleteSelected() {
   var selected = getSelectedRows();
   if (selected.length === 0) { showToast('Select rows to close first.', 'info'); return; }
@@ -4026,6 +4744,16 @@ function deleteSelected() {
   setupDeleteModal(firstEmail, '', '', true, selected.length);
   document.getElementById('confirmDeleteBtn').onclick = batchConfirmDelete;
 }
+/*
+  Function: batchConfirmDelete
+  LAYMAN: Closes all selected tickets in one server call, optionally emailing each
+    requestor, reports how many succeeded/failed, and refreshes.
+  TECHNICAL: Builds an items[] payload (reqId/logId/sessionId/sendEmail/ismComment)
+    from getSelectedRows() and calls batchDeleteEntries(items). Manages the
+    _batchDeleteInProgress flag and restores #confirmDeleteBtn.onclick afterward;
+    clears succeeded items from selectedIds; refreshData() at the end.
+  PARAMS: (none — reads selection + delete-modal controls)  RETURNS: undefined (async).
+*/
 function batchConfirmDelete() {
   closeModal('deleteModal');
   _batchDeleteInProgress = true;
@@ -4072,6 +4800,14 @@ function batchConfirmDelete() {
 var _routingSessionId = null;
 var _routingApprovedApps = [];
 
+/*
+  Function: resetRoutingPage
+  LAYMAN: Resets the Email Routing screen back to a clean state and reloads the
+    approved-applications table.
+  TECHNICAL: Closes the detail modal, hides #routingLoading, clears
+    _routingSessionId, and calls loadApprovedApplications().
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function resetRoutingPage() {
   closeModal('routingDetailModal');
   document.getElementById('routingLoading').style.display = 'none';
@@ -4080,6 +4816,14 @@ function resetRoutingPage() {
   loadApprovedApplications();
 }
 
+/*
+  Function: clearRoutingForm
+  LAYMAN: Closes the routing detail modal, clears the session field, and reloads
+    the applications table.
+  TECHNICAL: closeModal('routingDetailModal'), nulls _routingSessionId, empties
+    #certSessionId, loadApprovedApplications().
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function clearRoutingForm() {
   // Clear — close modal + reload table
   closeModal('routingDetailModal');
@@ -4091,6 +4835,15 @@ function clearRoutingForm() {
 var _routingSortKey = null;
 var _routingSortAsc = true;
 
+/*
+  Function: loadApprovedApplications
+  LAYMAN: Loads the list of approved applications that can have their Certificate
+    of Approval routed, and fills the routing table.
+  TECHNICAL: Shows the loader, calls apiAdmin_GetApprovedApplications(); on success
+    stores _routingApprovedApps, populates the dept filter, and renders via
+    filterRoutingTable() (or shows empty/error states).
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
 function loadApprovedApplications() {
   var tableBody = document.getElementById('routingTableBody');
   var tableLoading = document.getElementById('routingTableLoading');
@@ -4135,6 +4888,14 @@ function loadApprovedApplications() {
     .apiAdmin_GetApprovedApplications();
 }
 
+/*
+  Function: populateRoutingDeptFilter
+  LAYMAN: Fills the routing screen's Department dropdown from the loaded applications,
+    preserving the current selection.
+  TECHNICAL: Builds a dept set from _routingApprovedApps, rebuilds #routingFilterDept
+    options ("All Departments" + sorted), re-selecting the prior value.
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function populateRoutingDeptFilter() {
   var deptSet = {};
   _routingApprovedApps.forEach(function(a) {
@@ -4151,6 +4912,14 @@ function populateRoutingDeptFilter() {
   });
 }
 
+/*
+  Function: filterRoutingTable
+  LAYMAN: Filters the routing applications table by search text, status, ISM state,
+    and department, then repaints it.
+  TECHNICAL: Reads the four routing filter controls and filters _routingApprovedApps
+    (text over several fields; status/ISM/dept matches), then renderRoutingTable().
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function filterRoutingTable() {
   if (!_routingApprovedApps || _routingApprovedApps.length === 0) return;
 
@@ -4184,6 +4953,14 @@ function filterRoutingTable() {
   renderRoutingTable(filtered);
 }
 
+/*
+  Function: sortRoutingTable
+  LAYMAN: Sorts the routing table by a column (clicking again flips direction).
+  TECHNICAL: Toggles _routingSortKey/_routingSortAsc, re-derives the filtered list
+    via getCurrentlyFilteredApps(), sorts it (case-insensitive string), repaints,
+    and updates aria-sort on the header.
+  PARAMS: - key — app property to sort on.  RETURNS: undefined.
+*/
 function sortRoutingTable(key) {
   if (_routingSortKey === key) {
     _routingSortAsc = !_routingSortAsc;
@@ -4211,6 +4988,14 @@ function sortRoutingTable(key) {
   if (th) th.setAttribute('aria-sort', _routingSortAsc ? 'ascending' : 'descending');
 }
 
+/*
+  Function: getCurrentlyFilteredApps
+  LAYMAN: Returns the routing applications that match the current filters (without
+    re-rendering) — used by the sorter so it sorts what's actually visible.
+  TECHNICAL: Re-applies the same search/status/ISM/dept predicate as
+    filterRoutingTable() over _routingApprovedApps and returns the array.
+  PARAMS: (none)  RETURNS: filtered Array of app objects.
+*/
 function getCurrentlyFilteredApps() {
   // Re-run filter on the master list
   var query = document.getElementById('routingSearchInput').value.toLowerCase().trim();
@@ -4236,6 +5021,20 @@ function getCurrentlyFilteredApps() {
   });
 }
 
+/*
+  Function: renderRoutingTable
+  LAYMAN: Draws the approved-applications table — each row shows the program,
+    department, status, ISM and Division-Head progress badges, last routing
+    destination, and a Route/View button (disabled with a reason when not routable).
+  TECHNICAL: For each app derives status/ISM/DH/routing badges and the canRoute flag
+    (with a routeDisabledReason). Builds clickable rows (selectApprovedApp) and an
+    action button; updates #routingRowCount with a routable count. Writes the tbody.
+  PARAMS: - apps — the (filtered) array of application objects.  RETURNS: undefined.
+  STEPS
+    Step 1 — Empty guard + routable count for the header.
+    Step 2 — Per row, compute status / ISM / DH / routing badges.
+    Step 3 — Derive canRoute + the disabled reason, then build the row + action button.
+*/
 function renderRoutingTable(apps) {
   var tableBody = document.getElementById('routingTableBody');
   var rowCount = document.getElementById('routingRowCount');
@@ -4336,14 +5135,36 @@ function renderRoutingTable(apps) {
   tableBody.innerHTML = html;
 }
 
+/*
+  Function: selectApprovedApp
+  LAYMAN: Opens the routing detail modal for a clicked application.
+  TECHNICAL: Thin wrapper to checkRoutingStatus(sessionId).
+  PARAMS: - sessionId — the application's SessionID.  RETURNS: undefined.
+*/
 function selectApprovedApp(sessionId) {
   checkRoutingStatus(sessionId);
 }
 
+/*
+  Function: closeRoutingDetail
+  LAYMAN: Closes the routing detail modal.
+  TECHNICAL: closeModal('routingDetailModal').
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function closeRoutingDetail() {
   closeModal('routingDetailModal');
 }
 
+/*
+  Function: checkRoutingStatus
+  LAYMAN: Loads the full routing status for a session (approval state, configured
+    destination emails, last destination) and opens the detail modal.
+  TECHNICAL: Resolves sessionId (argument or #certSessionId), stores
+    _routingSessionId, sets labels, shows the modal loader, and calls
+    apiAdmin_GetRoutingStatus(); on success renderRoutingStatus(), else toast+close.
+  PARAMS: - sessionId — SessionID; if omitted, taken from #certSessionId.
+  RETURNS: undefined (async).
+*/
 function checkRoutingStatus(sessionId) {
   if (!sessionId) {
     sessionId = document.getElementById('certSessionId').value.trim();
@@ -4386,6 +5207,23 @@ function checkRoutingStatus(sessionId) {
     .apiAdmin_GetRoutingStatus(sessionId);
 }
 
+/*
+  Function: renderRoutingStatus
+  LAYMAN: Fills the routing detail modal — application status, program/department,
+    DCOPS/TechServe destination emails (flagging any "NOT CONFIGURED"), linked DCS
+    status, ISM approval progress, Division-Head status, and shows or locks the
+    routing action panel with an explanation when routing isn't allowed.
+  TECHNICAL: Writes the many #routingDetail* fields from data; computes the ISM/DH
+    status text + badge classes; pre-selects the last destination radio; toggles
+    #routingDetailActionPanel vs #routingDetailLockedMsg from data.canRoute and sets
+    a human reason in #routingDetailLockedReason.
+  PARAMS: - data — routing status object from apiAdmin_GetRoutingStatus.
+  RETURNS: undefined.
+  STEPS
+    Step 1 — Fill app/program/department + destination email fields.
+    Step 2 — Render ISM + Division-Head status badges.
+    Step 3 — Pre-select last destination; show action panel or locked reason.
+*/
 function renderRoutingStatus(data) {
   document.getElementById('routingDetailContent').style.display = 'block';
 
@@ -4507,9 +5345,15 @@ function renderRoutingStatus(data) {
   }
 }
 
-/**
- * Modal-aware: confirm reroute from the routing detail modal.
- */
+/*
+  Function: confirmRerouteFromModal
+  LAYMAN: Validates the routing choice made in the detail modal (a destination is
+    picked and its email is configured) and then opens the final confirm dialog.
+  TECHNICAL: Reads the checked input[name=routingDetailDest]; blocks with a toast if
+    none, or if the chosen DCOPS/TechServe/BOTH email shows "NOT CONFIGURED". Fills
+    the #routingConfirm* labels and opens 'routingConfirmModal'.
+  PARAMS: (none — reads _routingSessionId + modal controls)  RETURNS: undefined.
+*/
 function confirmRerouteFromModal() {
   if (!_routingSessionId) {
     showToast('Please check an application status first.', 'info');
@@ -4550,9 +5394,15 @@ function confirmRerouteFromModal() {
   openModal('routingConfirmModal');
 }
 
-/**
- * Modal-aware: download certificate from the routing detail modal.
- */
+/*
+  Function: downloadCertificateFromModal
+  LAYMAN: Generates the Certificate of Approval PDF on the server and downloads it,
+    driven from the routing detail modal's download button (with a spinner).
+  TECHNICAL: Disables #btnDownloadCertModal, calls apiAdmin_DownloadCertificate;
+    on success base64-decodes to a Blob and triggers an <a download> click; restores
+    the button and toasts the outcome.
+  PARAMS: (none — reads _routingSessionId)  RETURNS: undefined (async).
+*/
 function downloadCertificateFromModal() {
   if (!_routingSessionId) {
     showToast('Please check an application status first.', 'info');
@@ -4603,10 +5453,16 @@ function downloadCertificateFromModal() {
     .apiAdmin_DownloadCertificate(_routingSessionId);
 }
 
-/**
- * Download the certificate PDF without sending an email.
- * Generates the PDF on the server and triggers a browser download.
- */
+/*
+  Function: downloadCertificate
+  LAYMAN: Downloads the Certificate of Approval PDF without sending any email. If the
+    detail modal is open it hands off to the modal-specific version.
+  TECHNICAL: If #routingDetailModal is active, delegates to
+    downloadCertificateFromModal(). Otherwise disables #btnDownloadCert, calls
+    apiAdmin_DownloadCertificate, base64-decodes to a Blob, triggers download, and
+    toasts the result.
+  PARAMS: (none — reads _routingSessionId)  RETURNS: undefined (async).
+*/
 function downloadCertificate() {
   // If modal is active, delegate to modal version
   if (document.getElementById('routingDetailModal').classList.contains('active')) {
@@ -4663,6 +5519,14 @@ function downloadCertificate() {
     .apiAdmin_DownloadCertificate(_routingSessionId);
 }
 
+/*
+  Function: getStatusBadgeClass
+  LAYMAN: Picks the badge color for an application status on the routing screen
+    (mixed-case strings, not uppercased like the dashboard variant).
+  TECHNICAL: Case-sensitive checks + substring fallbacks mapping status to a badge-*
+    class; defaults to badge-info.
+  PARAMS: - s — status string.  RETURNS: badge class string.
+*/
 function getStatusBadgeClass(s) {
   if (!s) return 'badge-neutral';
   if (s === 'Approved by ISM') return 'badge-success';
@@ -4676,6 +5540,15 @@ function getStatusBadgeClass(s) {
   return 'badge-info';
 }
 
+/*
+  Function: confirmReroute
+  LAYMAN: The legacy (inline, non-modal) version of confirming a reroute — kept for
+    the old inline panel; delegates to the modal version when the modal is open.
+  TECHNICAL: If #routingDetailModal is active, calls confirmRerouteFromModal(). Else
+    validates input[name=routingDest] + the inline DCOPS/TechServe config, fills the
+    #routingConfirm* labels, and opens 'routingConfirmModal'.
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function confirmReroute() {
   // Fallback for old inline — delegate to modal function if modal is active
   if (document.getElementById('routingDetailModal').classList.contains('active')) {
@@ -4722,6 +5595,16 @@ function confirmReroute() {
   openModal('routingConfirmModal');
 }
 
+/*
+  Function: executeReroute
+  LAYMAN: Actually performs the reroute — regenerates the certificate and re-sends it
+    to the chosen destination, then shows a success modal and refreshes the status.
+  TECHNICAL: Reads the chosen destination (modal radios first, inline fallback),
+    disables the send button with a spinner, and calls
+    apiAdmin_RerouteApprovedRequest(sessionId, destination); on success fills + opens
+    'routingResultModal' and re-runs checkRoutingStatus(); restores the button.
+  PARAMS: (none — reads _routingSessionId + destination radios)  RETURNS: undefined (async).
+*/
 function executeReroute() {
   closeModal('routingConfirmModal');
 
@@ -4781,6 +5664,15 @@ var _failoverAllFailed = [];
 var _failoverFiltered = [];
 var _failoverPendingResend = null;
 
+/*
+  Function: switchRoutingTab
+  LAYMAN: Switches between the Email Routing screen's three sub-tabs — Certificate,
+    Failover, and Queue — lazy-loading each tab's data the first time it's opened.
+  TECHNICAL: Hides all three panels + deactivates their buttons, then shows the
+    chosen one. Lazy-calls loadFailedEmails() / loadEmailQueue() when their cached
+    arrays are still empty.
+  PARAMS: - tab — 'cert' | 'failover' | 'queue'.  RETURNS: undefined.
+*/
 function switchRoutingTab(tab) {
   var certTab  = document.getElementById('routingCertTab');
   var failTab  = document.getElementById('routingFailoverTab');
@@ -4824,6 +5716,15 @@ var _queueFiltered = [];
 // ════════════════════════════
 // EMAIL QUEUE — Load & Render
 // ════════════════════════════
+/*
+  Function: loadEmailQueue
+  LAYMAN: Loads the email queue (every queued/sent/failed notification), renders the
+    summary + table, and updates the tab badge (red when there are failures).
+  TECHNICAL: Shows the loader, calls adminApi_getEmailQueue({}); on success stores
+    _queueAllEntries/_queueFiltered, runs renderQueueStats + renderQueueTable +
+    loadNotificationConfig, and updates #queueTabBadge from the failed count.
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
 function loadEmailQueue() {
   var loading = document.getElementById('queueLoading');
   var empty   = document.getElementById('queueEmpty');
@@ -4875,6 +5776,14 @@ function loadEmailQueue() {
 // ════════════════════════════
 // EMAIL QUEUE — Summary
 // ════════════════════════════
+/*
+  Function: renderQueueStats
+  LAYMAN: Fills the queue summary cards (pending, failed, cancelled, sent today, and
+    a health %) — the health number turns green/amber/red by threshold.
+  TECHNICAL: Calls adminApi_getQueueSummary({}) and writes the #qs* fields; color-codes
+    #qsHealth (>=80 success, >=50 warning, else danger). Failures are silent.
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
 function renderQueueStats() {
   google.script.run
     .withSuccessHandler(function(result) {
@@ -4898,6 +5807,13 @@ function renderQueueStats() {
 // ════════════════════════════
 // EMAIL QUEUE — Filter
 // ════════════════════════════
+/*
+  Function: filterQueueTable
+  LAYMAN: Filters the email queue table by recipient/session search, status, and type.
+  TECHNICAL: Reads #queueSearchInput/#queueStatusFilter/#queueTypeFilter, filters
+    _queueAllEntries into _queueFiltered (status via prefix match), then renderQueueTable().
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function filterQueueTable() {
   var q     = document.getElementById('queueSearchInput').value.toLowerCase().trim();
   var statusF = document.getElementById('queueStatusFilter').value.toLowerCase();
@@ -4915,6 +5831,13 @@ function filterQueueTable() {
 // ════════════════════════════
 // EMAIL QUEUE — Table
 // ════════════════════════════
+/*
+  Function: getQueueStatusBadgeClass
+  LAYMAN: Picks the badge color for an email-queue status (sent/pending/failed/cancelled).
+  TECHNICAL: Lowercases status and prefix-matches "email sent|pending|failed|cancelled"
+    to a badge-* class; defaults to badge-info.
+  PARAMS: - status — queue status string.  RETURNS: badge class string.
+*/
 function getQueueStatusBadgeClass(status) {
   var s = String(status || '').toLowerCase();
   if (s.indexOf('email sent') === 0)    return 'badge-success';
@@ -4924,6 +5847,15 @@ function getQueueStatusBadgeClass(status) {
   return 'badge-info';
 }
 
+/*
+  Function: renderQueueTable
+  LAYMAN: Draws the email queue table — session, recipient (plus the error line for
+    failures), type, status, attempts, time, and per-row Retry/Cancel/Pipeline actions.
+  TECHNICAL: Iterates _queueFiltered, building each <tr> with badge classes and inline
+    handlers (retryQueueItem only when failed, cancelQueueItem, viewPipeline); updates
+    #queueRowCount and the empty state.
+  PARAMS: (none — reads _queueFiltered)  RETURNS: undefined.
+*/
 function renderQueueTable() {
   var tableBody = document.getElementById('queueTableBody');
   var rowCount  = document.getElementById('queueRowCount');
@@ -4969,6 +5901,12 @@ function renderQueueTable() {
 // ════════════════════════════
 // EMAIL QUEUE — Actions
 // ════════════════════════════
+/*
+  Function: retryQueueItem
+  LAYMAN: Retries one failed queued email and reloads the queue.
+  TECHNICAL: Calls adminApi_retryQueuedEmail(queueId); toasts result + loadEmailQueue().
+  PARAMS: - queueId — the queue entry id.  RETURNS: undefined (async).
+*/
 function retryQueueItem(queueId) {
   if (!queueId) return;
   showToast('Retrying queue entry…', 'info');
@@ -4985,6 +5923,13 @@ function retryQueueItem(queueId) {
     .adminApi_retryQueuedEmail(queueId);
 }
 
+/*
+  Function: cancelQueueItem
+  LAYMAN: Cancels all queued emails of a given type for a session (after a confirm).
+  TECHNICAL: window.confirm guard, then adminApi_cancelQueuedEmails(sessionId, type);
+    toasts result + loadEmailQueue().
+  PARAMS: - sessionId — SessionID.  - type — email type to cancel.  RETURNS: undefined (async).
+*/
 function cancelQueueItem(sessionId, type) {
   if (!sessionId) return;
   if (!confirm('Cancel all queued ' + (type || '') + ' emails for session ' + sessionId + '?')) return;
@@ -5002,6 +5947,13 @@ function cancelQueueItem(sessionId, type) {
     .adminApi_cancelQueuedEmails(sessionId, type);
 }
 
+/*
+  Function: retryAllInSession
+  LAYMAN: Retries every failed email for one session at once (after a confirm).
+  TECHNICAL: window.confirm guard, then adminApi_retryAllForSession(sessionId,
+    'email failed'); toasts result + loadEmailQueue().
+  PARAMS: - sessionId — SessionID.  RETURNS: undefined (async).
+*/
 function retryAllInSession(sessionId) {
   if (!sessionId) return;
   if (!confirm('Retry ALL failed emails for session ' + sessionId + '?')) return;
@@ -5022,6 +5974,14 @@ function retryAllInSession(sessionId) {
 // ════════════════════════════
 // PIPELINE VIEW
 // ════════════════════════════
+/*
+  Function: viewPipeline
+  LAYMAN: Opens the full end-to-end pipeline modal for a session — every stage from
+    application through approvals, ISM, Division Head, emails, and audit trail.
+  TECHNICAL: Opens 'pipelineModal' with a spinner, calls adminApi_getPipelineView;
+    on success renderPipeline(), else shows an error state.
+  PARAMS: - sessionId — SessionID.  RETURNS: undefined (async).
+*/
 function viewPipeline(sessionId) {
   if (!sessionId) { showToast('Session ID is required.', 'info'); return; }
   document.getElementById('pipelineModalSubtitle').textContent = 'Session: ' + sessionId;
@@ -5045,6 +6005,19 @@ function viewPipeline(sessionId) {
     .adminApi_getPipelineView(sessionId);
 }
 
+/*
+  Function: renderPipeline
+  LAYMAN: Builds the pipeline modal body as a vertical flow of stages: the
+    application, each approver, each ISM member, the Division Head, an email log, and
+    the audit trail — each with a status icon (done/failed/active/pending).
+  TECHNICAL: Reads application/approvals/ismWorkflow/divHeadWorkflow/emailQueue/
+    auditTrail from data; uses inner stageIcon() and formatTs() helpers; maps each
+    decision to a class/icon and renders .pipeline-stage blocks (audit capped at 20).
+    Writes #pipelineModalBody.
+  PARAMS: - data — the pipeline payload.  RETURNS: undefined.
+
+  Inner: stageIcon(icon, cls) — one stage icon; formatTs(ts) — date or em dash.
+*/
 function renderPipeline(data) {
   if (!data) return;
   var app = data.application || {};
@@ -5162,6 +6135,15 @@ function renderPipeline(data) {
 // ════════════════════════════
 // NOTIFICATION CONFIG
 // ════════════════════════════
+/*
+  Function: loadNotificationConfig
+  LAYMAN: Loads the email notification settings (admin email + notify toggles) and
+    the list of configured admin members (INFOSEC-001/002) into the queue tab's config UI.
+  TECHNICAL: Two parallel calls: adminApi_getNotificationConfig() fills #cfgAdminEmail/
+    #cfgNotifyFail/#cfgNotifyReq; getConfigData() filters InfoSec rows for INFOSEC-001/002
+    and renders them as badges into #cfgAdminMembers (warns when none).
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
 function loadNotificationConfig() {
   // Load notification settings
   google.script.run
@@ -5208,6 +6190,13 @@ function loadNotificationConfig() {
     .getConfigData();
 }
 
+/*
+  Function: saveNotificationConfig
+  LAYMAN: Saves the email notification settings (admin email + the two notify toggles).
+  TECHNICAL: Collects #cfgAdminEmail/#cfgNotifyFail/#cfgNotifyReq and calls
+    adminApi_setNotificationConfig(config); toasts the result.
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
 function saveNotificationConfig() {
   var config = {
     adminEmail: document.getElementById('cfgAdminEmail').value.trim(),
@@ -5226,6 +6215,15 @@ function saveNotificationConfig() {
 // ════════════════════════════
 // EMAIL FAILOVER — Load & Filter
 // ════════════════════════════
+/*
+  Function: loadFailedEmails
+  LAYMAN: Loads failed email notifications from the last N days into the Failover tab,
+    so an admin can resend them.
+  TECHNICAL: Clamps sinceDays to 1..365, shows the loader, calls
+    adminGetFailedEmails(sinceDays); on success stores _failoverAllFailed and renders
+    via filterFailoverTable() + renderFailoverStats() (or empty/error states).
+  PARAMS: (none — reads #failoverSinceDays)  RETURNS: undefined (async).
+*/
 function loadFailedEmails() {
   var sinceDays = parseInt(document.getElementById('failoverSinceDays').value, 10) || 7;
   if (sinceDays < 1) sinceDays = 1;
@@ -5276,6 +6274,13 @@ function loadFailedEmails() {
     .adminGetFailedEmails(sinceDays);
 }
 
+/*
+  Function: filterFailoverTable
+  LAYMAN: Filters the failed-emails table by session search and email type.
+  TECHNICAL: Reads #failoverSessionSearch/#failoverTypeFilter, filters
+    _failoverAllFailed into _failoverFiltered, then renderFailoverTable().
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function filterFailoverTable() {
   var sessionQ = document.getElementById('failoverSessionSearch').value.toLowerCase().trim();
   var typeF = document.getElementById('failoverTypeFilter').value.toLowerCase();
@@ -5289,6 +6294,14 @@ function filterFailoverTable() {
   renderFailoverTable();
 }
 
+/*
+  Function: renderFailoverStats
+  LAYMAN: Renders the small stat cards above the failed-emails table (total failed,
+    plus a per-type count for approver/applicant/ism when present).
+  TECHNICAL: Counts _failoverAllFailed by type and writes stat-card HTML into
+    #failoverStatsBar.
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function renderFailoverStats() {
   var bar = document.getElementById('failoverStatsBar');
   var total = _failoverAllFailed.length;
@@ -5307,6 +6320,15 @@ function renderFailoverStats() {
   bar.innerHTML = html;
 }
 
+/*
+  Function: renderFailoverTable
+  LAYMAN: Draws the failed-emails table — session, recipient, type, the (truncated)
+    error, attempts, time, and Resend / Log action buttons.
+  TECHNICAL: Iterates _failoverFiltered, building each <tr> with a type badge and a
+    truncated error tooltip; wires openFailoverResend() and viewEmailLog(); updates
+    #failoverRowCount and the empty state.
+  PARAMS: (none — reads _failoverFiltered)  RETURNS: undefined.
+*/
 function renderFailoverTable() {
   var tableBody = document.getElementById('failoverTableBody');
   var rowCount = document.getElementById('failoverRowCount');
@@ -5352,6 +6374,14 @@ function renderFailoverTable() {
 // ════════════════════════════
 // EMAIL FAILOVER — View Email Log
 // ════════════════════════════
+/*
+  Function: viewEmailLog
+  LAYMAN: Opens the email-log modal for a session — every send/fail/resend entry —
+    and pre-fills a resend form if there are failures.
+  TECHNICAL: Opens 'failoverDetailModal' with a loader, calls adminGetEmailLog;
+    on success renderEmailLog(), else shows an inline error.
+  PARAMS: - sessionId — SessionID.  RETURNS: undefined (async).
+*/
 function viewEmailLog(sessionId) {
   if (!sessionId) { showToast('Session ID is required.', 'info'); return; }
 
@@ -5384,6 +6414,19 @@ function viewEmailLog(sessionId) {
     .adminGetEmailLog(sessionId);
 }
 
+/*
+  Function: renderEmailLog
+  LAYMAN: Renders the email-log modal body — a sent/failed/resend summary line, a
+    per-entry table, and (when failures exist) a pre-filled resend section.
+  TECHNICAL: Tallies sent/failed/resend from logs, writes #failoverDetailSummary and
+    the table (badge by action keyword, truncated error). If there are failed entries,
+    shows #failoverDetailResend pre-filled from the latest failure and binds
+    #btnFailoverResend.onclick to confirmResendFailover(sessionId).
+  PARAMS:
+    - sessionId — SessionID.
+    - logs — array of email log entries.
+  RETURNS: undefined.
+*/
 function renderEmailLog(sessionId, logs) {
   document.getElementById('failoverDetailContent').style.display = 'block';
 
@@ -5455,6 +6498,16 @@ function renderEmailLog(sessionId, logs) {
 // ════════════════════════════
 // EMAIL FAILOVER — Resend
 // ════════════════════════════
+/*
+  Function: openFailoverResend
+  LAYMAN: Opens the resend-confirmation dialog for a specific failed email (from the
+    table's Resend button), pre-filled with its session/recipient/type.
+  TECHNICAL: Writes the #failoverConfirm* labels, stores _failoverPendingResend, and
+    opens 'failoverConfirmModal'.
+  PARAMS:
+    - sessionId — SessionID.  - recipient — email address.  - type — email type.
+  RETURNS: undefined.
+*/
 function openFailoverResend(sessionId, recipient, type) {
   document.getElementById('failoverConfirmMessage').innerHTML =
     'Resend <strong>' + esc(type) + '</strong> email to <strong>' + esc(recipient) + '</strong>?';
@@ -5466,6 +6519,14 @@ function openFailoverResend(sessionId, recipient, type) {
   openModal('failoverConfirmModal');
 }
 
+/*
+  Function: confirmResendFailover
+  LAYMAN: Opens the resend-confirmation dialog for the resend form inside the email-log
+    modal (using whatever recipient/type the admin typed/picked).
+  TECHNICAL: Reads #failoverResendEmail/#failoverResendType (guards empty recipient),
+    fills the #failoverConfirm* labels, stores _failoverPendingResend, opens the modal.
+  PARAMS: - sessionId — SessionID.  RETURNS: undefined.
+*/
 function confirmResendFailover(sessionId) {
   var recipient = document.getElementById('failoverResendEmail').value.trim();
   var type = document.getElementById('failoverResendType').value;
@@ -5482,6 +6543,15 @@ function confirmResendFailover(sessionId) {
   openModal('failoverConfirmModal');
 }
 
+/*
+  Function: executeFailoverResend
+  LAYMAN: Actually resends the pending failed email, shows the result inline, and
+    refreshes the email log + failed list.
+  TECHNICAL: Consumes _failoverPendingResend, calls adminResendEmail(sessionId,
+    recipient, type); on success writes a success line and re-runs viewEmailLog +
+    loadFailedEmails; on failure shows the error. Closes the confirm modal first.
+  PARAMS: (none — reads _failoverPendingResend)  RETURNS: undefined (async).
+*/
 function executeFailoverResend() {
   if (!_failoverPendingResend) { closeModal('failoverConfirmModal'); return; }
 
@@ -5517,6 +6587,17 @@ function executeFailoverResend() {
 // ════════════════════════════
 // TOAST
 // ════════════════════════════
+/*
+  Function: showToast
+  LAYMAN: Pops a small transient notification in the corner (success/error/info/
+    warning) that auto-dismisses.
+  TECHNICAL: Builds a .toast-<type> with an icon + escaped message into
+    #toastContainer, then fades + removes it after ~4.2s.
+  PARAMS:
+    - message — text to show.
+    - type — 'success'|'error'|'info'|'warning' (default 'info').
+  RETURNS: undefined.
+*/
 function showToast(message, type) {
   type = type || 'info';
   var icons = {success:'ic-check',error:'ic-alert',info:'ic-info',warning:'ic-alert'};
@@ -5540,13 +6621,33 @@ function showToast(message, type) {
 var settingsLoaded = false;
 var settingsLoading = false;
 
+/*
+  Function: disableSettingsFields
+  LAYMAN: Puts the Settings screen back into read-only mode (fields locked, only the
+    Edit button visible).
+  TECHNICAL: Disables all #settingsContent inputs; shows #btnEditSettings, hides
+    #btnSaveSettings/#btnCancelEdit.
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function disableSettingsFields() {
   document.querySelectorAll('#settingsContent input').forEach(function(i) { i.disabled = true; });
   document.getElementById('btnEditSettings').style.display = 'inline-flex';
   document.getElementById('btnSaveSettings').style.display = 'none';
   document.getElementById('btnCancelEdit').style.display = 'none';
 }
+/*
+  Function: requestEditSettings
+  LAYMAN: Asks for confirmation before letting the admin edit system settings.
+  TECHNICAL: Opens 'settingsEditModal'.  PARAMS: (none)  RETURNS: undefined.
+*/
 function requestEditSettings() { openModal('settingsEditModal'); }
+/*
+  Function: confirmEditSettings
+  LAYMAN: Unlocks the Settings fields for editing after the confirmation.
+  TECHNICAL: Closes the confirm modal, enables #settingsContent inputs, hides Edit
+    and shows Save/Cancel.
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function confirmEditSettings() {
   closeModal('settingsEditModal');
   document.querySelectorAll('#settingsContent input').forEach(function(i) { i.disabled = false; });
@@ -5554,11 +6655,26 @@ function confirmEditSettings() {
   document.getElementById('btnSaveSettings').style.display = 'inline-flex';
   document.getElementById('btnCancelEdit').style.display = 'inline-flex';
 }
+/*
+  Function: cancelEditSettings
+  LAYMAN: Cancels editing — re-locks the fields and reloads the saved values.
+  TECHNICAL: disableSettingsFields() then loadSettings(true) to discard edits.
+  PARAMS: (none)  RETURNS: undefined.
+*/
 function cancelEditSettings() {
   disableSettingsFields();
   loadSettings(true); // reset values
 }
 
+/*
+  Function: loadSettings
+  LAYMAN: Loads the system settings into the Settings screen — the template/link
+    rows and the InfoSec member name/email rows — and starts read-only.
+  TECHNICAL: Caches via settingsLoaded/settingsLoading (force bypasses). Calls
+    getConfigData(); on success fills #cfg-<key> inputs from result.sys and
+    #info-name-/#info-email-<MemberID> from result.info, then disableSettingsFields().
+  PARAMS: - force — boolean; reload even if already loaded.  RETURNS: undefined (async).
+*/
 function loadSettings(force) {
   if ((settingsLoaded || settingsLoading) && !force) return;
   settingsLoading = true;
@@ -5583,6 +6699,16 @@ function loadSettings(force) {
     .getConfigData();
 }
 
+/*
+  Function: saveSettings
+  LAYMAN: Saves the Settings screen — the template/T&C links (incl. OJT NDA) and the
+    InfoSec/DCOPS/TechServe member name+email rows — then re-locks the form.
+  TECHNICAL: Collects sysUpdates from the LINK_* #cfg-<key> inputs and infoUpdates
+    from the INFOSEC/DCOPS/TECHSERVE #info-name-/#info-email- inputs, then calls
+    saveConfigData(sysUpdates, infoUpdates); manages the Save button spinner and toasts.
+    NOTE: these keys are the cross-app contract shared with DCS/PIA — do not rename.
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
 function saveSettings() {
   var sysUpdates = {};
   ['LINK_NDA_TEMPLATE', 'LINK_DPA_TEMPLATE', 'LINK_DSA_TEMPLATE', 'LINK_TC_PAGE', 'LINK_OJT_NDA_TEMPLATE'].forEach(function(k) {

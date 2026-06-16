@@ -1,4 +1,93 @@
 // ============================================================
+//  Code.js  (DCS / Privacy Impact Assessment — Phase 1 backend)
+// ============================================================
+/*
+  [ OUTLINE ]
+  FILE: Code.js
+  PURPOSE (Layman): This is the server brain for Phase 1 of Megaworld's data-access
+    request pipeline (the "DCS" form). It accepts a request, saves any attached NDA/DPA/DSA
+    documents into a private Drive vault, records the request into the shared Google Sheet
+    database, autosaves drafts while the user types, scans each request for suspicious
+    patterns, emails the requester a "Proceed to Phase 2" link, and tells the Phase 2 (PIA)
+    app whether a given user is cleared to continue. The employee never touches the database
+    or the document vault directly — this script does it all on the developer's authority.
+  TECHNICAL: Google Apps Script web app backend (server tier of a 3-phase system that shares
+    ONE spreadsheet as its only integration point). Key patterns: a per-execution in-memory
+    CACHE for Script Properties and opened Spreadsheets; LockService write locks (with
+    operation-specific timeouts) around all multi-step DB mutations; defense-in-depth
+    (domain + field + email re-validation server-side, mirroring the frontend); Sheets-as-DB
+    accessed via TextFinder + batched getRange/getValues instead of full-sheet loads;
+    secrets in Script Properties (DB_ID, ADMIN_FOLDER_ID, HMAC_SECRET, PIA_APP_URL, DOMAIN).
+    Status column on Data_Collection drives the Phase 2 gate (PENDING / READY_FOR_PIA /
+    COMPLETE / REJECTED / RETURNED). Execute-as: Me (least privilege / identity isolation);
+    Access: anyone in the domain.
+
+  CATEGORY: CONFIGURATION & HELPERS
+    - initializePropertyCache_()          Loads all Script Properties into CACHE once per run.
+    - getProp_(key)                       Returns a Script Property or throws if unset.
+    - getCachedSpreadsheet_(id)           Opens/caches a Spreadsheet by ID.
+    - apiGetSystemConfig()                Reads System_Configuration sheet + DOMAIN into a config map.
+    - isAuthorizedDomain(userEmail)       True if the email belongs to the corporate domain.
+    - isValidEmail(email)                 RFC-ish email format/length check.
+    - getStyledHtmlWrapper(header, body)  Wraps content in the branded HTML error/page shell.
+
+  CATEGORY: ENTRY POINTS
+    - doGet(e)                            Serves the DCS frontend (after domain auth) or a denial page.
+    - doPost(e)                           Domain-gated POST handler; returns an "invalid request" page.
+    - getUserIdentity()                   Returns the active user's email for frontend prefill.
+
+  CATEGORY: DRAFT SYSTEM
+    - apiDiscardDrafts()                  Clears all of the user's DCS drafts (fresh start).
+    - cleanupDraftsForUser_(sid,sheet,em) Lock-free draft row deletion helper.
+    - apiMarkDraftComplete(sessionId)     Locked wrapper around cleanupDraftsForUser_.
+    - apiGenerateNewSessionId()           Allocates a sequential DCS-XXXXXX session ID.
+    - apiSaveDraft(sessionId, stateData)  Upserts an autosaved draft (with limits/TTL).
+    - apiRestoreDraft(sessionId)          Restores a draft by session ID.
+    - apiListUserDrafts()                 Lists the user's non-expired, non-revision drafts.
+    - apiLoadDraft(draftId)               Loads one draft by draft ID (ownership-checked).
+    - apiDeleteDraft(draftId)             Deletes a draft by draft ID or session ID.
+
+  CATEGORY: FILE UPLOAD
+    - uploadProxy(b64,name,type,mime,req) Validates + decodes a base64 file into the Drive vault.
+    - trashOldDriveFiles_(fileList)       Trashes superseded Drive files on revision.
+
+  CATEGORY: SUBMISSION
+    - submitDCS(payload, sessionId)       Main submit handler: validate→upload→write row→email.
+    - notifyDcsRequester_(to, req, url)   Sends the styled "Proceed to Phase 2" confirmation email.
+    - generatePhase2Url_(reqId)           Builds the PIA URL with ?parentID=reqId.
+    - generateDCSReqId_()                 Allocates a sequential DCS-XXXXXX ReqID.
+
+  CATEGORY: RISK AUDIT
+    - analyzeDCSRisk(dcsData, email)      Flags conflict-of-interest / duplicate-role / thin data.
+    - logDCSAuditTrail(sid, action, flags) Appends one audit row to Risk_Audit.
+    - logDCSAuditTrailBatch_(entries)     Appends many audit rows in one write.
+
+  CATEGORY: REQUEST DATA & APPROVERS
+    - getRequestDataBatch_(ss,req,piaSid) Loads PIA record + all approval-workflow rows in one pass.
+    - getPIARecordByDCSId_(ss, dcsReqId)  Finds the PIA record linked to a DCS request.
+    - getApproversList_(ss,req,sid,meta)  Builds the DCS approver list from metadata + workflow.
+    - getISMApproversList_(ss, piaSid)    Builds the InfoSec (ISM) approver list.
+    - getDivHeadApproversList_(ss, piaSid) Builds the Division Head approver list.
+    - apiGetRequestData(reqId)            Full request payload (form + files + timelines + flags).
+    - apiListUserRequests()               Lists the current user's DCS requests (newest first).
+    - apiGetReturnedApplication(reqId)    Validates + returns a request eligible for edit/resubmit.
+
+  CATEGORY: STATUS & GATEWAY
+    - apiGetStatus()                      Status of the user's most recent DCS request.
+    - getLatestDCSRecord_(sheet, email)   Returns the user's most recent Data_Collection row.
+    - getGatewayRecord(userEmail)         PIA handshake: is this user cleared for Phase 2?
+
+  CATEGORY: INTEGRITY
+    - computeIntegrityHash(dcsId, piaSid) SHA-256 binding DCS ReqID to PIA SessionID.
+
+  CATEGORY: ADMIN & SETUP
+    - setupDataCollectionSheet()          One-time creation of core sheets + headers.
+    - adminSetStatus(reqId, newStatus)    Manual status override (editor use).
+    - purgeExpiredDrafts()                Daily-trigger purge of expired draft rows.
+    - forceAuthorize()                    Dummy run to trigger the OAuth consent prompt.
+*/
+
+// ============================================================
 //  DATA COLLECTION SYSTEM (DCS) — Code.gs
 //  Phase 1 of the Risk Assessment & Routing System (RARS)
 //
@@ -52,10 +141,16 @@ const LOCK_TIMEOUTS = {
   CLEANUP: 30000       // 30s for cleanup operations
 };
 
-/**
- * Initializes property cache on first call. Run once per execution.
- * @private
- */
+/*
+  Function: initializePropertyCache_
+  LAYMAN:    On the first call of an execution it grabs every Script Property in one shot and
+             stashes them in memory, so later code never has to ask Apps Script for them again.
+  TECHNICAL: Idempotent — returns immediately if CACHE.initialized is already true. Copies
+             PropertiesService.getScriptProperties().getProperties() into CACHE.properties.
+             Failures are swallowed (logged as a warning) so a missing-cache never hard-crashes.
+  PARAMS:    (none)
+  RETURNS:   undefined (side effect: populates CACHE.properties and sets CACHE.initialized).
+*/
 function initializePropertyCache_() {
   if (CACHE.initialized) return;
   try {
@@ -67,12 +162,16 @@ function initializePropertyCache_() {
   }
 }
 
-/**
- * Returns a named script property or throws a descriptive error.
- * Uses cache to avoid repeated PropertiesService calls.
- * @param {string} key
- * @returns {string}
- */
+/*
+  Function: getProp_
+  LAYMAN:    Hands back the value of a named secret/config (like DB_ID or DOMAIN). If that key
+             was never set up in Project Properties, it throws a clear error instead of failing weirdly.
+  TECHNICAL: Lazily initializes the property cache, then reads from CACHE.properties. Any
+             falsy value (missing/empty) throws a descriptive Error naming the key.
+  PARAMS:
+    - key — Script Property name (e.g. 'DB_ID', 'ADMIN_FOLDER_ID', 'PIA_APP_URL', 'DOMAIN').
+  RETURNS:   The string value, or throws Error if unset.
+*/
 function getProp_(key) {
   initializePropertyCache_();
   const val = CACHE.properties[key];
@@ -80,12 +179,15 @@ function getProp_(key) {
   return val;
 }
 
-/**
- * Gets or caches a spreadsheet by ID to avoid redundant openById() calls.
- * @param {string} spreadsheetId
- * @returns {Spreadsheet}
- * @private
- */
+/*
+  Function: getCachedSpreadsheet_
+  LAYMAN:    Opens the database spreadsheet — but only the first time. After that it reuses the
+             already-open handle, so we don't pay the cost of re-opening it again and again.
+  TECHNICAL: Memoizes SpreadsheetApp.openById() results in CACHE.spreadsheets keyed by ID.
+  PARAMS:
+    - spreadsheetId — the Spreadsheet ID to open (usually getProp_('DB_ID')).
+  RETURNS:   A SpreadsheetApp Spreadsheet object (cached for the rest of the execution).
+*/
 function getCachedSpreadsheet_(spreadsheetId) {
   if (!CACHE.spreadsheets[spreadsheetId]) {
     CACHE.spreadsheets[spreadsheetId] = SpreadsheetApp.openById(spreadsheetId);
@@ -93,17 +195,27 @@ function getCachedSpreadsheet_(spreadsheetId) {
   return CACHE.spreadsheets[spreadsheetId];
 }
 
-/**
- * Fetches key-value pairs from the System_Configuration sheet.
- * OPTIMIZED: Uses cached spreadsheet access.
- * @returns {{ success: boolean, config?: Object, error?: string }}
- */
+/*
+  Function: apiGetSystemConfig
+  LAYMAN:    Reads the admin-managed settings sheet (template download links, T&C page URL, etc.)
+             and returns them to the frontend as one tidy key→value bag, with the corporate
+             DOMAIN folded in so the UI has a single source of truth.
+  TECHNICAL: Reads every row of System_Configuration (col A = key, col B = value), trims and
+             skips blank keys, then merges the DOMAIN Script Property into the map. Missing
+             sheet → returns empty config (still success). Caller is the frontend on load.
+  PARAMS:    (none)
+  RETURNS:   { success:true, config:{KEY:value,...,DOMAIN} } on success;
+             { success:false, error } on failure.
+  EXAMPLE:   apiGetSystemConfig() -> { success:true, config:{ LINK_NDA_TEMPLATE:'https://…', DOMAIN:'megaworld.com' } }
+*/
 function apiGetSystemConfig() {
   try {
+    /* Step 1 — Open DB and locate the config sheet; absent sheet is non-fatal (empty config). */
     const ss = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName('System_Configuration');
     if (!sheet) return { success: true, config: {} };
 
+    /* Step 2 — Walk every non-header row, building key→value pairs (blank keys skipped). */
     const data = sheet.getDataRange().getValues();
     const config = {};
     // Start from i=1 to skip headers
@@ -115,6 +227,7 @@ function apiGetSystemConfig() {
       }
     }
 
+    /* Step 3 — Inject DOMAIN from Script Properties (blank if unset) so the UI need not guess. */
     // Merge the DOMAIN script property into the config so the frontend
     // has a single source of truth for the corporate domain.
     try {
@@ -138,11 +251,19 @@ function apiGetSystemConfig() {
 // HELPER FUNCTIONS — Authorization, Input Sanitization, HTML Styling
 // ============================================================
 
-/**
- * Checks if the user's email belongs to an authorized corporate domain.
- * @param {string} userEmail
- * @returns {boolean}
- */
+/*
+  Function: isAuthorizedDomain
+  LAYMAN:    The bouncer at the door — returns true only if the signed-in email ends in the
+             company domain. Used everywhere we must keep outsiders out.
+  TECHNICAL: Honors the ENABLED_DOMAIN_CHECK kill-switch (true in prod). Compares the
+             lowercased email suffix against '@' + DOMAIN. Fail-secure: a missing DOMAIN
+             property or a falsy email returns false rather than allowing access.
+  PARAMS:
+    - userEmail — the email to validate (typically Session.getActiveUser().getEmail()).
+  RETURNS:   true if authorized, false otherwise (also false on missing config).
+  EXAMPLE:   isAuthorizedDomain('jane@megaworld.com') -> true
+             isAuthorizedDomain('hax@gmail.com')      -> false
+*/
 
 const ENABLED_DOMAIN_CHECK = true;
 function isAuthorizedDomain(userEmail) {
@@ -156,18 +277,34 @@ function isAuthorizedDomain(userEmail) {
     return false;
   }
 }
-/**
- * HIGH: Email validation helper (RFC-ish compliant)
- * OPTIMIZED: Uses precompiled regex constant.
- * @param {string} email
- * @returns {boolean}
- */
+/*
+  Function: isValidEmail
+  LAYMAN:    Quick sanity check that a string actually looks like an email and isn't absurdly long.
+  TECHNICAL: Guards non-strings, trims, tests against the precompiled EMAIL_VALIDATE_REGEX, and
+             caps length at 180 chars. Not a full RFC parser — a pragmatic format gate.
+  PARAMS:
+    - email — candidate email string.
+  RETURNS:   true if it passes the regex and length check, false otherwise.
+*/
 function isValidEmail(email) {
   if (!email || typeof email !== 'string') return false;
   const trimmed = String(email).trim();
   return EMAIL_VALIDATE_REGEX.test(trimmed) && trimmed.length <= 180;
 }
 
+/*
+  Function: getStyledHtmlWrapper
+  LAYMAN:    Takes a title block and some body HTML and wraps them in the branded Megaworld
+             page shell (logo, fonts, navy styling). Used for the access-denied / error pages
+             that doGet and doPost serve.
+  TECHNICAL: Returns a complete standalone HTML document string (DM Sans, CSS variables, card
+             layout). Pure string builder — no sheet/Drive access. Content is interpolated
+             as-is, so callers must pass trusted/escaped markup.
+  PARAMS:
+    - header  — HTML for the page header (e.g. a badge + <h1>).
+    - content — HTML for the card body.
+  RETURNS:   A full HTML document string ready for HtmlService.createHtmlOutput().
+*/
 function getStyledHtmlWrapper(header, content) {
   return `
     <!DOCTYPE html>
@@ -357,13 +494,22 @@ function getStyledHtmlWrapper(header, content) {
 // 1. ENTRY POINTS — Web App Handlers
 // ============================================================
 
-/**
- * doGet — Serves DCS frontend or handles email action callbacks.
- * Implements PIA-style pattern with domain authorization and styled errors.
- */
+/*
+  Function: doGet
+  LAYMAN:    The front door of the web app. When someone opens the DCS URL, this decides what
+             they see: an "Access Denied" page if they're not on a company account, otherwise
+             the actual DCS application (index.html).
+  TECHNICAL: GAS HTTP GET entry point. Re-checks isAuthorizedDomain before serving anything
+             (defense-in-depth layer 1). On failure returns a styled denial page; on success
+             serves index.html with SAMEORIGIN framing when supported.
+  PARAMS:
+    - e — the GAS event object (query params; unused here beyond being the handler signature).
+  RETURNS:   An HtmlOutput — either the denial page or the DCS frontend.
+*/
 function doGet(e) {
   const userEmail = Session.getActiveUser().getEmail();
-  
+
+  /* Step 1 — Gate by domain; bounce non-corporate accounts with a styled denial page. */
   // Domain authorization check
   if (!isAuthorizedDomain(userEmail)) {
     const header = `<span class="step-badge" style="background:var(--danger); color:var(--danger-text); border-color:rgba(220,38,38,0.2);">Strictly Access Denied</span><h1>Restricted</h1>`;
@@ -376,6 +522,7 @@ function doGet(e) {
     .setTitle('Access Denied');
   }
 
+  /* Step 2 — Authorized: serve the DCS frontend with SAMEORIGIN framing where available. */
   // Serve main DCS frontend
   const output = HtmlService.createHtmlOutputFromFile('index')
     .setTitle('Data Collection System (DCS)');
@@ -387,10 +534,17 @@ function doGet(e) {
   return output;
 }
 
-/**
- * doPost — Handles form submissions (approval decisions with comments).
- * Implements PIA-style POST handler pattern for security.
- */
+/*
+  Function: doPost
+  LAYMAN:    Handles HTTP POSTs to the web app. Like doGet it first blocks non-company accounts,
+             but DCS has no real POST workflow, so an authorized POST just gets an "Invalid
+             Request" page (the actual form submits go through google.script.run → submitDCS).
+  TECHNICAL: GAS HTTP POST entry point. Re-validates domain (denial page on failure), then
+             returns a generic "missing parameters" page — kept for the PIA-style security shape.
+  PARAMS:
+    - e — the GAS POST event object (parameters; not consumed beyond the signature).
+  RETURNS:   An HtmlOutput — denial page or the invalid-request page.
+*/
 function doPost(e) {
   const userEmail = Session.getActiveUser().getEmail();
   
@@ -416,11 +570,13 @@ function doPost(e) {
 
 
 
-/**
- * Returns the active user's email.
- * Called by the frontend on load to pre-fill the identity context.
- * @returns {{ email: string }}
- */
+/*
+  Function: getUserIdentity
+  LAYMAN:    Tells the frontend who is logged in (their email), so the form can prefill identity.
+  TECHNICAL: Thin wrapper over Session.getActiveUser().getEmail(). Called via google.script.run on load.
+  PARAMS:    (none)
+  RETURNS:   { email: <active user email string> }.
+*/
 function getUserIdentity() {
   return { email: Session.getActiveUser().getEmail() };
 }
@@ -439,10 +595,15 @@ const DRAFTS_SHEET_NAME   = 'Drafts';
 const DCS_DRAFT_TYPE      = 'DCS';
 const DRAFT_TTL_DAYS      = 7;
 
-/**
- * Explicitly clears all DCS drafts (legacy and session-based) for the current user.
- * Called when starting a fresh application to ensure a clean slate.
- */
+/*
+  Function: apiDiscardDrafts
+  LAYMAN:    "Throw away all my saved drafts." Called when the user wants a clean slate to start
+             a brand-new request, so no half-finished autosaves linger.
+  TECHNICAL: Delegates to apiMarkDraftComplete() with no sessionId (clears all of the user's DCS
+             drafts), then best-effort logs the discard to the audit trail.
+  PARAMS:    (none)
+  RETURNS:   The { success, error? } object from apiMarkDraftComplete().
+*/
 function apiDiscardDrafts() {
   const result = apiMarkDraftComplete();
   if (result.success) {
@@ -451,19 +612,20 @@ function apiDiscardDrafts() {
   return result;
 }
 
-/**
- * Unified completion API for cleaning up draft data.
- * Consolidates legacy and session-based cleanup logic.
- * @param {string} [sessionId] - Optional; if provided, clears specific session. Otherwise clears all DCS drafts for user.
- */
-/**
- * Internal draft cleanup — does NOT acquire its own lock.
- * Safe to call from within an already-locked context (e.g. submitDCS).
- * @param {string} sessionId
- * @param {Sheet} sheet
- * @param {string} email
- * @private
- */
+/*
+  Function: cleanupDraftsForUser_
+  LAYMAN:    Deletes a user's DCS draft rows from the Drafts sheet — either one specific session's
+             draft, or all of them. This is the lock-free engine; callers that need a lock wrap it.
+  TECHNICAL: Does NOT acquire its own LockService lock, so it is safe to call from an already-locked
+             context (e.g. submitDCS). Uses TextFinder on the email column (B) and optionally the
+             session column (C), filters to rows of type DCS, dedupes row numbers, then deletes
+             bottom-up (descending) to avoid row-shift corruption.
+  PARAMS:
+    - sessionId — specific session to clear; if undefined/'' all of the user's DCS drafts are cleared.
+    - sheet     — the Drafts Sheet object.
+    - email     — the owning user's email (case-insensitive match).
+  RETURNS:   undefined (side effect: deletes matching draft rows).
+*/
 function cleanupDraftsForUser_(sessionId, sheet, email) {
   const sessionFinder = sessionId 
     ? sheet.getRange('C:C').createTextFinder(sessionId).matchEntireCell(true).findAll()
@@ -498,15 +660,29 @@ function cleanupDraftsForUser_(sessionId, sheet, email) {
   rowsToDelete.sort((a, b) => b - a).forEach(r => sheet.deleteRow(r));
 }
 
+/*
+  Function: apiMarkDraftComplete
+  LAYMAN:    The locked, safe way to delete a user's draft(s) — used when a draft is finished or
+             discarded. Grabs a write lock so two simultaneous calls can't trip over each other.
+  TECHNICAL: Acquires a script lock (DRAFT timeout), resolves the active user + Drafts sheet, then
+             calls the lock-free cleanupDraftsForUser_. Logs completion best-effort; always
+             releases the lock in finally.
+  PARAMS:
+    - sessionId — optional; specific session to clear, else all the user's DCS drafts.
+  RETURNS:   { success:true } on success; { success:false, error } on failure.
+*/
 function apiMarkDraftComplete(sessionId) {
+  /* Step 1 — Acquire the draft write lock to serialize cleanup. */
   const lock = LockService.getScriptLock();
   lock.waitLock(LOCK_TIMEOUTS.DRAFT);
   try {
+    /* Step 2 — Resolve user + Drafts sheet (missing sheet is a hard error). */
     const email = Session.getActiveUser().getEmail();
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName(DRAFTS_SHEET_NAME);
     if (!sheet) return { success: false, error: 'Drafts sheet not found' };
 
+    /* Step 3 — Delete the matching draft row(s) via the lock-free helper. */
     cleanupDraftsForUser_(sessionId, sheet, email);
     
     try { logDCSAuditTrail(sessionId || 'all', 'DCS Draft Completed', false); } catch (e) {}
@@ -526,11 +702,15 @@ function apiMarkDraftComplete(sessionId) {
 
 const DCS_SESSION_ID_COUNTER_PROP = 'DCS_COUNTER';
 
-/**
- * Generates a new DCS session ID.
- * Format: DCS-XXXXXX (e.g., DCS-000001)
- * @returns {string}
- */
+/*
+  Function: apiGenerateNewSessionId
+  LAYMAN:    Hands the frontend a fresh, unique request ID (like DCS-000042) the moment a new
+             application begins, so autosaves and the eventual submission share one identifier.
+  TECHNICAL: Locks (SESSION timeout), atomically increments the DCS_COUNTER Script Property, and
+             formats it as 'DCS-' + 6-digit zero-padded number. Logs generation best-effort.
+  PARAMS:    (none)
+  RETURNS:   The new session-ID string (e.g. 'DCS-000001').
+*/
 function apiGenerateNewSessionId() {
   const lock = LockService.getScriptLock();
   lock.waitLock(LOCK_TIMEOUTS.SESSION);
@@ -548,30 +728,41 @@ function apiGenerateNewSessionId() {
   }
 }
 
-/**
- * Saves a DCS draft with session ID.
- * Upserts into Drafts sheet.
- * OPTIMIZED: Uses TextFinder instead of getDataRange() to avoid loading entire sheet.
- * @param {string} sessionId
- * @param {Object} stateData
- * @returns {{ success: boolean, draftId: string, error?: string }}
- */
+/*
+  Function: apiSaveDraft
+  LAYMAN:    Autosaves the in-progress form. If a draft for this session already exists it overwrites
+             it; otherwise it creates a new one (up to 5 per user). It refuses payloads that are too
+             big — drafts store text only, never base64 files.
+  TECHNICAL: Locked (DRAFT timeout) upsert into the Drafts sheet. Serializes stateData to JSON and
+             rejects > 50,000 chars. Uses TextFinder (session col C, email col B) instead of full-sheet
+             loads to find an existing owned DCS row, counts the user's live (non-expired) DCS drafts,
+             and enforces a max of 5 only on new inserts. Updates cols E-G (state, savedAt, expiresAt)
+             on update, or appends a UUID-keyed row on insert. TTL = DRAFT_TTL_DAYS from now.
+  PARAMS:
+    - sessionId — the DCS session ID this draft belongs to.
+    - stateData — the form state object to persist (text only).
+  RETURNS:   { success:true, draftId } on success; { success:false, error } on size/limit/error.
+  EXAMPLE:   apiSaveDraft('DCS-000007', { dcs:{ name:'Payroll access' } })
+               -> { success:true, draftId:'a1b2-…' }
+*/
 function apiSaveDraft(sessionId, stateData) {
   const lock = LockService.getScriptLock();
   lock.waitLock(LOCK_TIMEOUTS.DRAFT);
   
   try {
+    /* Step 1 — Resolve user/sheet, compute TTL, serialize state, and reject oversized payloads. */
     const email = Session.getActiveUser().getEmail();
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName(DRAFTS_SHEET_NAME);
     const now   = new Date();
     const expires = new Date(now.getTime() + DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000);
     const stateStr = JSON.stringify(stateData);
-    
+
     if (stateStr.length > 50000) {
       return { success: false, error: 'Draft size exceeds storage limit (50,000 characters). Cannot store large base64 files in StateJSON.' };
     }
     
+    /* Step 2 — Find an existing draft row owned by this user for this session (update target). */
     // OPTIMIZED: Use TextFinder to locate existing session instead of getDataRange()
     let existingRow = -1;
     let existingDraftId = '';
@@ -592,6 +783,7 @@ function apiSaveDraft(sessionId, stateData) {
       }
     }
 
+    /* Step 3 — Count the user's live (non-expired) DCS drafts to enforce the 5-draft cap. */
     // Count user's DCS drafts for limit check (OPTIMIZED: uses filtered query)
     let userDraftCount = 0;
     const emailFinder = sheet.getRange('B:B')
@@ -614,6 +806,7 @@ function apiSaveDraft(sessionId, stateData) {
       return { success: false, error: 'Maximum limit of 5 drafts reached. Please delete or submit existing drafts.' };
     }
     
+    /* Step 4 — Upsert: overwrite the existing row's state/timestamps, or append a new UUID-keyed row. */
     let draftId;
     if (existingRow > 0) {
       // UPDATE existing draft
@@ -642,12 +835,18 @@ function apiSaveDraft(sessionId, stateData) {
   }
 }
 
-/**
- * Restores a DCS draft by session ID.
- * OPTIMIZED: Reduced cell access calls in loop; only parse JSON for valid drafts.
- * @param {string} sessionId
- * @returns {{ found: boolean, state: Object|null, error?: string }}
- */
+/*
+  Function: apiRestoreDraft
+  LAYMAN:    Brings back a saved draft for a given session so the user can keep editing. Expired
+             drafts are skipped (and quietly deleted). Note: files are never restored — only text.
+  TECHNICAL: TextFinder on session col C; for each match owned by the user with type DCS, checks
+             expiry (deletes + skips if past), else JSON-parses the state and returns it. Logs the
+             restore best-effort. Read-only except for purging expired rows it encounters.
+  PARAMS:
+    - sessionId — the DCS session ID whose draft to restore.
+  RETURNS:   { found:true, state } if a live draft is found; { found:false, state:null } otherwise;
+             { found:false, state:null, error } on exception.
+*/
 function apiRestoreDraft(sessionId) {
   try {
     const email = Session.getActiveUser().getEmail();
@@ -668,12 +867,13 @@ function apiRestoreDraft(sessionId) {
       if (rowType !== DCS_DRAFT_TYPE) continue;
       if (String(rowEmail).toLowerCase() !== email.toLowerCase()) continue;
       
+      /* Step — Drop expired drafts on sight; otherwise parse and return the saved state. */
       const expiresAt = new Date(rowExpiresAt);
       if (rowExpiresAt && expiresAt < now) {
         sheet.deleteRow(row);
         continue;
       }
-      
+
       const parsed = rowState ? JSON.parse(rowState) : null;
       try { logDCSAuditTrail(sessionId, 'DCS Draft Restored', false); } catch (e) {}
       return { found: true, state: parsed };
@@ -686,11 +886,17 @@ function apiRestoreDraft(sessionId) {
   }
 }
 
-/**
- * Lists all DCS drafts for the current user.
- * OPTIMIZED: Uses TextFinder to filter by email; reduces getDataRange() scope and lazy-parses JSON only when needed.
- * @returns {{ drafts: Array }}
- */
+/*
+  Function: apiListUserDrafts
+  LAYMAN:    Builds the "Resume a saved draft" list for the current user — each entry shows a name
+             and when it was saved. Expired drafts are pruned, and revision-mode drafts are hidden.
+  TECHNICAL: TextFinder on email col B; for each owned DCS row, expired rows are queued for batch
+             deletion, otherwise JSON is lazily parsed. Skips drafts with state.isEditing (revision
+             mode). Expired rows are deleted bottom-up after the scan to avoid row shift.
+  PARAMS:    (none)
+  RETURNS:   { drafts:[{ draftId, sessionId, savedAt(ISO|null), name }, ...] };
+             { drafts:[], error } on exception.
+*/
 function apiListUserDrafts() {
   try {
     const email = Session.getActiveUser().getEmail();
@@ -744,12 +950,18 @@ function apiListUserDrafts() {
   }
 }
 
-/**
- * Loads a specific draft by draft ID.
- * OPTIMIZED: Batch cell access to reduce API calls from 4 to 1.
- * @param {string} draftId
- * @returns {{ found: boolean, sessionId: string, state: Object|null, error?: string }}
- */
+/*
+  Function: apiLoadDraft
+  LAYMAN:    Opens one specific saved draft (chosen from the list) by its draft ID, but only if it
+             belongs to the current user and hasn't expired.
+  TECHNICAL: TextFinder.findNext on draft-ID col A. Ownership-checks col B (case-insensitive);
+             mismatch returns an 'Unauthorized access' error. Expired rows are deleted and reported
+             as not found. Otherwise JSON-parses and returns the state plus its sessionId.
+  PARAMS:
+    - draftId — the draft's UUID (column A).
+  RETURNS:   { found:true, sessionId, state } if owned and live;
+             { found:false, sessionId:'', state:null, error? } otherwise.
+*/
 function apiLoadDraft(draftId) {
   try {
     const ss = getCachedSpreadsheet_(getProp_('DB_ID'));
@@ -787,12 +999,17 @@ function apiLoadDraft(draftId) {
   }
 }
 
-/**
- * Deletes a draft by draft ID.
- * OPTIMIZED: Uses TextFinder instead of getDataRange() to avoid loading entire sheet.
- * @param {string} draftId
- * @returns {{ success: boolean, error?: string }}
- */
+/*
+  Function: apiDeleteDraft
+  LAYMAN:    Deletes a single draft the user chose to disregard. It accepts either a draft ID or a
+             session ID, and only deletes rows the user actually owns.
+  TECHNICAL: TextFinder.findNext first on draft-ID col A, then (if not found) on session-ID col C.
+             Each candidate is ownership-checked on col B before deletion; logs the delete best-effort.
+             Note: returns success even when nothing matched (idempotent delete).
+  PARAMS:
+    - draftId — a draft UUID (col A) or a session ID (col C).
+  RETURNS:   { success:true } (incl. no-op); { success:false, error } on missing ID or exception.
+*/
 function apiDeleteDraft(draftId) {
   try {
     if (!draftId) return { success: false, error: 'No ID provided' };
@@ -818,6 +1035,7 @@ function apiDeleteDraft(draftId) {
       }
     }
 
+    /* Step — Fallback: not found by draft ID, so try matching the session ID (still ownership-checked). */
     // If not found by DraftID, search by SessionID (column C)
     const sessionIdFinder = sheet.getRange('C:C')
       .createTextFinder(targetId)
@@ -847,22 +1065,31 @@ function apiDeleteDraft(draftId) {
 // 4. FILE PROXY SERVICE  (Vaulted Storage)
 // ============================================================
 
-/**
- * Receives a base64-encoded file from the client, decodes it,
- * deposits it into the admin-only Drive folder, and returns
- * the file's Drive ID.
- *
- * The employee never gains access to this folder — the script
- * acts on the developer's authority (Execute as: Me).
- *
- * @param {string} base64File  — Base64-encoded file content
- * @param {string} fileName    — Original filename
- * @param {string} fileType    — Type of file (e.g., 'NDA_DPA', 'DSA')
- * @param {string} mimeType    — MIME type string
- * @returns {string} fileId    — Google Drive file ID
- */
+/*
+  Function: uploadProxy
+  LAYMAN:    The secure file drop. The browser hands over a document (NDA/DPA/DSA/endorsement) as
+             base64 text; this function checks it's really a PDF/DOC/DOCX, isn't too big, and isn't
+             a disguised file, then saves it into the admin-only Drive vault and returns the file's ID.
+             The employee never gets access to that folder — the script does it on the developer's authority.
+  TECHNICAL: Multi-layer validation: required-param check; MIME allowlist (incl. octet-stream because
+             browsers misreport); filename sanitization (FILENAME_SANITIZE_REGEX, 255-char cap); renames
+             to `${reqId}-${fileType}.${ext}`; extension allowlist; base64 decode; min/max size (10 MB);
+             and magic-byte signature check per extension (anti-spoofing). Creates the blob in the
+             ADMIN_FOLDER_ID folder and attempts link-sharing (ANYONE_WITH_LINK, falling back to
+             DOMAIN_WITH_LINK, then silently continuing). All failures rethrow with file-type context.
+  PARAMS:
+    - base64File       — base64-encoded file content.
+    - originalFileName — the file's original name (sanitized; used only for its extension).
+    - fileType         — logical type tag ('NDA','CU','DPA','DSA','ENDORSEMENT') used in the new name.
+    - mimeType         — the claimed MIME type.
+    - reqId            — DCS Request ID, prefixed onto the stored filename.
+  RETURNS:   The new Drive file's ID (string). Throws a descriptive Error on any validation/IO failure.
+  EXAMPLE:   uploadProxy('JVBER...', 'nda.pdf', 'NDA', 'application/pdf', 'DCS-000007')
+               -> '1AbC...xyz'  (Drive file ID)
+*/
 function uploadProxy(base64File, originalFileName, fileType, mimeType, reqId) {
   try {
+    /* Step 1 — Validate inputs: presence, MIME allowlist, sanitized name, and extension allowlist. */
     // ============ VALIDATION ============
     if (!base64File || !originalFileName || !mimeType) {
       throw new Error('uploadProxy: missing required parameter.');
@@ -899,6 +1126,7 @@ function uploadProxy(base64File, originalFileName, fileType, mimeType, reqId) {
       throw new Error(`Invalid or missing file extension. Allowed: PDF, DOC, DOCX`);
     }
 
+    /* Step 2 — Decode base64 to bytes and verify size bounds (min 4 bytes, max 10 MB). */
     // ============ DECODE & VERIFY ============
     let bytes;
     try {
@@ -922,6 +1150,7 @@ function uploadProxy(base64File, originalFileName, fileType, mimeType, reqId) {
       );
     }
     
+    /* Step 3 — Magic-byte check: confirm the file's real signature matches its claimed extension. */
     // Magic bytes verification
     const magicBytes = [
       bytes[0].toString(16).padStart(2, '0'),
@@ -941,6 +1170,7 @@ function uploadProxy(base64File, originalFileName, fileType, mimeType, reqId) {
       throw new Error(`File content does not match extension (.${fileExt}). Possible MIME spoofing attempt.`);
     }
 
+    /* Step 4 — Create the file in the admin-only vault folder. */
     // ============ CREATE FILE IN DRIVE ============
     const folder = DriveApp.getFolderById(getProp_('ADMIN_FOLDER_ID'));
     
@@ -955,6 +1185,7 @@ function uploadProxy(base64File, originalFileName, fileType, mimeType, reqId) {
       );
     }
 
+    /* Step 5 — Set link sharing (ANYONE → DOMAIN fallback → continue); return the new file ID. */
     // ============ SET SHARING ============
     // Try ANYONE_WITH_LINK first, fall back to DOMAIN_WITH_LINK if the org
     // restricts external link sharing (throws "Invalid argument" in some domains).
@@ -986,12 +1217,16 @@ function uploadProxy(base64File, originalFileName, fileType, mimeType, reqId) {
 }
 
 
-/**
- * Trashes previously uploaded Drive files to avoid orphaned duplicates during revision.
- * Silently skips files that no longer exist.
- * @param {Array} fileList Array of { type, id, name } objects
- * @private
- */
+/*
+  Function: trashOldDriveFiles_
+  LAYMAN:    Sends old versions of uploaded documents to the trash when a request is revised, so the
+             vault doesn't pile up duplicate copies. Files that are already gone are quietly ignored.
+  TECHNICAL: Iterates a list of { type, id, name } and calls DriveApp.getFileById(id).setTrashed(true),
+             swallowing per-file errors (already trashed / inaccessible).
+  PARAMS:
+    - fileList — array of { type, id, name } objects identifying files to trash.
+  RETURNS:   undefined (side effect: trashes the listed Drive files).
+*/
 function trashOldDriveFiles_(fileList) {
   fileList.forEach(function(f) {
     try { DriveApp.getFileById(f.id).setTrashed(true); } catch (e) { /* already gone or inaccessible */ }
@@ -1041,27 +1276,36 @@ const DCS_AUDIT_COLS = {
   TIMESTAMP: 7        // G: Locale-formatted timestamp
 };
 
-/**
- * Main DCS submission handler.
- * 1. Validates payload.
- * 2. Acquires a write lock.
- * 3. Uploads NDA/DPA and DSA files via the proxy.
- * 4. Generates a ReqID and appends a row to Data_Collection.
- * 5. Deletes the draft.
- * 6. Sends approval email to Immediate Head.
- *
- * @param {Object} payload
- *   {
- *     formData      : { name, location, dept, access, ihelp,
- *                       immHeadName, immHeadEmail,
- *                       deptHeadName, deptHeadEmail,
- *                       divHeadName, divHeadEmail },
- *     ndaFile       : { base64, fileName, mimeType } | null,
- *     dsaFile       : { base64, fileName, mimeType } | null
- *   }
- * @returns {{ success: boolean, reqId: string }}
- */
+/*
+  Function: submitDCS
+  LAYMAN:    The heart of Phase 1 — what runs when the user hits "Submit." It double-checks the form
+             on the server, uploads every attached document to the vault, writes (or updates, if this
+             is a revision) the request row in the database, scans it for risk flags, clears the draft,
+             and emails the requester a "Proceed to Phase 2" link. If anything important is missing or
+             wrong, it returns a clear error instead of saving a broken record.
+  TECHNICAL: Defense-in-depth layer 2. Re-validates domain + required fields + email formats + iHelp
+             numeric + at-least-one accountable person, ALL server-side. Detects revision when a
+             DCS-prefixed sessionId already exists in Data_Collection (ownership-checked). Uploads run
+             BEFORE the lock (slow IO) and supersede old files via trashOldDriveFiles_. Agency/OJT
+             metadata and the combined file-ID JSON are prepared before locking. Then acquires the
+             SUBMISSION lock and RE-READS revision state inside it to close a TOCTOU race before
+             writing. Writes status COMPLETE (cols 4-11 on update, or appendRow on insert), cleans
+             drafts with the lock-free helper, builds the Phase 2 URL, releases the lock, and (outside
+             the lock) batch-logs audit entries and sends the confirmation email (new submits only).
+  PARAMS:
+    - payload   — { formData:{ name, location, dept, access, ihelp, immHead*, deptHead*, divHead*,
+                    accountable:{...} }, ndaFile?, dpaFile?, dsaFile?, agencyData? } (files: {base64,fileName,mimeType}).
+    - sessionId — the DCS-XXXXXX session; if it matches an existing owned row, this is treated as a revision.
+  RETURNS:   { success:true, reqId, sessionId, timestamp, phase2Url } on success;
+             { success:false, error } on any validation/upload/write failure.
+  EXAMPLE:   submitDCS({ formData:{ name:'Payroll access request', dept:'HR', access:'Read', immHeadName:'A',
+               immHeadEmail:'a@megaworld.com', deptHeadName:'B', deptHeadEmail:'b@megaworld.com',
+               accountable:{ accountableName1:'C', accountableEmail1:'c@megaworld.com' } } }, 'DCS-000007')
+               -> { success:true, reqId:'DCS-000007', phase2Url:'https://…?parentID=DCS-000007' }
+             Missing field -> { success:false, error:'Missing required field: dept' }
+*/
 function submitDCS(payload, sessionId = '') {
+  /* Step 1 — Re-validate identity, payload shape, required fields, emails, iHelp, and accountable person. */
   // --- Re-validate identity on backend (Defense-in-Depth Layer 2) ---
   const email = Session.getActiveUser().getEmail();
   if (!isAuthorizedDomain(email)) {
@@ -1117,6 +1361,7 @@ function submitDCS(payload, sessionId = '') {
     return { success: false, error: 'At least 1 Accountable Person/Entity is required (with both name and email).' };
   }
 
+  /* Step 2 — Resolve DB/sheet and pick the ReqID (reuse the DCS-prefixed sessionId, else mint a new one). */
   const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
   const sheet = ss.getSheetByName(DC_SHEET_NAME);
   const now   = new Date();
@@ -1187,6 +1432,7 @@ function submitDCS(payload, sessionId = '') {
   // Store as JSON string so multiple file IDs fit in one cell
   const combinedFileId = uploadedIds.length > 0 ? JSON.stringify(uploadedIds) : '';
 
+  /* Step (pre-lock) — If agency/OJT involved, validate its fields, upload the endorsement letter, and serialize its metadata. */
   // --- Build Agency Metadata if agency data is present (BEFORE lock) ---
   let agencyJson = '';
   try {
@@ -1284,6 +1530,7 @@ function submitDCS(payload, sessionId = '') {
     }
   }
 
+  /* Step 4 — Build metadata (with accountable fail-safe + risk analysis), write the row, clear drafts, build Phase 2 URL. */
   let result;
   let riskAnalysis; // Hoist to outer scope for audit trail logging below
   try {
@@ -1400,6 +1647,7 @@ function submitDCS(payload, sessionId = '') {
     lock.releaseLock();
   }
 
+  /* Step 5 — Outside the lock: batch-log audit entries and email the requester (new submits only, failsafe). */
   // --- DCS Audit Trail (OUTSIDE lock to avoid reentrancy) ---
   // Batch: Write session-gen + submission + cleanup events in a single sheet operation
   if (result && result.success) {
@@ -1441,15 +1689,19 @@ function submitDCS(payload, sessionId = '') {
   return result;
 }
 
-/**
- * Sends the requester a styled confirmation email after a successful DCS submission, with a
- * "Proceed to Phase 2" button linking to the PIA app. Failsafe — the caller wraps this in
- * try/catch so a mail failure never affects the saved submission.
- * @param {string} toEmail   Requester email (Session active user).
- * @param {string} reqId     DCS Request ID.
- * @param {string} phase2Url Full PIA URL (already includes ?parentID=<reqId>).
- * @private
- */
+/*
+  Function: notifyDcsRequester_
+  LAYMAN:    Sends the requester a nice branded email saying "your request was submitted — click here
+             to start Phase 2." Purely a notification; if the email fails, the saved request is unaffected.
+  TECHNICAL: Builds an HTML-escaped, navy-styled email (plus a plain-text fallback) with the request ID,
+             a Manila-formatted timestamp, and a "Proceed to Phase 2" button. Sends via MailApp.sendEmail.
+             No-ops if toEmail is falsy. Caller wraps this in try/catch (failsafe).
+  PARAMS:
+    - toEmail   — requester email (the Session active user).
+    - reqId     — DCS Request ID shown in the email.
+    - phase2Url — full PIA URL (already includes ?parentID=<reqId>); '#' fallback if empty.
+  RETURNS:   undefined (side effect: sends one email).
+*/
 function notifyDcsRequester_(toEmail, reqId, phase2Url) {
   if (!toEmail) return;
   const safe = function(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
@@ -1482,13 +1734,16 @@ function notifyDcsRequester_(toEmail, reqId, phase2Url) {
   MailApp.sendEmail(toEmail, subject, plain, { htmlBody: html });
 }
 
-/**
- * Generates the secure URL to redirect the user to Phase 2 (PIA).
- * Appends the ReqID as a query parameter. Uses /dev for testing.
- * @param {string} reqId The DCS Request ID.
- * @returns {string} The full URL for Phase 2.
- * @private
- */
+/*
+  Function: generatePhase2Url_
+  LAYMAN:    Builds the link that takes the user from Phase 1 into Phase 2 (the PIA app), tagging it
+             with this request's ID so PIA knows which DCS record it belongs to.
+  TECHNICAL: Reads PIA_APP_URL (should end in /exec for all-user access) and appends ?parentID=<reqId>.
+             The PIA app reads parentID as Linked_ReqID — the cross-app link. Do not break this contract.
+  PARAMS:
+    - reqId — the DCS Request ID to embed.
+  RETURNS:   The full PIA URL string, e.g. 'https://…/exec?parentID=DCS-000007'.
+*/
 function generatePhase2Url_(reqId) {
   const piaAppUrl = getProp_('PIA_APP_URL');
   // The /dev URL is typically only accessible by the script owner and editors.
@@ -1498,11 +1753,16 @@ function generatePhase2Url_(reqId) {
   return `${piaAppUrl}?parentID=${reqId}`;
 }
 
-/**
- * Generates a sequential DCS ReqID using a script property counter.
- * Falls back to UUID if properties are unavailable.
- * @returns {string}  e.g. "DCS-000001"
- */
+/*
+  Function: generateDCSReqId_
+  LAYMAN:    Mints the next sequential request ID (DCS-000001, DCS-000002, …) when a submission needs
+             a brand-new ID rather than reusing an existing session.
+  TECHNICAL: Reads/increments the DCS_COUNTER Script Property and zero-pads to 6 digits. (No internal
+             lock — submitDCS calls this outside its lock; the counter is also bumped by
+             apiGenerateNewSessionId under a lock.)
+  PARAMS:    (none)
+  RETURNS:   A new ReqID string, e.g. 'DCS-000001'.
+*/
 function generateDCSReqId_() {
   const props  = PropertiesService.getScriptProperties();
   const rawNum = Number(props.getProperty('DCS_COUNTER') || 0) + 1;
@@ -1515,15 +1775,24 @@ function generateDCSReqId_() {
 // 14. DCS RISK ANALYSIS & AUDIT LOGGING  (PIA-style Flagging)
 // ============================================================
 
-/**
- * Analyzes DCS request data for paranormal/anomalous patterns.
- * Checks for conflict of interest, role duplication, suspicious data,
- * and other risk indicators.
- *
- * @param {Object} dcsData The DCS form data and metadata
- * @param {string} [providedEmail] The authenticated user's email
- * @returns {{ isFlagged: boolean, reasons: string[] }}
- */
+/*
+  Function: analyzeDCSRisk
+  LAYMAN:    Scans a request for red flags before it's saved — e.g. the requester listing themselves as
+             their own approver, the same person filling two approver roles, a suspiciously short
+             description, no accountable person, or missing department/access. It just reports what it
+             found; it doesn't block the submission.
+  TECHNICAL: Pure analysis (no sheet/Drive writes). Accepts either { formData } or a flat form object.
+             Runs 7 checks: requestor==any approver email (conflict of interest); immHead name==deptHead
+             or ==divHead (duplicate role); name < 20 chars; zero accountable persons (handles flat and
+             nested shapes); missing dept/access; and a too-short agency name. Each hit appends a
+             human-readable reason.
+  PARAMS:
+    - dcsData       — the DCS payload ({ formData, agencyData, email } or a flat form object).
+    - providedEmail — the authenticated user's email (preferred source of the requestor identity).
+  RETURNS:   { isFlagged:boolean, reasons:string[] } (isFlagged === reasons.length > 0).
+  EXAMPLE:   analyzeDCSRisk({ formData:{ immHeadEmail:'me@x', deptHeadEmail:'me@x' } }, 'me@x')
+               -> { isFlagged:true, reasons:['Requestor email matches Immediate Head email …', …] }
+*/
 function analyzeDCSRisk(dcsData, providedEmail = '') {
   const reasons = [];
   
@@ -1612,21 +1881,21 @@ function analyzeDCSRisk(dcsData, providedEmail = '') {
   };
 }
 
-/**
- * Logs a DCS audit trail entry to the Risk_Audit sheet.
- * Full audit trail — EVERY action is written to the sheet.
- * Paranormal events get a filled InternalFlags column; normal events get '{}'.
- *
- * Behavior:
- *   flagsData = '{riskLevel:"HIGH", reasons:[...]}' → Paranormal event, stores the JSON
- *   flagsData = false                                → Normal workflow action, stores '{}'
- *   flagsData = true                                 → Legacy trigger, stores generic HIGH
- *   flagsData = null / undefined                     → Defaults to '{}' (normal)
- *
- * @param {string} sessionId  Session / Request identifier for the event
- * @param {string} action     Human-readable description of the event
- * @param {*}      flagsData  {string|boolean|null} false/null for normal, JSON string for flagged, true for legacy
- */
+/*
+  Function: logDCSAuditTrail
+  LAYMAN:    Writes one line into the audit log for an action (draft saved, request submitted, etc.).
+             If the action carried risk flags it stores them; normal actions store an empty marker.
+             It never throws — a logging failure must not break the real operation.
+  TECHNICAL: Appends a row to Risk_Audit (falls back to legacy 'DCS_Risk_Audit' name). Builds the
+             InternalFlags cell from flagsData: a non-empty string is stored verbatim (flagged JSON),
+             true → generic HIGH legacy marker, false/null/undefined → '{}' (normal). Stamps LogID
+             (UUID), user email, 'DCS Web App' agent, and a native Date. Errors are caught and logged.
+  PARAMS:
+    - sessionId — session/request identifier for the event.
+    - action    — human-readable description of the event.
+    - flagsData — string (flagged JSON) | true (legacy HIGH) | false/null/undefined (normal).
+  RETURNS:   undefined (side effect: appends one audit row; swallows its own errors).
+*/
 function logDCSAuditTrail(sessionId, action, flagsData) {
   try {
     const ss = getCachedSpreadsheet_(getProp_('DB_ID'));
@@ -1669,12 +1938,17 @@ function logDCSAuditTrail(sessionId, action, flagsData) {
   }
 }
 
-/**
- * Batch audit log — writes multiple entries in a single sheet operation.
- * Reduces sheet API calls by consolidating related audit events.
- *
- * @param {Array<{sessionId: string, action: string, flagsData: *}>} entries
- */
+/*
+  Function: logDCSAuditTrailBatch_
+  LAYMAN:    Same idea as logDCSAuditTrail but writes several audit lines at once (e.g. "submitted" +
+             "draft completed") in a single trip to the sheet, which is faster.
+  TECHNICAL: Maps each entry to a Risk_Audit row (same flags encoding as logDCSAuditTrail) and writes
+             them all with one getRange(start,1,n,7).setValues() call. No-ops on empty input; errors
+             are caught and logged so it never breaks the caller.
+  PARAMS:
+    - entries — array of { sessionId, action, flagsData } (flagsData encoded as in logDCSAuditTrail).
+  RETURNS:   undefined (side effect: appends N audit rows in one write).
+*/
 function logDCSAuditTrailBatch_(entries) {
   if (!entries || entries.length === 0) return;
   try {
@@ -1735,14 +2009,23 @@ function logDCSAuditTrailBatch_(entries) {
 // Fetches all related data for a DCS request in optimized batch.
 // ============================================================
 
-/**
- * Fetches all related data for a DCS request in optimized batch.
- * Loads all sheets once and processes in single pass.
- * @param {Spreadsheet} ss
- * @param {string} dcsReqId
- * @param {string} piaSessionId (optional)
- * @returns {Object} Consolidated data with piaRecord, approvals, ismApprovals, divHeadApprovals
- */
+/*
+  Function: getRequestDataBatch_
+  LAYMAN:    Gathers, in one efficient sweep, everything Phase 2 knows about a request: the linked PIA
+             record and all the approval decisions (regular approvers, InfoSec/ISM members, and the
+             Division Head). Used to build the request's status timelines.
+  TECHNICAL: Consolidated read across four PIA-owned sheets (Applications, Approval_Workflow,
+             ISM_Approval_Workflow, DivisionHead_Approval_Workflow). Resolves columns dynamically via a
+             header-index map (so column order can change safely) and locates rows with TextFinder on
+             the relevant key columns, then batch-reads matched ranges. Discovers piaSessionId from the
+             Applications row when not passed in. Read-only.
+  PARAMS:
+    - ss           — the database Spreadsheet object.
+    - dcsReqId     — the DCS Request ID (matched against Linked_ReqID / ReqID).
+    - piaSessionId — optional PIA session ID; auto-discovered from Applications if omitted.
+  RETURNS:   { piaRecord:{piaSessionId,piaStatus,approverFlags,approverComments}|null,
+               approvals:[], ismApprovals:[], divHeadApprovals:[] }.
+*/
 function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
   const batch = {
     piaRecord: null,
@@ -1751,11 +2034,14 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     divHeadApprovals: []
   };
 
-  /**
-   * Reads the header row of a sheet to build a column-index map.
-   * @param {Sheet} sheet
-   * @returns {Object.<string, number>} colName → 0-based index
-   */
+  /*
+    Function: getColIndexMap_ (nested helper)
+    LAYMAN:    Reads a sheet's header row and makes a quick lookup of "column name → which column it is."
+    TECHNICAL: Returns an object mapping each non-empty trimmed header string to its 0-based index.
+    PARAMS:
+      - sheet — the Sheet whose header row (row 1) to map.
+    RETURNS:   { headerName: columnIndex, ... } (0-based indices).
+  */
   function getColIndexMap_(sheet) {
     const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     const map = {};
@@ -1763,6 +2049,7 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     return map;
   }
 
+  /* Step 1 — Applications sheet: find the row linked to this DCS ReqID; capture PIA status/flags/comments and the PIA session ID. */
   // --- Process PIA record from Applications sheet (TextFinder) ---
   const appSheet = ss.getSheetByName('Applications');
   if (appSheet && dcsReqId) {
@@ -1801,6 +2088,7 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     }
   }
 
+  /* Step 2 — Approval_Workflow: collect approver decisions matched by PIA session and/or DCS ReqID (deduped, batch-read). */
   // --- Process Approval_Workflow (TextFinder) ---
   const awSheet = ss.getSheetByName('Approval_Workflow');
   if (awSheet && (piaSessionId || dcsReqId)) {
@@ -1858,6 +2146,7 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     }
   }
 
+  /* Step 3 — ISM_Approval_Workflow + DivisionHead_Approval_Workflow: collect InfoSec and Division Head decisions (only when a PIA session exists). */
   // --- Process ISM_Approval_Workflow (TextFinder) ---
   if (piaSessionId) {
     const ismSheet = ss.getSheetByName('ISM_Approval_Workflow');
@@ -1946,13 +2235,20 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
   return batch;
 }
 
-/**
- * Finds the PIA record linked to a DCS request ID.
- * @param {Spreadsheet} ss The spreadsheet object.
- * @param {string} dcsReqId The DCS Request ID.
- * @returns {Object|null} An object with PIA status and other details, or null if not found.
- * @private
- */
+/*
+  Function: getPIARecordByDCSId_
+  LAYMAN:    Looks up the Phase 2 (PIA) record that belongs to a given Phase 1 request, plus its latest
+             approval decision — so the UI can show whether PIA has acted on it.
+  TECHNICAL: TextFinder on Applications col B for dcsReqId, taking the LAST match (most recent revision);
+             reads Status / SessionID / Approver_Flags (or legacy Approvers_Flag) / Approver_Comments
+             (or legacy Comments) via dynamic header indices. Then finds the latest Decision in
+             Approval_Workflow by PIA SessionID (preferred) or DCS ReqID. Read-only.
+  PARAMS:
+    - ss       — the database Spreadsheet object.
+    - dcsReqId — the DCS Request ID to resolve.
+  RETURNS:   { piaSessionId, piaStatus, piaDecision, approverFlags, approverComments } if anything found;
+             null if no related PIA data exists.
+*/
 function getPIARecordByDCSId_(ss, dcsReqId) {
   const sheet = ss.getSheetByName('Applications'); // From db_schema.md
   let piaSessionId = null;
@@ -2045,10 +2341,21 @@ function getPIARecordByDCSId_(ss, dcsReqId) {
   return null;
 }
 
-/**
- * Constructs the approval workflow list using DCS metadata and the Approval_Workflow sheet.
- * @private
- */
+/*
+  Function: getApproversList_
+  LAYMAN:    Builds the list of approvers for a request — seeded from the form's Immediate Head and
+             Department Head, then enriched with any actual decisions/comments recorded in the workflow.
+  TECHNICAL: Starts with the Immediate Head and Department Head from metadata (decision 'Pending'),
+             then scans Approval_Workflow (matched by reqId or piaSessionId via header-resolved columns).
+             Existing approvers are updated in place by email match; unknown decision-makers are appended
+             as 'Reviewer'. Loads the workflow via getDataRange (full scan). Read-only.
+  PARAMS:
+    - ss           — the database Spreadsheet object.
+    - reqId        — the DCS Request ID.
+    - piaSessionId — optional PIA session ID to also match on.
+    - metadata     — DCS metadata containing the Immediate Head and Department Head name/email.
+  RETURNS:   Array of { name, email, decision, comment, date, role } approver objects.
+*/
 function getApproversList_(ss, reqId, piaSessionId, metadata) {
   const approvers = [];
   if (metadata.immHeadName) approvers.push({ name: metadata.immHeadName, email: metadata.immHeadEmail, decision: 'Pending', comment: '', role: 'Immediate Head', date: '' });
@@ -2099,10 +2406,16 @@ function getApproversList_(ss, reqId, piaSessionId, metadata) {
   return approvers;
 }
 
-/**
- * Constructs the ISM approvers list.
- * @private
- */
+/*
+  Function: getISMApproversList_
+  LAYMAN:    Builds the InfoSec (ISM) reviewers list for a request's Phase 2 timeline.
+  TECHNICAL: Returns [] when piaSessionId is falsy. Scans ISM_Approval_Workflow (full getDataRange),
+             matching rows by SessionID via header-resolved columns. Read-only.
+  PARAMS:
+    - ss           — the database Spreadsheet object.
+    - piaSessionId — the PIA session ID to match.
+  RETURNS:   Array of { name, email, decision, status, comment, date, role:'InfoSec Member' } objects.
+*/
 function getISMApproversList_(ss, piaSessionId) {
   const approvers = [];
   if (!piaSessionId) return approvers;
@@ -2141,10 +2454,17 @@ function getISMApproversList_(ss, piaSessionId) {
   return approvers;
 }
 
-/**
- * Constructs the Division Head approvers list.
- * @private
- */
+/*
+  Function: getDivHeadApproversList_
+  LAYMAN:    Builds the Division Head reviewers list for a request's Phase 2 timeline.
+  TECHNICAL: Returns [] when piaSessionId is falsy. Scans DivisionHead_Approval_Workflow (full
+             getDataRange), matching rows by SessionID via header-resolved columns. The DivHead_Email
+             is used for both name and email fields. Read-only.
+  PARAMS:
+    - ss           — the database Spreadsheet object.
+    - piaSessionId — the PIA session ID to match.
+  RETURNS:   Array of { name, email, decision, status, comment, date, role:'Division Head' } objects.
+*/
 function getDivHeadApproversList_(ss, piaSessionId) {
   const approvers = [];
   if (!piaSessionId) return approvers;
@@ -2182,12 +2502,22 @@ function getDivHeadApproversList_(ss, piaSessionId) {
   return approvers;
 }
 
-/**
- * @param {string} reqId
- * @returns {Object|null}
- * FIX 1: Replaced full sheet load with TextFinder.
- * FIX 2: Consolidated batch queries into getRequestDataBatch_.
- */
+/*
+  Function: apiGetRequestData
+  LAYMAN:    The "show me everything about this request" call the frontend uses to draw a request's
+             detail page: the form data, attached files, current status, the Phase 2 link (if eligible),
+             PIA status, and the full approver timelines — plus any DCS vs PIA risk flags.
+  TECHNICAL: TextFinder on Data_Collection col B (last match = newest revision); reads only that row,
+             parses Metadata_JSON / FileID / Metadata_Agency. Pulls linked PIA + all approval rows via
+             getRequestDataBatch_. Separates DCS-prefixed flag keys from PIA flag keys. Computes the
+             Phase 2 URL when status is READY_FOR_PIA/COMPLETE/RETURNED. Read-only.
+  PARAMS:
+    - reqId — the DCS Request ID to fetch.
+  RETURNS:   { found:true, reqId, sessionId, email, immHeadEmail, deptHeadEmail, divHeadEmail, status,
+               metadata, files, timestamp, logId, metadataAgency, phase2Url, piaStatus, piaSessionId,
+               piaDecision, hasPiaFlags, approverFlags, approverComments, approvers, ismApprovers,
+               divHeadApprovers } on success; { found:false } if missing; { found:false, error } on error.
+*/
 function apiGetRequestData(reqId) {
   try {
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
@@ -2208,14 +2538,17 @@ function apiGetRequestData(reqId) {
     // Get only needed row data (1 API call instead of full sheet load)
     const values = sheet.getRange(row, 1, 1, Math.max(DC_COL.METADATA_AGENCY, 11)).getValues()[0];
     
+    /* Step 1 — Parse the row's metadata, file list, and status from the newest matching row. */
     const metadata = JSON.parse(values[DC_COL.METADATA_JSON - 1] || '{}');
     const files    = JSON.parse(values[DC_COL.FILE_ID - 1] || '[]');
     const status   = values[DC_COL.STATUS - 1];
-    
+
+    /* Step 2 — Load linked PIA record + all approver timelines in one batched pass. */
     // ✅ Fix 2: BATCH: Load all related data in one pass
     const batch = getRequestDataBatch_(ss, reqId, null);
     const piaRecord = batch.piaRecord;
 
+    /* Step 3 — Split risk flags into DCS-specific vs PIA-specific buckets for the UI. */
     let rawFlags = (piaRecord && piaRecord.approverFlags) ? piaRecord.approverFlags : (metadata.approverFlags || null);
     let dcsFlags = {};
     let hasDcsFlags = false;
@@ -2240,6 +2573,7 @@ function apiGetRequestData(reqId) {
     const piaDecisionLowerCheck = String(piaRecord ? piaRecord.piaDecision : '').toLowerCase().replace(/\s+/g, '');
     const isPiaReturnedCheck = (piaStatusLowerCheck === 'rejected' || piaStatusLowerCheck === 'returned');
 
+    /* Step 4 — Assemble the full response object (form data + files + timelines + flags + Phase 2 URL). */
     return {
       found: true,
       reqId: values[DC_COL.REQ_ID - 1],
@@ -2272,13 +2606,18 @@ function apiGetRequestData(reqId) {
   }
 }
 
-/**
- * Retrieves all DCS requests submitted by the current user.
- * Fixes the "missing requests" issue where older entries became 
- * inaccessible after a new submission.
- * FIX 5: Optimized with selective loads instead of loading entire sheets.
- * @returns {{ success: boolean, requests: Array, error?: string }}
- */
+/*
+  Function: apiListUserRequests
+  LAYMAN:    Builds the "My Applications" list — every request the current user has submitted, newest
+             first, each with its status, PIA status, name, and any approver remarks.
+  TECHNICAL: TextFinder on Data_Collection col C (UserEmail) for the user's rows. Builds a PIA status/
+             comments map keyed by Linked_ReqID from the Applications sheet (last row wins). For each
+             owned row, batch-reads the needed columns, looks up its PIA record, and attaches a Phase 2
+             URL when status is READY_FOR_PIA/COMPLETE. Returns the list reversed (newest first). Read-only.
+  PARAMS:    (none)
+  RETURNS:   { success:true, requests:[{ reqId, status, piaStatus, timestamp, name, remarks, phase2Url? }] };
+             { success:false, error } on exception.
+*/
 function apiListUserRequests() {
   try {
     const email = Session.getActiveUser().getEmail();
@@ -2354,12 +2693,20 @@ function apiListUserRequests() {
   }
 }
 
-/**
- * Fetches a returned application for isEditing mode.
- * Validates that the request belongs to the user and is in RETURNED status.
- * @param {string} reqId
- * @returns {Object}
- */
+/*
+  Function: apiGetReturnedApplication
+  LAYMAN:    Decides whether a request can be re-opened for editing (revision mode). It only says yes
+             if the request belongs to you AND it was genuinely returned with fixable DCS flags — and it
+             won't re-open something you already resubmitted after the return.
+  TECHNICAL: Wraps apiGetRequestData, enforces ownership (case-insensitive email), and computes
+             editability: requires DCS-specific approverFlags AND (DCS status RETURNED, OR PIA
+             returned/rejected and NOT already resubmitted). "Recently resubmitted" = the DCS timestamp
+             is newer than the latest returned/rejected approver decision date across all timelines.
+  PARAMS:
+    - reqId — the DCS Request ID to evaluate for editing.
+  RETURNS:   { success:true, application:<apiGetRequestData result> } if editable;
+             { success:false, error } if not found, unauthorized, or not in a returnable state.
+*/
 function apiGetReturnedApplication(reqId) {
   const userEmail = Session.getActiveUser().getEmail();
   const result = apiGetRequestData(reqId);
@@ -2407,13 +2754,15 @@ function apiGetReturnedApplication(reqId) {
 // 8. STATUS POLLING  (Frontend Tracker — Stage 5)
 // ============================================================
 
-/**
- * Returns the status of the most recent DCS request for the
- * current user. Uses the "Latest-Entry" pattern: TextFinder
- * from the bottom of column B upward.
- *
- * @returns {{ found: boolean, reqId: string, status: string, timestamp: string }}
- */
+/*
+  Function: apiGetStatus
+  LAYMAN:    Tells the frontend the status of the user's most recent request (for the live status tracker).
+  TECHNICAL: Resolves the user's latest Data_Collection row via getLatestDCSRecord_ and returns its
+             ReqID/status/timestamp. Read-only.
+  PARAMS:    (none)
+  RETURNS:   { found:true, reqId, sessionId, status, timestamp } if a record exists;
+             { found:false } if none; { found:false, error } on exception.
+*/
 function apiGetStatus() {
   try {
     const email  = Session.getActiveUser().getEmail();
@@ -2437,14 +2786,16 @@ function apiGetStatus() {
   }
 }
 
-/**
- * Internal: Finds the most recent row in Data_Collection for
- * the given email and returns it as a values array.
- *
- * @param {Sheet}  sheet
- * @param {string} email
- * @returns {Array|null}
- */
+/*
+  Function: getLatestDCSRecord_
+  LAYMAN:    Finds the user's newest request row in the database and hands back its raw cell values.
+  TECHNICAL: TextFinder on Data_Collection col C (UserEmail); the last match is the most recent entry.
+             Returns that full row as a values array. Read-only.
+  PARAMS:
+    - sheet — the Data_Collection Sheet object.
+    - email — the user's email to match.
+  RETURNS:   The row's values array (1 row × all columns), or null if the user has no rows.
+*/
 function getLatestDCSRecord_(sheet, email) {
     const emailFinder = sheet.getRange('C:C')
     .createTextFinder(email)
@@ -2465,32 +2816,23 @@ function getLatestDCSRecord_(sheet, email) {
 // 9. PIA HANDSHAKE GATE  (Called by the PIA app's doGet)
 // ============================================================
 
-/**
- * getGatewayRecord — The "Handshake" function.
- *
- * The PIA app calls this on load to determine whether the current
- * user has a cleared DCS record before rendering the PIA form.
- *
- * Logic:
- *   1. Fetch the user's latest Data_Collection entry.
- *   2. If Status !== "READY_FOR_PIA" → return gated: true.
- *   3. If cleared → return gated: false, plus ReqID and FileID
- *      for embedding in the PIA as Linked_ReqID.
- *
- * Defense-in-Depth Note:
- *   This function MUST be called from the PIA backend's doGet —
- *   never rely solely on a frontend flag. Even if a user directly
- *   navigates to the PIA URL, the backend re-validates here.
- *
- * @param {string} [userEmail] — Optional override; defaults to Session email.
- * @returns {{
- *   gated      : boolean,
- *   reason     : string,
- *   reqId      : string,
- *   fileId     : string,
- *   status     : string
- * }}
- */
+/*
+  Function: getGatewayRecord
+  LAYMAN:    The handshake between Phase 1 and Phase 2. When someone opens the PIA app, the PIA backend
+             calls this to ask "does this person have a cleared DCS request?" If not, PIA stays locked;
+             if yes, this hands PIA the ReqID and file IDs it needs to link the two phases together.
+  TECHNICAL: Cross-app gate, called from the PIA backend's doGet (defense-in-depth — never trust a
+             frontend flag alone). TextFinder on Data_Collection col C for the user's latest row; if
+             status is not READY_FOR_PIA/COMPLETE it returns gated:true with a reason
+             (DCS_PENDING/DCS_REJECTED/DCS_RETURNED/NO_DCS_RECORD/SYSTEM_ERROR); if cleared it returns
+             gated:false plus reqId and fileId. Read-only.
+  PARAMS:
+    - userEmail — optional override; defaults to the Session active user's email.
+  RETURNS:   { gated, reason, reqId, fileId, status, error? }.
+  EXAMPLE:   getGatewayRecord('jane@megaworld.com')
+               -> { gated:false, reason:'CLEARED', reqId:'DCS-000007', fileId:'[…]', status:'COMPLETE' }
+             No record -> { gated:true, reason:'NO_DCS_RECORD', reqId:'', fileId:'', status:'' }
+*/
 function getGatewayRecord(userEmail) {
   try {
     const email = userEmail || Session.getActiveUser().getEmail();
@@ -2562,19 +2904,19 @@ function getGatewayRecord(userEmail) {
 // 10. PIA INTEGRITY BINDING  (Final Certificate Hash)
 // ============================================================
 
-/**
- * Generates the SHA-256 integrity hash that appears on the
- * PIA approval certificate.
- *
- * The hash binds Phase 1 (DCS ReqID) to Phase 2 (PIA SessionID)
- * so that tampering with either invalidates the certificate.
- *
- * hash = SHA256(dcsReqId + "|" + piaSessionId)
- *
- * @param {string} dcsReqId     — e.g. "DCS-000001"
- * @param {string} piaSessionId — e.g. "PIA-000075"
- * @returns {string}  Hex-encoded SHA-256 digest
- */
+/*
+  Function: computeIntegrityHash
+  LAYMAN:    Produces the tamper-proof fingerprint printed on the final PIA approval certificate. It
+             locks Phase 1 and Phase 2 together, so editing either ID would make the certificate's
+             fingerprint no longer match.
+  TECHNICAL: Computes SHA-256 over `dcsReqId + '|' + piaSessionId` (UTF-8) and hex-encodes the digest.
+             Throws if either ID is missing. Pure function — no sheet/Drive access.
+  PARAMS:
+    - dcsReqId     — the DCS Request ID (e.g. 'DCS-000001').
+    - piaSessionId — the PIA Session ID (e.g. 'PIA-000075').
+  RETURNS:   The lowercase hex SHA-256 digest string. Throws Error if either ID is falsy.
+  EXAMPLE:   computeIntegrityHash('DCS-000001', 'PIA-000075') -> '9f2c…' (64 hex chars)
+*/
 function computeIntegrityHash(dcsReqId, piaSessionId) {
   if (!dcsReqId || !piaSessionId) throw new Error('Both IDs are required for integrity hash.');
   const message  = dcsReqId + '|' + piaSessionId;
@@ -2591,14 +2933,18 @@ function computeIntegrityHash(dcsReqId, piaSessionId) {
 // 11. ADMIN UTILITIES  (Run manually from the Apps Script editor)
 // ============================================================
 
-/**
- * One-time setup: Creates the Data_Collection sheet with the
- * correct headers if it does not already exist.
- * Run this manually after deploying to a new spreadsheet.
- * 
- * Column order: LogID, ReqID, UserEmail, Status, ImmediateHeadEmail, 
- *              DeptHeadEmail, DivHeadEmail, FileID, Metadata_JSON, Timestamp
- */
+/*
+  Function: setupDataCollectionSheet
+  LAYMAN:    One-time scaffolding you run by hand after pointing the script at a fresh spreadsheet. It
+             creates the core tabs (Data_Collection, DCS_Risk_Audit, System_Configuration) with the
+             right headers and some starter config rows, without clobbering anything that already exists.
+  TECHNICAL: Idempotent setup. Creates Data_Collection if absent and writes the 11-column header
+             (styled, frozen) only when A1 is empty. Likewise creates DCS_Risk_Audit and
+             System_Configuration with headers if missing, seeding LINK_NDA_TEMPLATE and LINK_TC_PAGE.
+             Run manually from the editor. Logs each action.
+  PARAMS:    (none)
+  RETURNS:   undefined (side effect: creates/initializes sheets; logs to Logger).
+*/
 function setupDataCollectionSheet() {
   const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
   let sheet   = ss.getSheetByName(DC_SHEET_NAME);
@@ -2657,13 +3003,19 @@ function setupDataCollectionSheet() {
   }
 }
 
-/**
- * Manually override the Status of a DCS request.
- * Use in the Apps Script editor for admin corrections.
- *
- * @param {string} reqId
- * @param {string} newStatus  — One of STATUS_PENDING | STATUS_READY_FOR_PIA | STATUS_REJECTED
- */
+/*
+  Function: adminSetStatus
+  LAYMAN:    An admin escape hatch (run from the editor) to manually force a request's status to a
+             different value when a correction is needed.
+  TECHNICAL: Validates newStatus against the allowed set (PENDING / READY_FOR_PIA / REJECTED),
+             TextFinder.findNext on Data_Collection col B for reqId, and sets the Status cell. Throws
+             on invalid status or unknown ReqID. Note: opens the spreadsheet directly via openById
+             (not the cache).
+  PARAMS:
+    - reqId     — the DCS Request ID to update.
+    - newStatus — one of STATUS_PENDING | STATUS_READY_FOR_PIA | STATUS_REJECTED.
+  RETURNS:   undefined (side effect: writes the Status cell; logs). Throws on invalid input.
+*/
 function adminSetStatus(reqId, newStatus) {
   const allowed = [STATUS_PENDING, STATUS_READY_FOR_PIA, STATUS_REJECTED];
   if (!allowed.includes(newStatus)) {
@@ -2688,11 +3040,16 @@ function adminSetStatus(reqId, newStatus) {
 // 12. EXPIRY CLEANUP  (Set as a daily time-driven trigger)
 // ============================================================
 
-/**
- * Purges expired draft rows from the Drafts sheet.
- * Schedule this as a daily time-driven trigger:
- *   Edit → Triggers → Add Trigger → purgeExpiredDrafts → Day timer
- */
+/*
+  Function: purgeExpiredDrafts
+  LAYMAN:    Housekeeping that deletes drafts whose 7-day life has run out. Meant to run automatically
+             once a day via a time trigger so the Drafts sheet doesn't accumulate stale rows.
+  TECHNICAL: Reads only the ExpiresAt column (G) for all data rows, collects rows whose expiry is past,
+             and deletes them bottom-up to avoid row shift. No-ops on an empty sheet. Intended as a
+             daily time-driven trigger. Logs the count removed.
+  PARAMS:    (none)
+  RETURNS:   undefined (side effect: deletes expired draft rows; logs count).
+*/
 function purgeExpiredDrafts() {
   const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
   const sheet = ss.getSheetByName(DRAFTS_SHEET_NAME);
@@ -2721,11 +3078,16 @@ function purgeExpiredDrafts() {
 // 13. AUTHORIZATION UTILITY
 // ============================================================
 
-/**
- * Dummy function to force Apps Script to trigger the OAuth authorization prompt
- * for all services listed in appsscript.json.
- * Run this manually from the editor if you encounter permission errors.
- */
+/*
+  Function: forceAuthorize
+  LAYMAN:    A throwaway function you run by hand to make Apps Script pop up its permission prompt, so
+             you can grant all the access (Sheets, Drive, Mail) the app needs after adding a new scope.
+  TECHNICAL: Touches SpreadsheetApp and DriveApp (creates a tiny test file in ADMIN_FOLDER_ID) so the
+             OAuth consent screen covers every scope in appsscript.json. Run manually from the editor
+             when you hit permission errors. Logs the verified folder + created file ID.
+  PARAMS:    (none)
+  RETURNS:   undefined (side effect: creates a test file; triggers OAuth consent; logs).
+*/
 function forceAuthorize() {
   SpreadsheetApp.getActiveSpreadsheet();
   const folderId = getProp_('ADMIN_FOLDER_ID');

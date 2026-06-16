@@ -1,3 +1,139 @@
+// ============================================================
+//  pia_code.js  (PIA — Phase 2 backend)
+// ============================================================
+/*
+  [ OUTLINE ]
+  FILE: pia_code.js
+  PURPOSE (Layman): This is the brain of Phase 2 of Megaworld's RARS — the Privacy Impact
+    Assessment app. After a DCS request is cleared, the applicant fills out a privacy
+    questionnaire here. This file takes that submission, runs it up an approval ladder
+    (Immediate Head → Dept Head → maybe Division Head → ISM/InfoSec), sends every email the
+    process needs, tracks who approved/denied/returned, and finally produces the certificate
+    when everything is fully approved. It also exposes the admin tools used to inspect and
+    resend stuck emails.
+  TECHNICAL: Google Apps Script web-app backend. Single shared Google Spreadsheet is the only
+    DB (tabs: Applications, Approval_Workflow, ISM_Approval_Workflow,
+    DivisionHead_Approval_Workflow, Drafts, Risk_Audit, Email_Queue, Admin_Notification_Config,
+    etc.). Key patterns: queue-based email engine with exponential-backoff retry
+    (queueEmail → processEmailQueue → sendEmailWithRetry), HMAC-SHA256 review tokens
+    (generateAuthToken/isTokenValid, action-bound, 14-day TTL) for one-click approve/deny
+    links, LockService to serialize decisions, domain-restricted doGet, and ISM + Division-Head
+    escalation routing. Column positions are centralized in *_COLS constants. Phases never call
+    each other directly — they coordinate only through the shared sheet and the parentID /
+    Linked_ReqID link plus stored Script Property URLs (PIA_APP_URL, DCS_WEB_APP_URL).
+
+  CATEGORY: CONFIG & SECURITY
+    - getWebAppUrl()                         read PIA web-app URL from Script Properties
+    - getDCSWebAppUrl()                      read DCS web-app URL (fallback to PIA URL)
+    - getAllowedDomain()                     read the single allowed email domain
+    - isAuthorizedDomain(email)              true if email is on the allowed domain
+    - getSystemSecret()                      read HMAC secret (throws if unset)
+    - getNormalizedEmail(email)              strip +alias and lowercase an address
+    - getWorkflowInfoForType(type)           map an email-queue type to its workflow sheet
+    - getAdminNotificationConfig()           read admin-notification settings row
+    - generateAuthToken(sessionId,email,timestamp,action)  build an HMAC review token
+    - isTokenValid(...)                      verify a review token (TTL + action bound)
+    - isValidEmail(email)                    RFC-ish email format check
+    - sanitizeEmail(email)                   trim/lowercase/validate or null
+    - encodePayload(data) / decodePayload(s) base64 URL payload (NOT encryption)
+    - escapeHtml(str)                        HTML-escape for safe email/page output
+
+  CATEGORY: SHEET HELPERS & UI
+    - batchDeleteRows(sheet, rowNumbers)     delete rows bottom-to-top
+    - findRowsToDelete(data, colIndex, value) row numbers matching a column value
+    - getAndShareDCSFiles(dcsReqId)          find + domain-share the DCS attachments
+    - getStyledHtmlWrapper(header, content)  shared HTML page shell for action/result pages
+    - buildPiaEmailHtml_(opts)               navy email-card HTML wrapper
+
+  CATEGORY: ENTRY POINTS (web app)
+    - doGet(e)                               serve the app or handle a token review link
+    - doPost(e)                              route POSTs (admin API)
+    - handleAdminApiRequest(e)               dispatch admin API actions from doPost
+    - handleEmailAction(params)             render/process one-click email approve/deny pages
+
+  CATEGORY: DATABASE & SCHEMA
+    - getDatabaseSpreadsheet(createIfMissing) open (or create) the shared spreadsheet
+    - getDatabaseSheet(sheetName, createIfMissing)  open (or create) a tab
+    - initializeDatabase()                   create all tabs/headers on first run
+    - sheetExists(name)                      tab-exists check
+    - createPhase3SheetWithValidation(...)   create a tab with headers + seed rows
+    - formatHeaderRow(sheet)                 style a header row
+
+  CATEGORY: SESSION IDS & RISK
+    - seedSessionCounterFromDatabase()       sync the ID counter to existing data
+    - formatSessionId(seq, version)          format a PIA session id string
+    - nextBaseSessionId()                    allocate the next new session id
+    - getNextRevisionSessionId(base)         allocate a revision (-R) id
+    - resolveSubmissionId(appData)           pick new vs revision id for a submit
+    - analyzeApplicationRisk(appData)        auto risk flags (PII count, etc.)
+
+  CATEGORY: APPLICATION SUBMIT/READ
+    - submitApplication(appData)             persist a PIA submission + start workflow
+    - buildApproversFromAppData(appData)     derive the approver ladder from DCS data
+    - getApplicationData(sessionId)          full app record + workflow timelines
+    - getUserSubmissions()                   current user's submitted applications
+    - findRowBySessionID(sessionId)          locate the Applications row
+    - getPIIFieldsList(appData)              list selected PII categories
+
+  CATEGORY: APPROVAL WORKFLOW
+    - initializeApprovalWorkflow(sessionId, appData)  seed approver rows
+    - processApprovalDecision(...)           record a head/approver decision + advance
+    - processDivHeadDecision(...)            record a Division-Head escalation decision
+    - checkAllApproved(sessionId)            true when every approver approved
+    - updateDCSStatus(reqId, newStatus)      write status back to the DCS sheet
+    - logAuditTrail(sessionId, action, flags) append a Risk_Audit row
+
+  CATEGORY: ISM & DIVISION HEAD (Phase 3)
+    - apiPhase3_FetchPIAData(sessionId)      PIA answers for the ISM reviewer UI
+    - apiPhase3_FetchDCSData(sessionId)      linked DCS context for the ISM reviewer UI
+    - apiPhase3_GetDivisionHeadConfig(email) division-head lookup/validation
+    - apiPhase3_GetInfoSecMembers()          active InfoSec/ISM roster
+    - apiPhase3_InitializeISMWorkflow(sessionId)  seed the ISM approval chain
+    - apiPhase3_RetryISMWorkflow(sessionId)  re-seed/repair a broken ISM chain
+    - apiPhase3_ProcessISMDecision(...)      record an ISM decision + route
+    - apiPhase3_NotifyISMember(sessionId, step)  email the current ISM member
+    - apiPhase3_RouteApprovedRequest(sessionId, destination)  final routing/certify
+
+  CATEGORY: EMAIL ENGINE & QUEUE
+    - sendEmailWithRetry(recipient, subject, body, options)  send with backoff retry
+    - queueEmail(...)                        enqueue an email row
+    - processEmailQueue()                    drain the queue (trigger-driven)
+    - setupEmailQueueTrigger()               install the queue time trigger
+    - sendDailyReminders()                   nudge the current pending approver
+    - buildReminderEmail(...)                compose one reminder email
+    - getReminderConfig() / setupReminderTrigger()  reminder settings + trigger
+
+  CATEGORY: NOTIFICATION BUILDERS
+    - notifyApprover(sessionId, approverIndex)  build + queue an approver email
+    - notifyApplicant(sessionId, status)     build + queue an applicant status email
+    - generateEmailDecisionsHTML(sessionId)  render the decisions table for emails
+
+  CATEGORY: ADMIN API (email ops + pipeline)
+    - adminGetEmailLog / adminGetFailedEmails / adminResendEmail
+    - adminGetEmailQueue / adminRetryQueuedEmail / adminRetryAllForSession
+    - adminCancelQueuedEmails / adminGetQueueSummary
+    - adminGetReminderConfig / adminSetReminderConfig
+    - adminGetNotificationConfig / adminSetNotificationConfig
+    - adminResendToStage(...) / adminGetPipelineView(sessionId)
+
+  CATEGORY: VALIDATION
+    - validateApplicationData(appData)       server-side submit validation
+    - validateComment(comment, minLength)    decision-comment length/format check
+    - sanitizeInput(data, maxLength, depth)  recursive string clamp/clean
+
+  CATEGORY: CLIENT API (google.script.run)
+    - apiSubmitApplication / apiGetDCSContext / apiGetUserDCSRequests
+    - apiGetUserEmail / apiGetUserSubmissions / apiGenerateNewSessionId
+    - apiProcessApprovalDecision / apiGetApplicationData
+    - apiSaveDraft / apiRestoreDraft / apiListUserDrafts / apiLoadDraft
+    - apiDeleteDraft / apiMarkDraftComplete / apiGenerateRevisionSessionId
+
+  CATEGORY: SETUP / MIGRATION / UTILITIES / TESTS
+    - cleanupExpiredDrafts() / getProp_(key) / migrateAddReminderColumns()
+    - testReminderEngine / testPhase3DatabaseInitialization / reinitializePhase3Database
+    - testFullSystemFlow / testUltimateSystem / checkProperties
+*/
+
 /**
  * PIA System - Google Apps Script Backend
  * Main controller and business logic for Privacy Impact Assessment automation
@@ -7,7 +143,13 @@
 // 🔧 CONFIGURATION & CONSTANTS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// Retrieve Web App URL from script properties (not hardcoded)
+/*
+  Function: getWebAppUrl
+  LAYMAN:    Gets this PIA app's own public URL. Used to build links back into the app.
+  TECHNICAL: Reads the WEB_APP_URL Script Property; logs a warning and returns '' if unset.
+  PARAMS:    (none)
+  RETURNS:   The URL string, or '' when the property is not configured.
+*/
 function getWebAppUrl() {
   const url = PropertiesService.getScriptProperties().getProperty('WEB_APP_URL');
   if (!url) {
@@ -17,7 +159,14 @@ function getWebAppUrl() {
   return url;
 }
 
-// Retrieve DCS (Data Collection System) Web App URL from script properties
+/*
+  Function: getDCSWebAppUrl
+  LAYMAN:    Gets the Phase 1 DCS app's URL so "Update DCS Request" links point to the right
+             app. If it is not set, callers fall back to the PIA URL.
+  TECHNICAL: Reads the DCS_WEB_APP_URL Script Property; logs a warning and returns '' if unset.
+  PARAMS:    (none)
+  RETURNS:   The DCS URL string, or '' when the property is not configured.
+*/
 function getDCSWebAppUrl() {
   const url = PropertiesService.getScriptProperties().getProperty('DCS_WEB_APP_URL');
   if (!url) {
@@ -35,10 +184,14 @@ const pii2Fields = ['Name','Home Address','Business Address','Email Address','Te
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const ENABLE_DOMAIN_CHECK = true; // SECURITY: Strictly restricts access to configured domain
 
-/**
- * Retrieve allowed domain from script properties.
- * Ensure 'ALLOWED_DOMAIN' is set in File > Project Settings > Script Properties.
- */
+/*
+  Function: getAllowedDomain
+  LAYMAN:    Gets the one company email domain that is allowed to use the app.
+  TECHNICAL: Reads the ALLOWED_DOMAIN Script Property; logs a warning and returns '' if unset.
+             '' makes isAuthorizedDomain deny everyone (fail-closed).
+  PARAMS:    (none)
+  RETURNS:   The domain string (e.g. 'megaworldcorp.com'), or '' when unconfigured.
+*/
 function getAllowedDomain() {
   const domain = PropertiesService.getScriptProperties().getProperty('ALLOWED_DOMAIN');
   if (!domain) {
@@ -48,6 +201,15 @@ function getAllowedDomain() {
   return domain;
 }
 
+/*
+  Function: isAuthorizedDomain
+  LAYMAN:    Decides whether a given email is allowed to use the app, based on its domain.
+  TECHNICAL: When ENABLE_DOMAIN_CHECK is on, returns true only if email ends with
+             '@' + getAllowedDomain(). Fail-closed: empty email or unconfigured domain → false.
+  PARAMS:    - email — the address to check.
+  RETURNS:   Boolean. Always true if ENABLE_DOMAIN_CHECK is false.
+  EXAMPLE:   isAuthorizedDomain('a@megaworldcorp.com') -> true
+*/
 function isAuthorizedDomain(email) {
   if (!ENABLE_DOMAIN_CHECK) return true;
   if (!email) return false;
@@ -56,10 +218,14 @@ function isAuthorizedDomain(email) {
   return email.toLowerCase().endsWith('@' + domain);
 }
 
-/**
- * Retrieves the system secret for HMAC generation.
- * Ensure 'SYSTEM_SECRET' is set in File > Project Settings > Script Properties.
- */
+/*
+  Function: getSystemSecret
+  LAYMAN:    Gets the private signing key used to make tamper-proof email approve/deny links.
+  TECHNICAL: Reads SYSTEM_SECRET Script Property. Throws (fail-closed) if missing — tokens must
+             never be signed with an empty key.
+  PARAMS:    (none)
+  RETURNS:   The secret string. Throws Error if not configured.
+*/
 function getSystemSecret() {
   const secret = PropertiesService.getScriptProperties().getProperty('SYSTEM_SECRET');
   if (!secret) throw new Error('Security Error: SYSTEM_SECRET not configured.');
@@ -102,11 +268,16 @@ const RISK_FLAG_THRESHOLD = 18;                      // PII field threshold for 
 // HMAC SECURITY CONFIGURATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/**
- * Normalizes email addresses by removing +alias suffixes.
- * Example: myemail+alias@domain.com → myemail@domain.com
- * This allows email aliasing to work with authorization checks.
- */
+/*
+  Function: getNormalizedEmail
+  LAYMAN:    Cleans up an email so 'user+anything@x.com' and 'user@x.com' count as the same
+             person. Used so token checks and authorization are not fooled by Gmail aliases.
+  TECHNICAL: Lowercases/trims, splits on '@', drops everything after '+' in the local part,
+             rejoins. Returns the lowercased input unchanged if there is no '@'.
+  PARAMS:    - email — the raw address.
+  RETURNS:   Normalized address string, or '' for falsy input.
+  EXAMPLE:   getNormalizedEmail('Me+Tag@X.com') -> 'me@x.com'
+*/
 function getNormalizedEmail(email) {
   if (!email) return '';
   const emailLower = String(email).toLowerCase().trim();
@@ -117,10 +288,15 @@ function getNormalizedEmail(email) {
   return normalizedLocal + '@' + domain;
 }
 
-/**
- * Returns workflow sheet metadata for a given email queue type.
- * Used by queueEmail stamping and processEmailQueue failsafe logic.
- */
+/*
+  Function: getWorkflowInfoForType
+  LAYMAN:    Given an email category ('approver'/'ism'/'divhead'), tells the caller which
+             workflow sheet and columns to stamp email status into.
+  TECHNICAL: Lookup mapping queue type → { name, cols, emailCol } for the matching
+             *_Approval_Workflow sheet. Used by queueEmail stamping / processEmailQueue.
+  PARAMS:    - type — 'approver' | 'ism' | 'divhead'.
+  RETURNS:   { name, cols, emailCol } object, or null for unknown types (e.g. 'applicant').
+*/
 function getWorkflowInfoForType(type) {
   if (type === 'approver') {
     return { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, cols: APPROVAL_COLS, emailCol: APPROVAL_COLS.APPROVER_EMAIL };
@@ -132,10 +308,15 @@ function getWorkflowInfoForType(type) {
   return null;
 }
 
-/**
- * Reads the Admin_Notification_Config sheet and returns the first config row.
- * Returns defaults if sheet is missing or empty.
- */
+/*
+  Function: getAdminNotificationConfig
+  LAYMAN:    Reads the admin settings that say who gets alerted about failed emails and whether
+             to notify the requestor. Falls back to safe defaults if the settings sheet is empty.
+  TECHNICAL: Reads first data row of Admin_Notification_Config via ADMIN_NOTIFICATION_COLS.
+             Wrapped in try/catch; any failure returns the defaults object.
+  PARAMS:    (none)
+  RETURNS:   { adminEmail, notifyOnFailure, notifyRequestor, lastNotified[, configId] }.
+*/
 function getAdminNotificationConfig() {
   var defaults = {
     adminEmail: 'systems.manager@company.com',
@@ -162,6 +343,18 @@ function getAdminNotificationConfig() {
   }
 }
 
+/*
+  Function: generateAuthToken
+  LAYMAN:    Creates the secret signature baked into one-click approve/deny email links so a
+             link cannot be forged or its action swapped (approve→deny).
+  TECHNICAL: HMAC-SHA256 over (sessionId + normalizedEmail + timestamp + action) keyed by
+             SYSTEM_SECRET, hex-encoded. Binding the action prevents CSRF via action tampering.
+  PARAMS:    - sessionId — the application id.
+             - email — approver email (normalized internally).
+             - timestamp — issue time (ms) embedded in the link.
+             - action — the bound action string (e.g. 'approve'); default ''.
+  RETURNS:   Lowercase hex HMAC string.
+*/
 function generateAuthToken(sessionId, email, timestamp, action = '') {
   // CRITICAL FIX: Include action in token to prevent CSRF via action modification
   const normalizedEmail = getNormalizedEmail(email);
@@ -170,12 +363,15 @@ function generateAuthToken(sessionId, email, timestamp, action = '') {
   return signature.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
 }
 
-/**
- * Validate email format using RFC 5322 simplified regex
- * Also validates domain structure (must have dot and valid TLD).
- * @param {string} email - Email to validate
- * @returns {boolean} True if valid email format
- */
+/*
+  Function: isValidEmail
+  LAYMAN:    Checks that a string looks like a real email address.
+  TECHNICAL: Simplified RFC-5322 pattern plus structural checks: exactly one '@', a domain with
+             a dot, a TLD of >= 2 chars, and no consecutive dots.
+  PARAMS:    - email — candidate string.
+  RETURNS:   Boolean. False for non-strings/empty.
+  EXAMPLE:   isValidEmail('a@b.com') -> true ; isValidEmail('a@b') -> false
+*/
 function isValidEmail(email) {
   if (!email || typeof email !== 'string') return false;
   const trimmed = email.trim().toLowerCase();
@@ -197,11 +393,13 @@ function isValidEmail(email) {
   return true;
 }
 
-/**
- * Sanitize email: trim, lowercase, validate
- * @param {string} email - Email to sanitize
- * @returns {string|null} Sanitized email or null if invalid
- */
+/*
+  Function: sanitizeEmail
+  LAYMAN:    Cleans an email (trim + lowercase) and returns it only if it is actually valid.
+  TECHNICAL: Trim/lowercase then isValidEmail gate; logs a WARN and returns null on failure.
+  PARAMS:    - email — raw candidate.
+  RETURNS:   Clean email string, or null if invalid/non-string.
+*/
 function sanitizeEmail(email) {
   if (!email || typeof email !== 'string') return null;
   const trimmed = email.trim().toLowerCase();
@@ -212,12 +410,15 @@ function sanitizeEmail(email) {
   return trimmed;
 }
 
-/**
- * Efficiently delete multiple rows by row number (high to low)
- * Minimizes API calls by deleting sequentially from end to start
- * @param {Sheet} sheet - Target sheet
- * @param {number[]} rowNumbers - Array of row numbers to delete (1-indexed)
- */
+/*
+  Function: batchDeleteRows
+  LAYMAN:    Deletes several rows from a sheet at once, safely.
+  TECHNICAL: Sorts row numbers descending and deletes bottom-to-top so earlier deletions do not
+             shift the indices of rows still to delete. Each delete is in try/catch (logs WARN).
+  PARAMS:    - sheet — target Sheet.
+             - rowNumbers — 1-indexed row numbers to remove.
+  RETURNS:   undefined (mutates the sheet). No-op for empty input.
+*/
 function batchDeleteRows(sheet, rowNumbers) {
   if (!rowNumbers || rowNumbers.length === 0) return;
   // Sort descending: delete from bottom to top to avoid index shifts
@@ -231,13 +432,17 @@ function batchDeleteRows(sheet, rowNumbers) {
   }
 }
 
-/**
- * Find all row numbers matching a column value (optimized for deletion)
- * @param {any[][]} data - Sheet data from getDataRange().getValues()
- * @param {number} colIndex - Column index (1-indexed for COLUMNS constants)
- * @param {string} value - Value to match
- * @returns {number[]} Array of row numbers to delete (1-indexed sheet rows)
- */
+/*
+  Function: findRowsToDelete
+  LAYMAN:    Scans a sheet's data and lists which rows have a given value in a given column —
+             handy for collecting rows to delete in one batch.
+  TECHNICAL: Skips the header (i=1..), trims-and-compares data[i][colIndex-1] to value, returns
+             the 1-indexed sheet row numbers (i+1).
+  PARAMS:    - data — values from getDataRange().getValues().
+             - colIndex — 1-indexed column (matches *_COLS constants).
+             - value — value to match.
+  RETURNS:   Array of 1-indexed row numbers (possibly empty).
+*/
 function findRowsToDelete(data, colIndex, value) {
   const rowsToDelete = [];
   const colIdx = colIndex - 1;  // Convert to 0-indexed
@@ -249,20 +454,28 @@ function findRowsToDelete(data, colIndex, value) {
   return rowsToDelete;
 }
 
-/**
- * Send email with exponential backoff retry (max 3 attempts)
- * @param {string} recipient - Recipient email
- * @param {string} subject - Email subject
- * @param {string} body - Plain text body
- * @param {object} options - Email options (htmlBody, cc, bcc, etc.)
- * @returns {object} {success: boolean, attempts: number, error: string}
- */
+/*
+  Function: sendEmailWithRetry
+  LAYMAN:    Actually sends an email, retrying a couple of times if Gmail is temporarily busy or
+             over quota. The lowest level of the email engine.
+  TECHNICAL: Up to 3 GmailApp.sendEmail attempts with 1s/3s/5s backoff. Only retries on
+             retryable errors (quota / "too many times" / temporary / timeout); other errors fail
+             immediately. Sleeps between retries (Utilities.sleep).
+  PARAMS:    - recipient — to-address.
+             - subject — subject line.
+             - body — plain-text body.
+             - options — GmailApp options (htmlBody, cc, bcc, name, ...).
+  RETURNS:   { success, attempts, error } — error is null on success.
+  EXAMPLE:   sendEmailWithRetry('a@x.com','Hi','text',{htmlBody:'<b>Hi</b>'})
+             -> { success:true, attempts:1, error:null }
+*/
 function sendEmailWithRetry(recipient, subject, body, options) {
   const MAX_ATTEMPTS = 3;
   const RETRY_DELAYS_MS = [1000, 3000, 5000];  // 1s, 3s, 5s backoff
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
+      /* Step 1 — Try to send; success returns immediately. */
       GmailApp.sendEmail(recipient, subject, body, options);
 
       if (attempt > 0) {
@@ -277,6 +490,7 @@ function sendEmailWithRetry(recipient, subject, body, options) {
     } catch (e) {
       const errorMsg = e.toString();
 
+      /* Step 2 — Classify the error; only transient/quota errors are worth retrying. */
       // Check if error is retryable
       const isRetryable = errorMsg.includes('Service invoked too many times') ||
                          errorMsg.includes('quota') ||
@@ -294,6 +508,7 @@ function sendEmailWithRetry(recipient, subject, body, options) {
         };
       }
 
+      /* Step 3 — Retryable and attempts remain: back off, then loop again. */
       // Wait and retry (exponential backoff)
       const delayMs = RETRY_DELAYS_MS[attempt];
       Logger.log('Retry attempt ' + (attempt + 2) + ' in ' + delayMs + 'ms for ' + recipient);
@@ -308,6 +523,17 @@ function sendEmailWithRetry(recipient, subject, body, options) {
   };
 }
 
+/*
+  Function: isTokenValid
+  LAYMAN:    Checks that an approve/deny email link is genuine, not expired, and for the right
+             action — before honoring the click.
+  TECHNICAL: Rejects missing token/timestamp or links older than TOKEN_VALIDITY_MS (14 days).
+             Recomputes the action-bound HMAC and compares. For legacy links issued before the
+             2026-06-01 cutoff it also accepts the old action-less HMAC (bounded backward compat).
+  PARAMS:    - sessionId, email, token, timestamp — fields from the link.
+             - action — expected bound action (default '').
+  RETURNS:   Boolean — true only if the token verifies and is within TTL.
+*/
 function isTokenValid(sessionId, email, token, timestamp, action = '') {
   if (!token || !timestamp) return false;
   const now = new Date().getTime();
@@ -337,21 +563,27 @@ function isTokenValid(sessionId, email, token, timestamp, action = '') {
   return false;
 }
 
-/**
- * Encodes payload for secure URL transmission using base64 encoding.
- * WARNING: This is encoding, NOT encryption. Do not rely on this for sensitive data.
- * Payloads are reversible and should only be used for obfuscation in URLs.
- * For production encryption, consider using Apps Script advanced services or external encryption.
- */
+/*
+  Function: encodePayload
+  LAYMAN:    Packs an object into a compact URL-safe blob. NOT secret — anyone can decode it.
+  TECHNICAL: JSON.stringify → base64. WARNING: encoding, not encryption; reversible. Use only for
+             obfuscation/transport, never to protect sensitive data.
+  PARAMS:    - data — any JSON-serializable value.
+  RETURNS:   Base64 string.
+*/
 function encodePayload(data) {
   const jsonStr = JSON.stringify(data);
   const encoded = Utilities.base64Encode(jsonStr);
   return encoded;
 }
 
-/**
- * Decodes payload from URL parameters (base64 only, not true decryption).
- */
+/*
+  Function: decodePayload
+  LAYMAN:    Unpacks a blob made by encodePayload back into an object.
+  TECHNICAL: base64Decode → JSON.parse, in try/catch. Returns null on any failure (logs it).
+  PARAMS:    - encodedStr — base64 string from encodePayload.
+  RETURNS:   The decoded value, or null if decode/parse fails.
+*/
 function decodePayload(encodedStr) {
   try {
     const jsonStr = Utilities.base64Decode(encodedStr);
@@ -364,6 +596,13 @@ function decodePayload(encodedStr) {
 
 const makeFlagBtn = (label, isQuick = false) => `<button type="button" onclick="${isQuick ? 'toggleQuickFlag(this)' : 'toggleFlagBox(this)'}" data-flag="${escapeHtml(label).replace(/'/g, "\\'")}" class="flag-btn" title="Flag ${escapeHtml(label)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z"/></svg></button>`;
 
+/*
+  Function: escapeHtml
+  LAYMAN:    Makes user text safe to drop into an email or HTML page (no broken markup / XSS).
+  TECHNICAL: Escapes & < > " ' to their HTML entities. Coerces falsy input to ''.
+  PARAMS:    - str — value to escape.
+  RETURNS:   Escaped string.
+*/
 function escapeHtml(str) {
   return String(str || '')
     .replace(/&/g, '&amp;')
@@ -373,10 +612,16 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-/**
- * Reads the Google Drive Admin Folder, matches the DCS file name (by Request ID),
- * and sets them to read-only for approvers to check. Handles multiple files like DSA and NDA_DPA.
- */
+/*
+  Function: getAndShareDCSFiles
+  LAYMAN:    Finds the DCS attachments (NDA/DPA/DSA) for a request in the admin Drive folder and
+             makes them domain-viewable so approvers can open them from the email.
+  TECHNICAL: Resolves ADMIN_FOLDER_ID (Script Property or const), searches by "title contains
+             dcsReqId", sets each match to DOMAIN_WITH_LINK / VIEW. All wrapped in try/catch so a
+             sharing failure never blocks the flow.
+  PARAMS:    - dcsReqId — linked DCS Request ID.
+  RETURNS:   Array of { id, name, url }; [] if none found or on error.
+*/
 function getAndShareDCSFiles(dcsReqId) {
   if (!dcsReqId) return [];
   const foundFiles = [];
@@ -404,10 +649,16 @@ function getAndShareDCSFiles(dcsReqId) {
   return foundFiles;
 }
 
-/**
- * Shared UI wrapper for security and action pages.
- * Matches the Material Design aesthetic used throughout the system.
- */
+/*
+  Function: getStyledHtmlWrapper
+  LAYMAN:    Wraps a header + content into a complete, styled HTML page — used for the
+             "access denied", approve/deny result, and other standalone pages the app serves.
+  TECHNICAL: Returns a full HTML document string (fonts, :root design tokens, toast helpers)
+             with header/content interpolated. Pure template builder, no side-effects.
+  PARAMS:    - header — HTML for the page title/badge area.
+             - content — HTML for the page body.
+  RETURNS:   Complete HTML document string.
+*/
 function getStyledHtmlWrapper(header, content) {
   return `
     <!DOCTYPE html>
@@ -891,12 +1142,25 @@ const ADMIN_NOTIFICATION_COLS = {
 // 📄 WEB APP HANDLERS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: doGet
+  LAYMAN:    The front door of the PIA web app. Decides what a GET request gets back: an
+             "access denied" page for outsiders, the one-click approve/deny page if the URL
+             carries an action token, or the main assessment app (loaded via a DCS parentID).
+  TECHNICAL: GAS web-app entry. Lazy-inits the DB once. Enforces isAuthorizedDomain. Routes:
+             (a) e.parameter.action → handleEmailAction; (b) requires e.parameter.parentID,
+             else an error page; (c) renders the 'index' template (IFRAME sandbox) with parentID.
+  PARAMS:    - e — GAS event with .parameter (action, parentID, token, ...).
+  RETURNS:   HtmlOutput (the served page).
+*/
 function doGet(e) {
+  /* Step 1 — First-run guard: build the DB tabs if they do not exist yet. */
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty(DB_INIT_FLAG_PROP) !== 'true') {
     initializeDatabase();
   }
 
+  /* Step 2 — Domain gate: only corporate accounts may proceed. */
   // Domain authorization check
   const userEmail = Session.getActiveUser().getEmail();
   if (!isAuthorizedDomain(userEmail)) {
@@ -910,11 +1174,13 @@ function doGet(e) {
       .setTitle('Access Denied');
   }
 
+  /* Step 3 — Email action link (approve/deny one-click) → render the action page. */
   // 1. Check if the URL contains an email action command
   if (e && e.parameter && e.parameter.action) {
     return handleEmailAction(e.parameter).setTitle('Privacy Impact Assessment');
   }
 
+  /* Step 4 — Otherwise the SPA requires a DCS parentID; without it, show an error page. */
   // 2. If no action command, require parentID and load the SPA
   const parentId = e.parameter.parentID;
   if (!parentId) {
@@ -937,11 +1203,15 @@ function doGet(e) {
     .setTitle('Privacy Impact Assessment');
 }
 
-/**
- * Handle POST form submissions for approval actions (replaces GET-based CSRF).
- * SECURITY: Requires HMAC token validation to prevent forgery.
- * ALSO handles JSON API calls from the Admin Panel (cross-project UrlFetchApp).
- */
+/*
+  Function: doPost
+  LAYMAN:    Handles POSTs. Two jobs: cross-app JSON calls from the Admin panel, and the
+             form-POST version of an approval action (POST instead of GET avoids CSRF on the link).
+  TECHNICAL: Lazy-inits DB. If postData is application/json → handleAdminApiRequest. Otherwise
+             enforces the domain gate, then processes the token-validated approval form post.
+  PARAMS:    - e — GAS event with .postData and .parameter.
+  RETURNS:   ContentService/HtmlOutput depending on branch.
+*/
 function doPost(e) {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty(DB_INIT_FLAG_PROP) !== 'true') {
@@ -974,11 +1244,16 @@ function doPost(e) {
   ));
 }
 
-/**
- * Routes admin API calls from the external Admin Panel.
- * Expects JSON POST: { "apiKey": "shared-secret", "action": "functionName", "params": {} }
- * Returns JSON via ContentService.
- */
+/*
+  Function: handleAdminApiRequest
+  LAYMAN:    The cross-app API the Admin panel calls to inspect/retry emails, manage reminders,
+             and view the pipeline. Checks a shared key, then runs the named admin function.
+  TECHNICAL: Parses JSON { apiKey, action, params }, authenticates apiKey against the
+             ADMIN_API_KEY Script Property (fail-closed), dispatches action via a switch to the
+             admin* helpers, and returns the result as JSON ContentService output. All in try/catch.
+  PARAMS:    - e — GAS event; e.postData.contents is the JSON body.
+  RETURNS:   JSON TextOutput: { success, ... } or { success:false, error }.
+*/
 function handleAdminApiRequest(e) {
   try {
     const body = JSON.parse(e.postData.contents);
@@ -1059,10 +1334,22 @@ function handleAdminApiRequest(e) {
   }
 }
 
-/**
- * Handles approval/rejection actions triggered via email links.
- * Enforces identity verification and HMAC token validation.
- */
+/*
+  Function: handleEmailAction
+  LAYMAN:    Powers the one-click approve/deny/return/review pages that approvers reach from the
+             emails. It checks the click is genuine, shows the full application for review with a
+             confirm form (GET), and on confirm (POST) records the decision and shows the result.
+  TECHNICAL: The largest handler. Steps: validate action is allowed; identity = active user must
+             equal the token's target email AND isTokenValid(action-bound); block if a decision was
+             already recorded (idempotency, scanned across the right workflow sheet: ISM / divhead /
+             standard approver); load application + linked DCS context; build a review preview.
+             On GET render the confirm page; on POST route to apiPhase3_ProcessISMDecision /
+             processDivHeadDecision / processApprovalDecision and render the outcome. Heavy inline
+             HTML; logic lives at the step markers below.
+  PARAMS:    - params — query/form params: action, sessionId, token, ts, email, isPost,
+                        approverType, step, comment, approverFlags, routingDestination, ...
+  RETURNS:   HtmlOutput — review page, "already recorded" page, access-denied page, or result page.
+*/
 function handleEmailAction(params) {
   const webAppUrl = getWebAppUrl() || ScriptApp.getService().getUrl();
   const { action, sessionId, token, ts, isPost, approverType } = params;
@@ -1082,6 +1369,8 @@ function handleEmailAction(params) {
   // Normalize both emails to handle aliases (e.g., user+alias@domain.com matches user@domain.com)
   const normalizedActiveUser = getNormalizedEmail(activeUser);
   const normalizedTargetEmail = getNormalizedEmail(targetEmail);
+  /* Step 1 — Identity + token gate: the signed-in user must BE the link's target AND the
+     action-bound HMAC must verify. Both conditions required (no CSRF, no forwarding abuse). */
   // CRITICAL FIX: Include action in token validation to prevent CSRF
   const isAuthorized = (normalizedActiveUser === normalizedTargetEmail) && isTokenValid(sessionId, targetEmail, token, ts, action);
   
@@ -1099,6 +1388,9 @@ function handleEmailAction(params) {
   
   const stepParam = params.step ? Number(params.step) : null;
 
+  /* Step 2 — Idempotency: scan the relevant workflow sheet (ISM / divhead / standard) for this
+     approver's row. If a non-pending decision already exists, short-circuit to a "Review Completed"
+     page so decisions can never be re-submitted or changed. */
   // Check if decision has already been recorded for this user (prevent duplicate actions or modifications)
   let recordStatus = 'Pending';
   let existingDecision = '';
@@ -1185,6 +1477,7 @@ function handleEmailAction(params) {
     ));
   }
 
+  /* Step 3 — Load the PIA application and its linked DCS context for the review preview. */
   // Fetch Application Data
   const appData = getApplicationData(sessionId);
 
@@ -2168,6 +2461,8 @@ function handleEmailAction(params) {
     return HtmlService.createHtmlOutput(getStyledHtmlWrapper(`<span class="step-badge">InfoSec Review Required</span><h1>Privacy Assessment Review</h1>`, content));
   };
 
+  /* Step 4a — ISM branch: GET shows the InfoSec review form; POST validates the comment then
+     records the decision via apiPhase3_ProcessISMDecision (handles approve/deny/escalate/route). */
   // Handle ISM Review (Phase 3) - display the form
   if (action === 'ISMReview') {
     if (isPost !== 'true') {
@@ -2476,10 +2771,13 @@ function handleEmailAction(params) {
     return HtmlService.createHtmlOutput(getStyledHtmlWrapper(`<span class="step-badge">Action Required</span><h1>Review Access Request</h1>`, content));
   };
 
+  /* Step 4b — Standard approver / Division-Head branch: GET shows the review form; POST below. */
   if (isPost !== 'true') {
     return renderReviewForm('', '', params.approverType);
   }
-  
+
+  /* Step 5 — On a Deny/Return POST, enforce a meaningful reason (length + anti-gibberish checks)
+     before recording; re-render the form with an error if it fails. */
   // Validate POST decisions (Approve, Return, Deny)
   if (action === 'Return' || action === 'Deny') {
     const plainTextComment = comment.replace(/<[^>]*>/g, '').trim();
@@ -2499,12 +2797,14 @@ function handleEmailAction(params) {
     }
   }
 
+  /* Step 6 — Record the decision in the right sheet, then render success/failure. A failure here
+     usually means the application advanced/closed in the meantime (race), so the link is now stale. */
   let result;
   if (approverType === 'divhead') {
     result = processDivHeadDecision(
-      sessionId, 
-      targetEmail, 
-      action, 
+      sessionId,
+      targetEmail,
+      action,
       comment || 'Approved via secure access review link.',
       approverFlags
     );
@@ -2540,6 +2840,15 @@ function handleEmailAction(params) {
   }
 }
 
+/*
+  Function: getDatabaseSpreadsheet
+  LAYMAN:    Opens the one shared Google Spreadsheet that is the whole system's database. Finds it
+             by stored id, or falls back to the active/bound spreadsheet, or creates a new one.
+  TECHNICAL: Resolves DB via DB_SPREADSHEET_ID_PROP; else uses getActiveSpreadsheet() and caches its
+             id; else (createIfMissing !== false) creates 'PIA System Database' and caches its id.
+  PARAMS:    - createIfMissing — pass false to never create (returns null instead).
+  RETURNS:   Spreadsheet object, or null when not found and createIfMissing === false.
+*/
 function getDatabaseSpreadsheet(createIfMissing) {
   const scriptProperties = PropertiesService.getScriptProperties();
   const spreadsheetId = scriptProperties.getProperty(DB_SPREADSHEET_ID_PROP);
@@ -2563,6 +2872,16 @@ function getDatabaseSpreadsheet(createIfMissing) {
   return databaseSpreadsheet;
 }
 
+/*
+  Function: getDatabaseSheet
+  LAYMAN:    Opens a specific tab (e.g. 'Applications') inside the shared spreadsheet, creating it
+             if it is missing and you allow that.
+  TECHNICAL: Gets the spreadsheet, returns getSheetByName(sheetName); if absent and
+             createIfMissing !== false, insertSheet (try/catch). Logs and returns null on failure.
+  PARAMS:    - sheetName — tab name (use DB_SHEET_NAMES.*).
+             - createIfMissing — pass false to require an existing tab.
+  RETURNS:   Sheet object, or null if not found/createIfMissing is false/creation fails.
+*/
 function getDatabaseSheet(sheetName, createIfMissing) {
   const spreadsheet = getDatabaseSpreadsheet(createIfMissing !== false);
   if (!spreadsheet) {
@@ -2598,6 +2917,16 @@ function getDatabaseSheet(sheetName, createIfMissing) {
 // 💾 DATABASE INITIALIZATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: initializeDatabase
+  LAYMAN:    First-run setup. Creates every tab the system needs (Applications, the workflow sheets,
+             Drafts, Risk_Audit, Email_Queue, etc.) with proper headers, exactly once.
+  TECHNICAL: Guarded by DB_INIT_FLAG_PROP and a script LockService lock (waitLock 30s) with a
+             double-checked flag to prevent concurrent re-init. Creates each missing sheet with its
+             header row + formatHeaderRow, seeds the session counter, then sets the init flag.
+  PARAMS:    (none)
+  RETURNS:   undefined. Throws 'System busy...' if the lock cannot be acquired.
+*/
 function initializeDatabase() {
   const scriptProperties = PropertiesService.getScriptProperties();
   const isInitialized = scriptProperties.getProperty(DB_INIT_FLAG_PROP) === 'true';
@@ -2835,14 +3164,28 @@ function initializeDatabase() {
   }
 }
 
+/*
+  Function: sheetExists
+  LAYMAN:    True/false: does this tab already exist?
+  TECHNICAL: getDatabaseSheet(name, false) coerced to boolean (no creation).
+  PARAMS:    - name — tab name.
+  RETURNS:   Boolean.
+*/
 function sheetExists(name) {
   return !!getDatabaseSheet(name, false);
 }
 
-/**
- * Force create a sheet with headers and formatting
- * Used during initialization to ensure sheets are created properly
- */
+/*
+  Function: createPhase3SheetWithValidation
+  LAYMAN:    Builds one tab with its headers (and optional starter rows), then double-checks the
+             column count came out right. Used during initialization for the Phase 3 sheets.
+  TECHNICAL: getDatabaseSheet(create) → appendRow(headers) → formatHeaderRow → append seedData →
+             assert getLastColumn() === headers.length, else throw. Re-throws on any error.
+  PARAMS:    - sheetName — tab to create.
+             - headers — header row array.
+             - seedData — optional array of rows to append.
+  RETURNS:   true on success; throws on failure.
+*/
 function createPhase3SheetWithValidation(sheetName, headers, seedData) {
   Logger.log(`\n  Creating ${sheetName} sheet...`);
   
@@ -2885,17 +3228,16 @@ function createPhase3SheetWithValidation(sheetName, headers, seedData) {
   }
 }
 
-/**
- * DEBUG FUNCTION: Test and fix Phase 3 database schema generation
- * Run this in the Apps Script Console if Phase 3 sheets don't generate properly
- * 
- * Steps:
- * 1. Open Apps Script Editor (Extensions → Apps Script)
- * 2. Click "Run" next to testPhase3DatabaseInitialization
- * 3. Grant permissions if prompted
- * 4. Check Logs (View → Logs) for detailed output
- * 5. Verify sheets in your Google Sheet
- */
+/*
+  Function: testPhase3DatabaseInitialization
+  LAYMAN:    A manual debug tool (run from the Apps Script editor) that forces a fresh DB build and
+             logs whether every Phase 3 sheet and column came out correct.
+  TECHNICAL: Clears DB_INIT_FLAG_PROP, runs initializeDatabase(), then verifies expected column
+             counts and dumps headers for each Phase 3 sheet to Logger. Diagnostics only — not
+             called by the app at runtime.
+  PARAMS:    (none)
+  RETURNS:   undefined (writes to Logger).
+*/
 function testPhase3DatabaseInitialization() {
   Logger.log('╔════════════════════════════════════════════════════════════╗');
   Logger.log('║  PHASE 3 DATABASE INITIALIZATION TEST & FIX                 ║');
@@ -3015,10 +3357,14 @@ function testPhase3DatabaseInitialization() {
   }
 }
 
-/**
- * MANUAL TRIGGER: Allows users to manually reinitialize the database
- * Run this if sheets don't generate properly
- */
+/*
+  Function: reinitializePhase3Database
+  LAYMAN:    Manual "rebuild the database" button — clears the init flag and runs setup again.
+  TECHNICAL: Deletes DB_INIT_FLAG_PROP then calls initializeDatabase(). Existing sheets are kept
+             (initializeDatabase only creates missing ones).
+  PARAMS:    (none)
+  RETURNS:   undefined.
+*/
 function reinitializePhase3Database() {
   Logger.log('  Attempting to reinitialize Phase 3 database...');
   const scriptProperties = PropertiesService.getScriptProperties();
@@ -3027,6 +3373,13 @@ function reinitializePhase3Database() {
   Logger.log('  Phase 3 database reinitialized. Check your sheets!');
 }
 
+/*
+  Function: formatHeaderRow
+  LAYMAN:    Styles the top row of a sheet (navy background, white bold text) so headers stand out.
+  TECHNICAL: Sets background/fontColor/fontWeight/fontSize on row 1 across all columns.
+  PARAMS:    - sheet — target Sheet.
+  RETURNS:   undefined (mutates formatting).
+*/
 function formatHeaderRow(sheet) {
   const range = sheet.getRange(1, 1, 1, sheet.getLastColumn());
   range.setBackground('#185FA5')
@@ -3035,6 +3388,15 @@ function formatHeaderRow(sheet) {
     .setFontSize(11);
 }
 
+/*
+  Function: seedSessionCounterFromDatabase
+  LAYMAN:    Makes sure the "next application number" counter is never behind what is already in the
+             sheet, so new IDs do not collide with existing ones.
+  TECHNICAL: Scans Applications column A for PIA-###### ids, takes the max sequence found and the
+             current counter, stores the larger into SESSION_ID_COUNTER_PROP. No-op if sheet empty.
+  PARAMS:    (none)
+  RETURNS:   undefined.
+*/
 function seedSessionCounterFromDatabase() {
   const appSheet = getDatabaseSheet(DB_SHEET_NAMES.APPLICATIONS, false);
   if (!appSheet) {
@@ -3060,6 +3422,16 @@ function seedSessionCounterFromDatabase() {
   PropertiesService.getScriptProperties().setProperty(SESSION_ID_COUNTER_PROP, String(maxSequence));
 }
 
+/*
+  Function: formatSessionId
+  LAYMAN:    Builds the application id string, e.g. 'PIA-000042', adding '-V2' for revisions.
+  TECHNICAL: Zero-pads sequenceNumber to 6 digits; appends '-V<versionNumber>' when version > 0.
+             Throws if sequence exceeds 999999.
+  PARAMS:    - sequenceNumber — the running counter value.
+             - versionNumber — 0 for a fresh id, >0 for a revision suffix.
+  RETURNS:   Session id string. Throws on overflow.
+  EXAMPLE:   formatSessionId(42, 0) -> 'PIA-000042' ; formatSessionId(42, 2) -> 'PIA-000042-V2'
+*/
 function formatSessionId(sequenceNumber, versionNumber) {
   // HIGH FIX: Validate sequence number doesn't exceed 999999 (6 digits)
   if (sequenceNumber > 999999) {
@@ -3069,6 +3441,15 @@ function formatSessionId(sequenceNumber, versionNumber) {
   return versionNumber > 0 ? `${baseId}-V${versionNumber}` : baseId;
 }
 
+/*
+  Function: nextBaseSessionId
+  LAYMAN:    Hands out the next brand-new application id, making sure two submissions never grab the
+             same number even if they happen at the same time.
+  TECHNICAL: Under a script lock (waitLock 30s), reads+increments SESSION_ID_COUNTER_PROP (throws at
+             999999) and returns formatSessionId(next, 0). Lock released in finally.
+  PARAMS:    (none)
+  RETURNS:   New base session id string (e.g. 'PIA-000043'). Throws on lock failure / overflow.
+*/
 function nextBaseSessionId() {
   const lock = LockService.getScriptLock();
   let lockAcquired = false;
@@ -3097,6 +3478,16 @@ function nextBaseSessionId() {
   }
 }
 
+/*
+  Function: getNextRevisionSessionId
+  LAYMAN:    Given an existing application id, produces the next revision id (e.g. base-V1, base-V2)
+             so a returned application can be resubmitted as a new version without losing its lineage.
+  TECHNICAL: Under a script lock, strips any '-V#' from baseSessionId, scans Applications for ids
+             sharing that base, finds the highest existing -V# and returns base-V<max+1>. Falls back
+             to nextBaseSessionId() if the base is empty.
+  PARAMS:    - baseSessionId — the original (or any version of the) application id.
+  RETURNS:   Revision id string (e.g. 'PIA-000042-V3'). Throws on lock failure.
+*/
 function getNextRevisionSessionId(baseSessionId) {
   const lock = LockService.getScriptLock();
   let lockAcquired = false;
@@ -3149,6 +3540,15 @@ function getNextRevisionSessionId(baseSessionId) {
   }
 }
 
+/*
+  Function: resolveSubmissionId
+  LAYMAN:    Decides which application id a submission should use: an explicit one passed in, a
+             formatted version of a base id, or a brand-new id if neither is given.
+  TECHNICAL: Precedence: appData.appId → formatSessionId(base seq, version) when baseSessionId looks
+             like PIA-###### → nextBaseSessionId(). Strips -V# from the base before formatting.
+  PARAMS:    - appData — submission object (appId?, baseSessionId?, version?).
+  RETURNS:   The resolved session id string.
+*/
 function resolveSubmissionId(appData) {
   const suppliedId = String(appData?.appId || '').trim();
   if (suppliedId) {
@@ -3178,6 +3578,17 @@ function resolveSubmissionId(appData) {
 // Flagging System 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: analyzeApplicationRisk
+  LAYMAN:    Auto-screens a submission for suspicious patterns (e.g. the drafter is also their own
+             approver, identical approver names, an almost-empty description, too few/many PII
+             fields, copy-pasted data-flow answers) and flags it for closer review.
+  TECHNICAL: Pure heuristic checks over pia1/pia2/pia4. Normalizes the polymorphic pia2 shape
+             (flat array / {fields,customOthers} / numeric-key object), counts 'YES' PII fields,
+             and applies the conflict / short-entry / redundancy rules. No side-effects.
+  PARAMS:    - appData — the full submission object.
+  RETURNS:   { isFlagged: boolean, reasons: string[] }.
+*/
 function analyzeApplicationRisk(appData) {
   let isFlagged = false;
   const reasons = [];
@@ -3241,9 +3652,24 @@ function analyzeApplicationRisk(appData) {
   return { isFlagged, reasons };
 }
 
+/*
+  Function: submitApplication
+  LAYMAN:    The core "save my PIA" action. Figures out the id, writes all five PIA sections into
+             the Applications sheet (new row, or update if resubmitting), runs risk screening,
+             (re)builds the approver ladder, and kicks off the first approver + applicant emails.
+  TECHNICAL: resolveSubmissionId → serialize pia1..pia5 JSON → analyzeApplicationRisk. If the id
+             already exists it UPDATEs under a LockService lock with re-checked ownership (anti-
+             TOCTOU; rejects editing another user's app) and resets the approval/ISM/divhead rows;
+             otherwise it INSERTs a new row. Blocks resubmission while the linked DCS is 'Returned'.
+             Then initializeApprovalWorkflow and notifyApprover(…,0)/notifyApplicant; email failures
+             are caught and surfaced as a warning (never roll back the DB write).
+  PARAMS:    - appData — full submission: pia1..pia5, pia2CustomOthers, linkedReqId, appId/base/version.
+  RETURNS:   { success:true, appId, timestamp, message, warning } or { success:false, error }.
+*/
 function submitApplication(appData) {
   try {
     Logger.log('submitApplication called with: appId=' + (appData?.appId || 'empty') + ', baseSessionId=' + (appData?.baseSessionId || 'empty') + ', isEditing=' + appData?.isEditing);
+    /* Step 1 — Resolve the id and stamp applicant email + timestamp. */
     const sessionId = resolveSubmissionId(appData);
     Logger.log('  Resolved sessionId: ' + sessionId);
     appData.appId = sessionId;
@@ -3267,6 +3693,7 @@ function submitApplication(appData) {
     const pia4Data = JSON.stringify(appData.pia4);
     const pia5Data = JSON.stringify(appData.pia5);
     
+    /* Step 2 — Risk-screen; only build an audit payload if real anomalies were found. */
     // ── Risk analysis for isFlagged column (Applications sheet metadata) ──
     const riskAnalysis = analyzeApplicationRisk(appData);
     appData.isFlagged = riskAnalysis.isFlagged;
@@ -3281,6 +3708,7 @@ function submitApplication(appData) {
     let rowNum = findRowBySessionID(sessionId);
     const isEditing = rowNum > 0;
 
+    /* Step 3 — Gate: if the linked DCS request was Returned, block the PIA resubmission. */
     // ENFORCE DCS COMPLETION BEFORE PIA EDITING
     if (appData.linkedReqId) {
       let hasDCSFlags = false;
@@ -3308,6 +3736,8 @@ function submitApplication(appData) {
       }
     }
 
+    /* Step 4 — Existing id → UPDATE path: lock, re-verify ownership, overwrite the PIA cells, then
+       clear and rebuild the approval/ISM/divhead workflow rows. */
     if (rowNum > 0) {
       // CRITICAL FIX C5: Acquire lock to prevent race condition on resubmission
       const lock = LockService.getScriptLock();
@@ -3394,6 +3824,7 @@ function submitApplication(appData) {
         lock.releaseLock();
       }
     } else {
+      /* Step 5 — New id → INSERT a fresh Applications row, then seed the approval workflow. */
       // INSERT new row (new submission)
       appSheet.appendRow([
         sessionId,               // SessionID
@@ -3425,6 +3856,7 @@ function submitApplication(appData) {
       }
     }
     
+    /* Step 6 — Notify first approver + applicant; isolate email failures so a saved app never fails. */
     // Send email notification to first approver
     // Wrap in try-catch so email failure never rolls back a successful DB write
     let emailWarning = null;
@@ -3457,10 +3889,24 @@ function submitApplication(appData) {
 //   APPROVAL WORKFLOW
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/**
- * Processes a decision from a Division Head for an escalated application.
- * This is part of the isolated Phase 3 workflow.
- */
+/*
+  Function: processDivHeadDecision
+  LAYMAN:    Records a Division Head's verdict on an application that an ISM member escalated to
+             them. Approve resumes the ISM chain (or finalizes if everyone is done); Deny/Return
+             ends or bounces the application back.
+  TECHNICAL: Under a script lock, re-reads DivisionHead_Approval_Workflow, finds the pending row for
+             (sessionId, approverEmail), stamps decision/comments/date. On Approve: flips the related
+             ISM 'EscalatedToDivisionHead' row to Approved, and if all ISM members are now Approved
+             marks the app 'Approved by ISM', notifies the applicant, updates DCS to 'Complete', and
+             routes; otherwise resumes apiPhase3_NotifyISMember at the next step. On Deny/Return:
+             sets app status, optionally returns the DCS, and notifies the applicant. Lock in finally.
+  PARAMS:    - sessionId — application id.
+             - approverEmail — the Division Head acting.
+             - decision — 'Approve' | 'Deny' | 'Return'.
+             - comments — decision reason/notes.
+             - approverFlags — JSON of field flags (used on Return); default '{}'.
+  RETURNS:   { success:true, message } or { success:false, error }.
+*/
 function processDivHeadDecision(sessionId, approverEmail, decision, comments, approverFlags = '{}') {
   const lock = LockService.getScriptLock();
   let lockAcquired = false;
@@ -3592,11 +4038,18 @@ function processDivHeadDecision(sessionId, approverEmail, decision, comments, ap
     }
   }
 }
-/**
- * Builds the approvers list dynamically from PIA 1 form data.
- * Fetches Department Head and Division Head emails from the submitted application.
- * Falls back to hardcoded Privacy Officer if not provided in appData.
- */
+/*
+  Function: buildApproversFromAppData
+  LAYMAN:    Works out the approver ladder for an application from its PIA 1 answers: Immediate Head
+             (step 1), then Department Head (step 2). If neither has a valid email, it falls back to
+             the configured Privacy Officer.
+  TECHNICAL: Reads pia1, sanitizeEmail-validates each head email, and pushes {name,email,step}. If
+             the list is empty, falls back to PRIVACY_OFFICER_EMAIL Script Property (validated).
+             Invalid emails are logged and skipped. (Division Head is NOT seeded here — that comes via
+             the ISM escalation path.)
+  PARAMS:    - appData — submission with a pia1 section.
+  RETURNS:   Array of { name, email, step } (may be empty if nothing valid configured).
+*/
 function buildApproversFromAppData(appData) {
   const approvers = [];
   const pia1 = appData.pia1 || {};
@@ -3648,6 +4101,16 @@ function buildApproversFromAppData(appData) {
   return approvers;
 }
 
+/*
+  Function: initializeApprovalWorkflow
+  LAYMAN:    Creates the to-do rows in the approval sheet — one per approver in the ladder — all
+             starting as 'Pending'.
+  TECHNICAL: buildApproversFromAppData → append one Approval_Workflow row per approver with id
+             '<sessionId>-<n>', the step number, and Pending Status/EmailStatus.
+  PARAMS:    - sessionId — application id.
+             - appData — submission (source of the approver ladder).
+  RETURNS:   undefined (writes rows). No rows if no approvers resolved.
+*/
 function initializeApprovalWorkflow(sessionId, appData) {
   const apprSheet = getDatabaseSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
   
@@ -3673,6 +4136,21 @@ function initializeApprovalWorkflow(sessionId, appData) {
   });
 }
 
+/*
+  Function: processApprovalDecision
+  LAYMAN:    Records a head/approver's verdict (Approve / Return / Deny) on an application and moves
+             the process forward: next approver, hand-off to the ISM stage when all heads approve, or
+             bounce/kill the application.
+  TECHNICAL: Validates decision, takes a script lock, re-reads Approval_Workflow (anti-stale), locates
+             the matching Pending row by normalized email (and optional step), stamps it. Approve:
+             if all approver rows are Approved → initialize the ISM workflow (apiPhase3_InitializeISMWorkflow)
+             and notify the first ISM member; on ISM-init failure sets 'Approved (ISM Pending)'. Else
+             notify the next approver. Return: status 'Returned', save flags, optionally return the
+             linked DCS. Deny: status 'Denied'. Always notifies the applicant; lock released in finally.
+  PARAMS:    - sessionId, approverEmail, decision('Approve'|'Return'|'Deny'), comments.
+             - stepParam — optional step to disambiguate; approverFlags — JSON flags (default '{}').
+  RETURNS:   { success:true, message } or { success:false, error }.
+*/
 function processApprovalDecision(sessionId, approverEmail, decision, comments, stepParam = null, approverFlags = '{}') {
   try {
     const allowedDecisions = ['Approve', 'Return', 'Deny'];
@@ -3736,8 +4214,10 @@ function processApprovalDecision(sessionId, approverEmail, decision, comments, s
       apprSheet.getRange(currentRow, APPROVAL_COLS.DECISION_DATE).setValue(timestamp);
       
       if (decision === 'Approve') {
+        /* Approve branch — when every approver row is Approved, hand off to the ISM stage;
+           otherwise advance to the next approver. */
         apprSheet.getRange(currentRow, APPROVAL_COLS.STATUS).setValue('Approved');
-        
+
         // Re-read fresh data after lock to check all approvals (prevents stale cache)
         const freshApprData = apprSheet.getDataRange().getValues();
         let allApproved = true;
@@ -3859,6 +4339,14 @@ function processApprovalDecision(sessionId, approverEmail, decision, comments, s
   }
 }
 
+/*
+  Function: checkAllApproved
+  LAYMAN:    Tells you whether every approver in the ladder has approved this application.
+  TECHNICAL: Scans Approval_Workflow rows for sessionId; returns false on the first non-'Approved'
+             status, true otherwise. Logs a warning for any unrecognized status value.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   Boolean (true also if there are no matching rows).
+*/
 function checkAllApproved(sessionId) {
   const apprSheet = getDatabaseSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
   const data = apprSheet.getDataRange().getValues();
@@ -3882,9 +4370,16 @@ function checkAllApproved(sessionId) {
   return true;
 }
 
-/**
- * Helper function to update the status in the Data_Collection sheet.
- */
+/*
+  Function: updateDCSStatus
+  LAYMAN:    Writes a status back onto the Phase 1 DCS request — how PIA tells DCS "this is now
+             Complete / Returned".
+  TECHNICAL: Finds the Data_Collection row by REQ_ID and sets its STATUS cell. This is the only
+             cross-phase write PIA makes into the DCS sheet (the shared-DB integration point).
+  PARAMS:    - reqId — the DCS Request ID (Linked_ReqID).
+             - newStatus — the status string to write (e.g. 'Complete', 'Returned').
+  RETURNS:   undefined (no-op if reqId not found).
+*/
 function updateDCSStatus(reqId, newStatus) {
   const dcsSheet = getDatabaseSheet(DB_SHEET_NAMES.DATA_COLLECTION, true);
   const dcsData = dcsSheet.getDataRange().getValues();
@@ -3911,6 +4406,17 @@ function updateDCSStatus(reqId, newStatus) {
 //   function setupEmailQueueTrigger() → run once
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: queueEmail
+  LAYMAN:    Does NOT send an email — it drops it into the Email_Queue sheet so the background
+             trigger can send it later. This keeps slow/throttled Gmail off the web-request path.
+  TECHNICAL: Appends a Pending Email_Queue row (generated EQ-<ts>-<rand> id, plain+html bodies,
+             type, 0 attempts). Then best-effort stamps EmailStatus='Pending' on the matching
+             workflow row (approver/ism/divhead) so the admin panel can see queued sends. All in
+             try/catch; stamping failure is non-fatal.
+  PARAMS:    - sessionId, recipient, subject, plainBody, type, htmlBody.
+  RETURNS:   The queueId string, or null on failure.
+*/
 function queueEmail(sessionId, recipient, subject, plainBody, type, htmlBody) {
   try {
     const queueSheet = getDatabaseSheet(DB_SHEET_NAMES.EMAIL_QUEUE, true);
@@ -3976,6 +4482,18 @@ function queueEmail(sessionId, recipient, subject, plainBody, type, htmlBody) {
   }
 }
 
+/*
+  Function: processEmailQueue
+  LAYMAN:    The background worker (runs every minute on a trigger) that actually sends the queued
+             emails, spacing them out to avoid Gmail throttling and retrying ones that fail.
+  TECHNICAL: Iterates Email_Queue Pending rows (cap MAX_SENDS_PER_CYCLE, 10s spacing, stops if daily
+             quota < 2). On success marks Sent + logs audit. On error increments attempts; after 9
+             attempts marks Failed and runs the failsafe: stamps the workflow row EmailStatus/Error,
+             and — once per queue entry (NOTIFIED_ADMIN guard) — emails the admin and optionally the
+             requestor per getAdminNotificationConfig.
+  PARAMS:    (none) — invoked by the time trigger.
+  RETURNS:   { success:true, sent:<count> } or { success:false, error }.
+*/
 function processEmailQueue() {
   const MAX_SENDS_PER_CYCLE = 15;   // Cap to stay well within 30-min execution limit
   const SPACING_MS = 10000;         // 10 seconds between sends — safe for Gmail quota
@@ -4157,6 +4675,14 @@ function processEmailQueue() {
   }
 }
 
+/*
+  Function: setupEmailQueueTrigger
+  LAYMAN:    One-time setup: installs the every-minute background job that drains the email queue.
+  TECHNICAL: Deletes any existing processEmailQueue trigger (dedupe), then creates a new time-based
+             everyMinutes(1) trigger. Requires the script.scriptapp scope.
+  PARAMS:    (none)
+  RETURNS:   { success:true, message }.
+*/
 function setupEmailQueueTrigger() {
   // Remove any existing trigger to prevent duplicates
   const triggers = ScriptApp.getProjectTriggers();
@@ -4184,6 +4710,20 @@ function setupEmailQueueTrigger() {
 // Uses CacheService continuation tokens to survive 6-min timeout.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: sendDailyReminders
+  LAYMAN:    The daily nudge. Looks across all three approval sheets for whoever is currently holding
+             things up and queues them one gentle reminder per day — but only the next person in
+             line, never people who haven't been reached yet.
+  TECHNICAL: Trigger-driven; no-op if config.enabled is false. Pre-filters to sessionIds whose
+             application is in an active status. For each of the three workflow sheets it groups
+             Pending rows by sessionId, keeps only the LOWEST pending step (sequential order), skips
+             rows already reminded today, and calls buildReminderEmail + stamps today's REMINDER_DATE.
+             Uses a CacheService continuation token + MAX_SCAN_ROWS cap to survive the execution-time
+             limit, and stops early if the Gmail daily quota is nearly exhausted.
+  PARAMS:    (none)
+  RETURNS:   { success:true, processed, reminded } (plus skipped/capped/quotaExhausted flags).
+*/
 function sendDailyReminders() {
   // Check if reminders are enabled
   const config = getReminderConfig();
@@ -4392,10 +4932,16 @@ function sendDailyReminders() {
   return { success: true, processed: processedCount, reminded: remindedCount };
 }
 
-/**
- * Builds and queues a gentle reminder email for a pending approver.
- * Uses the same HMAC-token review link pattern as notifyApprover().
- */
+/*
+  Function: buildReminderEmail
+  LAYMAN:    Composes one reminder email (with a valid one-click Review link) and drops it in the
+             queue.
+  TECHNICAL: Resolves the web-app URL, loads the app data, builds an action-bound HMAC 'Review' link
+             (same pattern as notifyApprover), renders the navy email via buildPiaEmailHtml_, and
+             queueEmail(type:'reminder'). Re-throws so sendDailyReminders can log per-row failures.
+  PARAMS:    - sessionId, approverEmail, approverName, stepInfo (e.g. 'Step 2').
+  RETURNS:   undefined. Returns early (no send) if URL/app data unavailable; throws on send-build error.
+*/
 function buildReminderEmail(sessionId, approverEmail, approverName, stepInfo) {
   try {
     // CRITICAL: Guard against null ScriptApp.getService() when running from editor
@@ -4452,10 +4998,14 @@ function buildReminderEmail(sessionId, approverEmail, approverName, stepInfo) {
   }
 }
 
-/**
- * Reads reminder configuration from Script Properties.
- * Returns defaults if not configured.
- */
+/*
+  Function: getReminderConfig
+  LAYMAN:    Reads the reminder settings (on/off, hour, timezone), with sensible defaults.
+  TECHNICAL: Parses REMINDER_CONFIG_PROP JSON; on absence/parse error returns
+             { enabled:true, hour:8, timezone: script TZ || 'Asia/Manila' }.
+  PARAMS:    (none)
+  RETURNS:   { enabled, hour, timezone }.
+*/
 function getReminderConfig() {
   try {
     var raw = PropertiesService.getScriptProperties().getProperty(REMINDER_CONFIG_PROP);
@@ -4469,11 +5019,15 @@ function getReminderConfig() {
 // 📧 EMAIL NOTIFICATIONS  (now queue-based — see Email Queue above)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/**
- * buildPiaEmailHtml_ — shared navy email shell for ALL PIA notifications, matching the
- * Admin/DCS template (navy #2a5285 header bar, Helvetica, white card, standard do-not-reply
- * footer baked in). Pass the inner content via opts.contentHtml; preserve all action links.
- */
+/*
+  Function: buildPiaEmailHtml_
+  LAYMAN:    The shared navy "letterhead" every PIA email uses — header bar, white card, and the
+             do-not-reply footer. You give it a heading and inner content; it returns the full HTML.
+  TECHNICAL: Pure string builder. Wraps opts.contentHtml in the standard navy (#2a5285) card shell
+             matching the Admin/DCS template. No side-effects.
+  PARAMS:    - opts — { heading?, contentHtml?, accent? }.
+  RETURNS:   HTML string for the email body.
+*/
 function buildPiaEmailHtml_(opts) {
   opts = opts || {};
   var accent = opts.accent || '#2a5285';
@@ -4490,6 +5044,18 @@ function buildPiaEmailHtml_(opts) {
     '</div></div>';
 }
 
+/*
+  Function: notifyApprover
+  LAYMAN:    Emails the approver at a given step that an application needs their review, including a
+             secure one-click "Review" link. Queues the email (does not send inline).
+  TECHNICAL: Reads Approval_Workflow to find the row whose CurrentStep === approverIndex+1 and the
+             total step count. Builds an action-bound HMAC 'Review' URL, renders via buildPiaEmailHtml_,
+             and queueEmail(type:'approver'). Whole body in try/catch — email failure is logged to the
+             audit trail and never thrown (the DB write already happened).
+  PARAMS:    - sessionId — application id.
+             - approverIndex — 0-based index of the approver to notify (step = index+1).
+  RETURNS:   undefined. No-op if no approver exists at that step.
+*/
 function notifyApprover(sessionId, approverIndex) {
   // FAILSAFE: Email failures must never crash the caller (DB already updated)
   try {
@@ -4572,6 +5138,20 @@ function notifyApprover(sessionId, approverIndex) {
   }
 }
 
+/*
+  Function: notifyApplicant
+  LAYMAN:    Emails the applicant a status update (submitted / progressing / approved / returned /
+             denied / escalated / routed, etc.) with the right wording, the running decision history,
+             and a context-appropriate button (open DCS, update the PIA, or view receipt).
+  TECHNICAL: Loads app data, generateEmailDecisionsHTML for the history, then selects a status banner
+             and action URL/label from the status code (many branches; returns/rejections vary based on
+             whether DCS-level flags exist). Renders via buildPiaEmailHtml_ and queueEmail(type:
+             'applicant'). Fully wrapped in try/catch; failures are audited, never thrown.
+  PARAMS:    - sessionId — application id.
+             - status — status code string (e.g. 'submitted','progressing','approved_main',
+                        'returned','denied','approved_ism_final','routed_implementation', ...).
+  RETURNS:   undefined. No-op if app data is missing.
+*/
 function notifyApplicant(sessionId, status) {
   // FAILSAFE: Email failures must never crash the caller (DB already updated)
   try {
@@ -4686,6 +5266,16 @@ function notifyApplicant(sessionId, status) {
 // 📧 EMAIL HTML
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: generateEmailDecisionsHTML
+  LAYMAN:    Builds the little "who decided what" history block shown inside applicant emails, pulling
+             together every recorded approver / Division Head / ISM decision.
+  TECHNICAL: Inner processDecisions() walks a workflow sheet for sessionId, skips Pending/blank rows,
+             formats date + a color-coded status label, and escapes name/comment (XSS-safe). Runs it
+             over Approval_Workflow, DivisionHead_Approval_Workflow, and ISM_Approval_Workflow.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   HTML string; a "No decisions recorded yet." note if nothing is found.
+*/
 function generateEmailDecisionsHTML(sessionId) {
   let hasRecords = false;
   let html = `<div style="font-family: sans-serif;">`;
@@ -4754,6 +5344,17 @@ function generateEmailDecisionsHTML(sessionId) {
 //   RETRIEVAL FUNCTIONS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: getApplicationData
+  LAYMAN:    The main "load one application" reader. Returns everything about a PIA: its five sections,
+             status, linked DCS id, flags, and the approver timeline (who, role, decision, comment).
+  TECHNICAL: Finds the Applications row by case-insensitive sessionId, safeParse's the five PIA JSON
+             cells and approverFlags, then joins Approval_Workflow rows. Roles are inferred from step
+             order (Immediate Head step 1 / Dept Head step 2, shifting if no immediate head) plus the
+             Privacy Officer email. Computes approvalStep = count of Approved rows.
+  PARAMS:    - sessionId — application id (trim/uppercase-insensitive).
+  RETURNS:   The app object, or null if not found.
+*/
 function getApplicationData(sessionId) {
   const appSheet = getDatabaseSheet(DB_SHEET_NAMES.APPLICATIONS, true);
   const apprSheet = getDatabaseSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
@@ -4829,6 +5430,16 @@ function getApplicationData(sessionId) {
   return appData;
 }
 
+/*
+  Function: getUserSubmissions
+  LAYMAN:    Returns the current signed-in user's own PIA applications as a lightweight list (id,
+             program, dept, status, date, flag) for the "My Applications" screen.
+  TECHNICAL: Filters Applications rows by the active user's email, formats the submission date, and
+             pulls program/dept from parsed PIA 1. Fully try/catch-guarded; returns [] on any error or
+             empty sheet.
+  PARAMS:    (none) — uses Session.getActiveUser().
+  RETURNS:   Array of { id, program, dept, status, date, isFlagged }.
+*/
 function getUserSubmissions() {
   try {
     const userEmail = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
@@ -4882,10 +5493,18 @@ function getUserSubmissions() {
   }
 }
 
+/*
+  Function: findRowBySessionID
+  LAYMAN:    Finds which row of the Applications sheet holds a given application id.
+  TECHNICAL: Linear scan of column A (case-insensitive, trimmed) — deliberately avoids createTextFinder
+             for consistent behavior. Returns the 1-indexed sheet row.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   Row number (>=2), or -1 if not found / sheet empty.
+*/
 function findRowBySessionID(sessionId) {
   const appSheet = getDatabaseSheet(DB_SHEET_NAMES.APPLICATIONS, true);
   const lastRow = appSheet.getLastRow();
-  
+
   if (lastRow < 2) {
     return -1;
   }
@@ -4907,21 +5526,19 @@ function findRowBySessionID(sessionId) {
 // 📋 AUDIT LOGGING
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/**
- * Logs an event to the Risk_Audit sheet, but ONLY for genuinely anomalous
- * ("paranormal") events that deviate from the normal system workflow.
- *
- * Normal workflow actions (flagsData === false) are NOT written to the sheet;
- * they are recorded via Logger.log only.  The Risk_Audit sheet is reserved
- * for events that represent risk flags, conflicts of interest, suspicious
- * data patterns, or other abnormal conditions.
- *
- * @param {string} sessionId - The application session ID
- * @param {string} action - A human-readable description of the event
- * @param {string|boolean} flagsData - JSON string with risk details when
- *   there IS a paranormal event; pass `false` for normal workflow actions
- *   that should NOT appear in the Risk_Audit sheet.
- */
+/*
+  Function: logAuditTrail
+  LAYMAN:    Records an event — but only writes to the Risk_Audit sheet when it is genuinely
+             anomalous (risk flags, conflicts, email failures). Normal workflow actions are logged to
+             the console only, keeping the audit sheet signal-rich.
+  TECHNICAL: If flagsData === false → Logger only. If flagsData is a string parsing to a LOW/empty risk
+             payload → Logger only. Otherwise appends a Risk_Audit row (UUID logId, active user, PH
+             timestamp, normalized flags JSON; true coerces to a legacy HIGH payload). All try/catch.
+  PARAMS:    - sessionId — application id.
+             - action — human-readable event label.
+             - flagsData — JSON string of risk details, true (legacy), or false (skip sheet write).
+  RETURNS:   undefined.
+*/
 function logAuditTrail(sessionId, action, flagsData) {
   try {
     // ── Normal workflow actions are not "paranormal" → skip sheet write ──
@@ -4986,6 +5603,14 @@ function logAuditTrail(sessionId, action, flagsData) {
 // email notifications and trigger resends.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: adminGetEmailLog
+  LAYMAN:    Admin lookup: all email-related audit entries for one application.
+  TECHNICAL: Scans Risk_Audit for sessionId rows whose Action starts with 'Email '; parses the flags
+             JSON. try/catch → [] on error.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   Array of { logId, action, flags, timestamp } ([] if none/error).
+*/
 function adminGetEmailLog(sessionId) {
   try {
     const auditSheet = getDatabaseSheet(DB_SHEET_NAMES.RISK_AUDIT, false);
@@ -5006,6 +5631,14 @@ function adminGetEmailLog(sessionId) {
   }
 }
 
+/*
+  Function: adminGetFailedEmails
+  LAYMAN:    Admin lookup: every email that ultimately failed to send, across all applications.
+  TECHNICAL: Scans Risk_Audit for Action === 'Email Failed', flattening the flags payload. (Note:
+             sinceDays is coerced to a default of 7 but not used to time-filter here.) try/catch → [].
+  PARAMS:    - sinceDays — numeric window hint (defaulted to 7).
+  RETURNS:   Array of { sessionId, recipient, type, error, timestamp, attempts }.
+*/
 function adminGetFailedEmails(sinceDays) {
   try {
     sinceDays = Number(sinceDays) || 7;
@@ -5027,6 +5660,16 @@ function adminGetFailedEmails(sinceDays) {
   }
 }
 
+/*
+  Function: adminResendEmail
+  LAYMAN:    Admin action: re-send a notification to a specific recipient for an application, picking
+             the right kind (approver / applicant / ISM) based on where things stand.
+  TECHNICAL: For 'approver'/'ism' it locates the recipient's Pending workflow row and re-invokes
+             notifyApprover / apiPhase3_NotifyISMember at that step; for 'applicant' it maps the current
+             app status to a status code and calls notifyApplicant. Audits the resend. try/catch.
+  PARAMS:    - sessionId, recipient, type ('approver'|'applicant'|'ism').
+  RETURNS:   { success, error, message }.
+*/
 function adminResendEmail(sessionId, recipient, type) {
   try {
     var appData = getApplicationData(sessionId);
@@ -5078,10 +5721,13 @@ function adminResendEmail(sessionId, recipient, type) {
 // �️ ADMIN API — EMAIL QUEUE MANAGEMENT
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/**
- * Returns all items in the Email_Queue, optionally filtered.
- * @param {Object} filter — { status: 'Pending'|'Failed'|'Sent'|'all', sessionId: '...' }
- */
+/*
+  Function: adminGetEmailQueue
+  LAYMAN:    Admin view of the email queue, optionally filtered by status or application.
+  TECHNICAL: Scans Email_Queue, applies status/session filters, projects each row to a summary object.
+  PARAMS:    - filter — { status:'Pending'|'Failed'|'Sent'|'Cancelled'|'all', sessionId? }.
+  RETURNS:   { success:true, data:[...], total } or { success:false, error }.
+*/
 function adminGetEmailQueue(filter) {
   try {
     filter = filter || {};
@@ -5121,11 +5767,14 @@ function adminGetEmailQueue(filter) {
   }
 }
 
-/**
- * Force-retry a specific queued item by its Queue_ID.
- * Resets status to 'Pending' and clears attempts/error so the next
- * trigger cycle picks it up immediately.
- */
+/*
+  Function: adminRetryQueuedEmail
+  LAYMAN:    Admin action: kick one stuck/failed email back into the queue to be sent again.
+  TECHNICAL: Finds the Email_Queue row by Queue_ID and resets Status='Pending', Attempts=0, clears
+             error so the next processEmailQueue cycle retries it.
+  PARAMS:    - queueId — the EQ-... id.
+  RETURNS:   { success, message } or { success:false, error }.
+*/
 function adminRetryQueuedEmail(queueId) {
   try {
     if (!queueId) return { success: false, error: 'queueId is required' };
@@ -5155,10 +5804,14 @@ function adminRetryQueuedEmail(queueId) {
   }
 }
 
-/**
- * Retry ALL items with a given status for a specific session.
- * Useful when an admin fixes a config issue that caused batch failures.
- */
+/*
+  Function: adminRetryAllForSession
+  LAYMAN:    Admin action: retry every queued email of a given status for one application at once.
+  TECHNICAL: Resets all Email_Queue rows matching (sessionId, targetStatus default 'Failed') to
+             Pending/0/'' for the next cycle.
+  PARAMS:    - sessionId — application id; status — status to retry (default 'Failed').
+  RETURNS:   { success, message, retried } or { success:false, error }.
+*/
 function adminRetryAllForSession(sessionId, status) {
   try {
     if (!sessionId) return { success: false, error: 'sessionId is required' };
@@ -5192,9 +5845,14 @@ function adminRetryAllForSession(sessionId, status) {
   }
 }
 
-/**
- * Cancel/remove stuck queue items for a session (e.g. wrong recipient, duplicate).
- */
+/*
+  Function: adminCancelQueuedEmails
+  LAYMAN:    Admin action: stop pending emails for an application from ever sending (e.g. wrong
+             recipient or duplicates) by marking them Cancelled.
+  TECHNICAL: Sets Status='Cancelled' on Pending Email_Queue rows matching sessionId (and optional type).
+  PARAMS:    - sessionId — application id; type — optional email type filter.
+  RETURNS:   { success, message, cancelled } or { success:false, error }.
+*/
 function adminCancelQueuedEmails(sessionId, type) {
   try {
     if (!sessionId) return { success: false, error: 'sessionId is required' };
@@ -5223,9 +5881,14 @@ function adminCancelQueuedEmails(sessionId, type) {
   }
 }
 
-/**
- * Get queue summary — counts by status and type for dashboard.
- */
+/*
+  Function: adminGetQueueSummary
+  LAYMAN:    Admin dashboard numbers: how many queued emails are pending/sent/failed/cancelled, and a
+             breakdown by type.
+  TECHNICAL: Single pass over Email_Queue tallying status counts and a byType map.
+  PARAMS:    (none)
+  RETURNS:   { success:true, data:{ total, pending, sent, failed, cancelled, byType } } or error.
+*/
 function adminGetQueueSummary() {
   try {
     const queueSheet = getDatabaseSheet(DB_SHEET_NAMES.EMAIL_QUEUE, true);
@@ -5257,6 +5920,15 @@ function adminGetQueueSummary() {
 // 🔔 ADMIN API — DAILY REMINDER CONFIGURATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: adminGetReminderConfig
+  LAYMAN:    Admin read of the daily-reminder settings, plus whether the trigger is actually installed
+             and when it last ran.
+  TECHNICAL: getReminderConfig() augmented with triggerActive (sendDailyReminders trigger present?) and
+             lastRun (PIA_LAST_REMINDER_RUN property).
+  PARAMS:    (none)
+  RETURNS:   { success:true, data:{ enabled, hour, timezone, triggerActive, lastRun? } } or error.
+*/
 function adminGetReminderConfig() {
   try {
     var config = getReminderConfig();
@@ -5282,6 +5954,15 @@ function adminGetReminderConfig() {
   }
 }
 
+/*
+  Function: adminSetReminderConfig
+  LAYMAN:    Admin write of the daily-reminder settings, and it re-installs or removes the trigger to
+             match (on → install/refresh, off → delete).
+  TECHNICAL: Merges partial config over current (clamps hour to 0-23), persists REMINDER_CONFIG_PROP,
+             then setupReminderTrigger() if enabled else deletes the sendDailyReminders trigger.
+  PARAMS:    - config — { enabled?, hour?, timezone? }.
+  RETURNS:   { success:true, data:updated, message } or { success:false, error }.
+*/
 function adminSetReminderConfig(config) {
   try {
     var current = getReminderConfig();
@@ -5318,6 +5999,13 @@ function adminSetReminderConfig(config) {
 // ADMIN API — Email Failsafe / Notification Config
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: adminGetNotificationConfig
+  LAYMAN:    Admin read of the failure-notification settings (who to alert, whether to tell the requestor).
+  TECHNICAL: Thin wrapper around getAdminNotificationConfig().
+  PARAMS:    (none)
+  RETURNS:   { success:true, data:config } or { success:false, error }.
+*/
 function adminGetNotificationConfig() {
   try {
     var config = getAdminNotificationConfig();
@@ -5328,6 +6016,15 @@ function adminGetNotificationConfig() {
   }
 }
 
+/*
+  Function: adminSetNotificationConfig
+  LAYMAN:    Admin write of the failure-notification settings (admin email, notify-on-failure,
+             notify-requestor).
+  TECHNICAL: Ensures a data row exists in Admin_Notification_Config (seeds one if empty), then patches
+             the provided fields (YES/NO for the booleans) on row 2; returns the re-read config.
+  PARAMS:    - config — { adminEmail?, notifyOnFailure?, notifyRequestor? }.
+  RETURNS:   { success:true, data:updated, message } or { success:false, error }.
+*/
 function adminSetNotificationConfig(config) {
   try {
     if (!config) return { success: false, error: 'Missing config object' };
@@ -5364,6 +6061,16 @@ function adminSetNotificationConfig(config) {
 // ADMIN API — Resend email to a specific workflow stage
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: adminResendToStage
+  LAYMAN:    Admin action: re-queue a review email to a specific person at a specific stage (approver /
+             ISM / division head), with a fresh valid review link.
+  TECHNICAL: Resolves the stage sheet via getWorkflowInfoForType, finds the recipient's Pending row,
+             derives a display name + PIA title, builds an action-bound HMAC link ('ISMReview' for ism,
+             else 'Review'), queueEmail's a plain-text resend, and resets that row's EmailStatus/Error.
+  PARAMS:    - sessionId, stageType ('approver'|'ism'|'divhead'), approverEmail.
+  RETURNS:   { success:true, queueId, message } or { success:false, error }.
+*/
 function adminResendToStage(sessionId, stageType, approverEmail) {
   try {
     if (!sessionId || !stageType || !approverEmail) {
@@ -5457,6 +6164,18 @@ function adminResendToStage(sessionId, stageType, approverEmail) {
 // ADMIN API — Get full pipeline view for a session
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: adminGetPipelineView
+  LAYMAN:    Admin "everything about one application" report: the app row plus all approval, ISM, and
+             division-head workflow rows, every email-queue entry, and the audit trail — for the admin
+             panel's drill-down.
+  TECHNICAL: Builds a pipeline object by scanning Applications, Approval_Workflow, ISM_Approval_Workflow,
+             DivisionHead_Approval_Workflow, Email_Queue, and Risk_Audit for the sessionId, projecting
+             each to a compact shape. try/catch → error.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   { success:true, data:{ application, approvalWorkflow[], ismWorkflow[], divHeadWorkflow[],
+             emailQueue[], auditTrail[] } } or { success:false, error }.
+*/
 function adminGetPipelineView(sessionId) {
   try {
     if (!sessionId) return { success: false, error: 'Missing sessionId' };
@@ -5591,6 +6310,14 @@ function adminGetPipelineView(sessionId) {
   }
 }
 
+/*
+  Function: setupReminderTrigger
+  LAYMAN:    Installs the once-a-day reminder job at the configured hour (and removes any old copy first).
+  TECHNICAL: No-op if reminders disabled. Deletes existing sendDailyReminders triggers, then creates a
+             daily time-based trigger atHour(config.hour) in config.timezone. Requires script.scriptapp.
+  PARAMS:    (none)
+  RETURNS:   { success:true, message }.
+*/
 function setupReminderTrigger() {
   var config = getReminderConfig();
   if (!config.enabled) {
@@ -5628,6 +6355,17 @@ function setupReminderTrigger() {
 // �🔐 SECURITY, VALIDATION, SANITAZION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: validateApplicationData
+  LAYMAN:    Server-side check that a PIA submission is complete and sane before it is saved — all five
+             sections present, required PIA 1 fields filled, valid emails, a future program date, the
+             survey fully answered, and at least one approver available.
+  TECHNICAL: Accumulates an errors[] across pia1..pia5 (required-object checks, pia4 flow fields, pia1
+             department/program/date/drafter/email validity via isValidEmail, pia5 every question is
+             YES/NO/N/A, and an approver-exists check incl. the PRIVACY_OFFICER_EMAIL fallback).
+  PARAMS:    - appData — the submission object.
+  RETURNS:   { isValid: boolean, errors: string[] }.
+*/
 function validateApplicationData(appData) {
   const errors = [];
 
@@ -5731,10 +6469,15 @@ function validateApplicationData(appData) {
   };
 }
 
-/**
- * Validates comment fields for approvals/rejections.
- * Ensures meaningful justification is provided.
- */
+/*
+  Function: validateComment
+  LAYMAN:    Makes sure a decision comment is a real, meaningful justification — not blank, spammy, or
+             gibberish.
+  TECHNICAL: Strips tags, then enforces min length (param), COMMENT_MAX_CHARS, no 6+ repeated chars,
+             presence of word-like sequences, and >= 3 words.
+  PARAMS:    - comment — the raw comment; minLength — minimum chars (default 50).
+  RETURNS:   { valid:true } or { valid:false, error }.
+*/
 function validateComment(comment, minLength = 50) {
   if (!comment || typeof comment !== 'string') {
     return { valid: false, error: 'Comment required' };
@@ -5769,6 +6512,17 @@ function validateComment(comment, minLength = 50) {
   return { valid: true };
 }
 
+/*
+  Function: sanitizeInput
+  LAYMAN:    Recursively cleans incoming text/objects to strip dangerous HTML and control characters
+             while keeping a small set of safe formatting tags for rich-text comments.
+  TECHNICAL: Recurses arrays/objects (depth-capped at 20, returns new objects — no input mutation). For
+             strings: removes javascript:/data:/vbscript:/file: protocols, on* handlers, control chars,
+             RTL override / zero-width / BOM, and strips all tags except <strong/b/em/i/u/ul/ol/li/br/p>;
+             trims and clamps to maxLength.
+  PARAMS:    - data — value to clean; maxLength — per-string cap (10000); depth — internal recursion guard.
+  RETURNS:   Sanitized value of the same shape (string for scalars).
+*/
 function sanitizeInput(data, maxLength = 10000, depth = 0) {
   // Prevent stack overflow on deeply nested objects
   if (depth > 20) {
@@ -5812,10 +6566,15 @@ function sanitizeInput(data, maxLength = 10000, depth = 0) {
 // � PHASE 3 API - DATA FETCHING MODULE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/**
- * PHASE 3 API: Fetch PIA data from the PIA database
- * Returns program information and PII details
- */
+/*
+  Function: apiPhase3_FetchPIAData
+  LAYMAN:    Gives the ISM reviewer screen the key PIA facts: program, department, the PII collected,
+             who submitted it, purposes and retention.
+  TECHNICAL: Loads getApplicationData and projects a flat summary (program/dept from pia1, PII via
+             getPIIFieldsList, purposes/retention from pia4). try/catch → error.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   { success:true, data:{...} } or { success:false, error }.
+*/
 function apiPhase3_FetchPIAData(sessionId) {
   try {
     const appData = getApplicationData(sessionId);
@@ -5842,10 +6601,15 @@ function apiPhase3_FetchPIAData(sessionId) {
   }
 }
 
-/**
- * PHASE 3 API: Fetch DCS data linked to an application
- * Validates DCS registration status and retrieves metadata
- */
+/*
+  Function: apiPhase3_FetchDCSData
+  LAYMAN:    Gives the ISM reviewer the linked Phase 1 DCS context (requestor, department, access needed,
+             agency metadata) for the application under review.
+  TECHNICAL: Resolves linkedReqId, finds the Data_Collection row, parses METADATA_JSON (+ agency JSON),
+             and projects a flat object with normalized field fallbacks. try/catch → error.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   { success:true, data:{...DCS fields} } or { success:false, error }.
+*/
 function apiPhase3_FetchDCSData(sessionId) {
   try {
     const appData = getApplicationData(sessionId);
@@ -5895,10 +6659,14 @@ function apiPhase3_FetchDCSData(sessionId) {
   }
 }
 
-/**
- * PHASE 3 API: Fetch Division Head configuration for initial review
- * Determines if Division Head intervention is required
- */
+/*
+  Function: apiPhase3_GetDivisionHeadConfig
+  LAYMAN:    Looks up a Division Head by email to confirm they are recognized/active for escalations.
+  TECHNICAL: Scans DivisionHead_Approval_Workflow for a matching email; returns its active flag, or a
+             permissive default ({ isActive:true }) if not found. try/catch → error.
+  PARAMS:    - divisionHeadEmail — email to look up.
+  RETURNS:   { success:true, config:{ divHeadEmail, isActive } } or { success:false, error }.
+*/
 function apiPhase3_GetDivisionHeadConfig(divisionHeadEmail) {
   try {
     const divHeadSheet = getDatabaseSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
@@ -5931,10 +6699,17 @@ function apiPhase3_GetDivisionHeadConfig(divisionHeadEmail) {
   }
 }
 
-/**
- * PHASE 3 API: Fetch InfoSec team members and email configuration
- * Returns active InfoSec members and destination routing emails (not hardcoded)
- */
+/*
+  Function: apiPhase3_GetInfoSecMembers
+  LAYMAN:    Returns the active ISM/InfoSec reviewers and the downstream routing emails (DCOPS,
+             TechServe). Self-heals by seeding two default members if the config has fewer than two.
+  TECHNICAL: Reads InfoSec_Email_Config. If fewer than 2 active 'InfoSec' rows, appends seed rows and
+             re-reads. Collects active InfoSec members + dcops/techserve destination emails, then pads
+             activeMembers to exactly 2 using fallbacks so the ISM chain always has two steps.
+  PARAMS:    (none)
+  RETURNS:   { success:true, data:{ members:[{id,name,email,role}], destinationEmails:{dcops,techserve,both} } }
+             or { success:false, error }.
+*/
 function apiPhase3_GetInfoSecMembers() {
   try {
     const infoSecSheet = getDatabaseSheet(DB_SHEET_NAMES.INFOSEC_CONFIG, true);
@@ -6044,9 +6819,15 @@ function apiPhase3_GetInfoSecMembers() {
   }
 }
 
-/**
- * Helper: Extract PII fields from application data
- */
+/*
+  Function: getPIIFieldsList
+  LAYMAN:    Returns the human-readable list of PII categories the program collects (the ones marked
+             'YES'), including any custom "Others".
+  TECHNICAL: Normalizes the pia2 shape, maps 'YES' indices to pii2Fields labels, appends customOthers
+             whose value is 'YES'.
+  PARAMS:    - appData — application object with a pia2 section.
+  RETURNS:   Array of field-name strings (possibly empty).
+*/
 function getPIIFieldsList(appData) {
   const piiData = appData.pia2?.fields || appData.pia2 || {};
   const collected = [];
@@ -6067,10 +6848,16 @@ function getPIIFieldsList(appData) {
   return collected;
 }
 
-/**
- * PHASE 3 API: Initialize ISM workflow after all main approvals complete
- * Creates ISM approval records and initiates sequential review
- */
+/*
+  Function: apiPhase3_InitializeISMWorkflow
+  LAYMAN:    After all heads approve, this sets up the ISM review stage by creating one to-do row per
+             ISM member (all Pending).
+  TECHNICAL: Gets the ISM roster via apiPhase3_GetInfoSecMembers and appends a sequential
+             ISM_Approval_Workflow row ('<sessionId>-ISM-<n>') for each, then flushes. Fails if no
+             members are configured.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   { success:true, message, members } or { success:false, error }.
+*/
 function apiPhase3_InitializeISMWorkflow(sessionId) {
   try {
     const ismWorkflowSheet = getDatabaseSheet(DB_SHEET_NAMES.ISM_WORKFLOW, true);
@@ -6116,14 +6903,17 @@ function apiPhase3_InitializeISMWorkflow(sessionId) {
   }
 }
 
-/**
- * PHASE 3 API: Retry ISM workflow initialization for an application that is stuck
- * at "Approved (ISM Pending)" status. Checks that no ISM records exist yet to prevent
- * duplicates, then re-initializes the workflow.
- * 
- * Call this after configuring InfoSec_Email_Config if ISM init failed during approval.
- * Can be invoked manually from the Apps Script editor or via a future admin panel.
- */
+/*
+  Function: apiPhase3_RetryISMWorkflow
+  LAYMAN:    Recovery action for an application stuck at "Approved (ISM Pending)" because the ISM stage
+             could not start earlier (e.g. InfoSec config was empty). Re-runs the ISM setup once the
+             config is fixed.
+  TECHNICAL: Validates the app exists and is in a retryable status, refuses if ISM rows already exist
+             (anti-duplicate), then apiPhase3_InitializeISMWorkflow, flips status to 'Approved', and
+             notifies the first ISM member.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   { success:true, message, members } or { success:false, error }.
+*/
 function apiPhase3_RetryISMWorkflow(sessionId) {
   try {
     // Validate that the application exists and is in the expected state
@@ -6174,10 +6964,21 @@ function apiPhase3_RetryISMWorkflow(sessionId) {
   }
 }
 
-/**
- * PHASE 3 API: Process ISM member decision (Approve/Deny/Return)
- * Handles sequential approval and routes to next member
- */
+/*
+  Function: apiPhase3_ProcessISMDecision
+  LAYMAN:    Records an ISM/InfoSec reviewer's verdict and drives the final stage: Approve (advance to
+             the next ISM member, or finalize + route when all approve), Deny (reject), Return (bounce
+             to requestor), or Escalate to the Division Head.
+  TECHNICAL: Validates decision and routingDestination against whitelists, takes a script lock, finds
+             the member's Pending ISM row (optional step), and stamps it. Approve: if all ISM rows are
+             Approved → 'Approved by ISM', notify applicant, mark DCS Complete, route; else notify next
+             member. Deny → 'Rejected by ISM'. Return → 'Returned' (+optional DCS return). Escalate →
+             'EscalatedToDivisionHead', create a single Pending DivHead row (dedup) and email the
+             Division Head a review link. Lock released in finally.
+  PARAMS:    - sessionId, ismMemberEmail, decision('Approve'|'Deny'|'Return'|'EscalateToDivisionHead'),
+               comments, routingDestination(''|'DCOPS'|'TECHSERVE'|'BOTH'), stepParam?, approverFlags.
+  RETURNS:   { success:true, message, nextAction } or { success:false, error }.
+*/
 function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comments, routingDestination = '', stepParam = null, approverFlags = '{}') {
   try {
     // CRITICAL FIX C1: Get URL at runtime
@@ -6247,6 +7048,8 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.DECISION_DATE).setValue(timestamp);
     ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.ROUTING_DESTINATION).setValue(normalizedDestination);
 
+    /* Approve branch — unanimous requirement: finalize + route only when every ISM row is Approved,
+       otherwise notify the next ISM member in sequence. */
     if (decision === 'Approve') {
       ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.STATUS).setValue('Approved');
 
@@ -6346,6 +7149,8 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       
       // Notify applicant
       notifyApplicant(sessionId, 'returned');
+    /* Escalate branch — hand off to the Division Head: flag the ISM row, create ONE pending DivHead
+       row (dedup across multiple escalating members), and email the Division Head a review link. */
     } else if (decision === 'EscalateToDivisionHead') {
       ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.STATUS).setValue('EscalatedToDivisionHead');
       ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.REQUIRES_DIV_HEAD).setValue('YES');
@@ -6449,10 +7254,16 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
   }
 }
 
-/**
- * PHASE 3 API: Notify ISM member of pending review
- * Sends secure email with HMAC token link
- */
+/*
+  Function: apiPhase3_NotifyISMember
+  LAYMAN:    Emails the ISM/InfoSec reviewer at a given step that an access request needs their review,
+             with a secure one-click "ISMReview" link.
+  TECHNICAL: Flushes pending writes (so freshly-appended rows are visible), finds the Pending ISM row
+             at stepNumber, builds an action-bound HMAC 'ISMReview' URL, renders via buildPiaEmailHtml_,
+             and queueEmail(type:'ism'). Missing member / errors are audited, never thrown.
+  PARAMS:    - sessionId — application id; stepNumber — 1-based ISM step.
+  RETURNS:   undefined. No-op (audited) if no Pending member at that step.
+*/
 function apiPhase3_NotifyISMember(sessionId, stepNumber) {
   try {
     // CRITICAL FIX C1: Get URL at runtime
@@ -6527,10 +7338,18 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
   }
 }
 
-/**
- * PHASE 3 API: Route approved request to destination (DCOPS, TechServe, or Both)
- * Sends final notification based on selected routing
- */
+/*
+  Function: apiPhase3_RouteApprovedRequest
+  LAYMAN:    The finish line. Once an application is fully approved, this builds the Certificate of
+             Approval (with the full approver roster), turns it into a PDF, and emails it to the chosen
+             implementation team(s) — DCOPS, TechServe, or both — then tells the applicant it is routed.
+  TECHNICAL: Validates destination against the whitelist, resolves DCOPS/TechServe emails via
+             apiPhase3_GetInfoSecMembers, gathers approver/divhead/ISM rows + DCS context, renders a
+             certificate HTML, generates a PDF blob (Utilities.newBlob → getAs PDF), and sends via
+             sendEmailWithRetry with the PDF attached. Finally notifyApplicant('routed_implementation').
+  PARAMS:    - sessionId — application id; destination — 'DCOPS' | 'TECHSERVE' | 'BOTH'.
+  RETURNS:   { success:true, message, sentTo } or { success:false, error }.
+*/
 function apiPhase3_RouteApprovedRequest(sessionId, destination) {
   try {
     // Normalize destination to handle case sensitivity from frontend radio buttons
@@ -6858,9 +7677,18 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
 // �🔗 CLIENT-SIDE API ENDPOINTS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: apiSubmitApplication
+  LAYMAN:    The endpoint the form calls to submit a PIA. It cleans the input, checks it is complete,
+             then saves it.
+  TECHNICAL: sanitizeInput → validateApplicationData (returns errors early if invalid) → submitApplication.
+             The defense-in-depth gate before any DB write.
+  PARAMS:    - appData — the raw submission from the client.
+  RETURNS:   submitApplication's result, or { success:false, errors:[...] } on validation failure.
+*/
 // Endpoints called from frontend via google.script.run
 function apiSubmitApplication(appData) {
-  const cleanData = sanitizeInput(appData); 
+  const cleanData = sanitizeInput(appData);
   const validation = validateApplicationData(cleanData);
   if (!validation.isValid) {
     return {
@@ -6871,6 +7699,20 @@ function apiSubmitApplication(appData) {
   return submitApplication(cleanData);
 }
 
+/*
+  Function: apiGetDCSContext
+  LAYMAN:    When the PIA form opens from a DCS link, this pulls the matching DCS request to pre-fill
+             the form (department, program, heads, etc.), confirms the user owns that request, and tells
+             the form whether there is already a submission/draft to resume (and any returned-comments).
+  TECHNICAL: Finds the Data_Collection row by parentID (TextFinder), enforces owner == active user
+             (normalized; security alert + deny otherwise), parses metadata into a context object, then
+             looks up the latest Applications row linked to this parentID (highest -V#). For
+             Returned/Rejected it harvests the last decision comment across Approval/ISM/DivHead sheets,
+             and otherwise looks for a resumable PIA draft.
+  PARAMS:    - parentID — the DCS Request ID from the URL.
+  RETURNS:   { success:true, context, existingSubmissionId, existingSubmissionStatus,
+             existingDraftSessionId, approverComments, approverFlags } or { success:false, error }.
+*/
 function apiGetDCSContext(parentID) {
   try {
     // Defensive check to prevent createTextFinder from failing on null input.
@@ -7104,6 +7946,13 @@ function apiGetDCSContext(parentID) {
   }
 }
 
+/*
+  Function: apiGetUserDCSRequests
+  LAYMAN:    Lists the current user's DCS requests (id + status) so the PIA app can offer them.
+  TECHNICAL: Filters Data_Collection by the active user's email. try/catch → error.
+  PARAMS:    (none)
+  RETURNS:   { success:true, requests:[{reqId, status}] } or { success:false, error }.
+*/
 function apiGetUserDCSRequests() {
   try {
     const userEmail = Session.getActiveUser().getEmail().toLowerCase();
@@ -7135,6 +7984,13 @@ function apiGetUserDCSRequests() {
   }
 }
 
+/*
+  Function: apiGetUserEmail
+  LAYMAN:    Tells the frontend who is signed in and whether they are allowed to use the app.
+  TECHNICAL: Returns the active user email + isAuthorizedDomain flag.
+  PARAMS:    (none)
+  RETURNS:   { success:true, email, isAuthorized } or { success:false, email:'' }.
+*/
 function apiGetUserEmail() {
   try {
     const email = Session.getActiveUser().getEmail();
@@ -7152,6 +8008,13 @@ function apiGetUserEmail() {
   }
 }
 
+/*
+  Function: apiGetUserSubmissions
+  LAYMAN:    Frontend endpoint for the "My Applications" list.
+  TECHNICAL: Thin wrapper over getUserSubmissions(); re-throws on error so the client sees it.
+  PARAMS:    (none)
+  RETURNS:   Array of submission summaries ([] if none).
+*/
 function apiGetUserSubmissions() {
   try {
     const result = getUserSubmissions();
@@ -7163,11 +8026,14 @@ function apiGetUserSubmissions() {
   }
 }
 
-/**
- * API: Generate a new sessionId for a new application draft
- * Called when user clicks "Proceed to Survey" to start application
- * Enables draft saves before final submission
- */
+/*
+  Function: apiGenerateNewSessionId
+  LAYMAN:    Hands the frontend a fresh application id when the user starts a new PIA, so drafts can be
+             saved before final submit.
+  TECHNICAL: Wraps nextBaseSessionId() (lock-guarded allocation).
+  PARAMS:    (none)
+  RETURNS:   { success:true, sessionId, message } or { success:false, error }.
+*/
 function apiGenerateNewSessionId() {
   try {
     Logger.log('🆕 apiGenerateNewSessionId called');
@@ -7187,15 +8053,28 @@ function apiGenerateNewSessionId() {
   }
 }
 
+/*
+  Function: apiProcessApprovalDecision
+  LAYMAN:    Frontend endpoint to record an approver's decision (thin pass-through).
+  TECHNICAL: Delegates to processApprovalDecision (which enforces lock + validation).
+  PARAMS:    - sessionId, approverEmail, decision, comments, stepParam?.
+  RETURNS:   processApprovalDecision's result.
+*/
 function apiProcessApprovalDecision(sessionId, approverEmail, decision, comments, stepParam = null) {
   return processApprovalDecision(sessionId, approverEmail, decision, comments, stepParam);
 }
 
-/**
- * Server-side draft persistence API - saves form state securely.
- * SECURITY: Only saves for the current authenticated user.
- * ENFORCES: Max 5 incomplete drafts per user (older ones deleted)
- */
+/*
+  Function: apiSaveDraft
+  LAYMAN:    Auto-saves the user's in-progress PIA form so they can come back later. Keeps at most 5
+             drafts per user (oldest dropped) and they expire after 7 days. Files are never saved here —
+             text state only.
+  TECHNICAL: Writes to the shared Drafts sheet (Type 'PIA'). Updates the existing row for this
+             (user, sessionId) or inserts a new one; enforces MAX_USER_DRAFTS by deleting the oldest by
+             epoch timestamp. Stores epoch ms for SavedAt/ExpiresAt (+DRAFT_EXPIRY_DAYS). try/catch.
+  PARAMS:    - sessionId — the application/session id; stateData — form state object.
+  RETURNS:   { success:true, draftId, message } or { success:false, error }.
+*/
 function apiSaveDraft(sessionId, stateData) {
   try {
     Logger.log('📥 apiSaveDraft called: sessionId=' + sessionId);
@@ -7282,10 +8161,15 @@ function apiSaveDraft(sessionId, stateData) {
   }
 }
 
-/**
- * Server-side draft restore API - retrieves saved form state securely.
- * SECURITY: Only restores drafts owned by the current user.
- */
+/*
+  Function: apiRestoreDraft
+  LAYMAN:    Reloads the saved draft for a given session (only if it belongs to the current user, and
+             only if it hasn't expired).
+  TECHNICAL: Scans Drafts for (user, sessionId, 'PIA'). Deletes + skips expired rows (epoch or legacy
+             string). Parses and returns the state JSON. try/catch.
+  PARAMS:    - sessionId — the session id.
+  RETURNS:   { success:true, state } ; { success:false, state:null } if none; { success:false, error }.
+*/
 function apiRestoreDraft(sessionId) {
   try {
     Logger.log('📤 apiRestoreDraft called: sessionId=' + sessionId);
@@ -7340,9 +8224,14 @@ function apiRestoreDraft(sessionId) {
   }
 }
 
-/**
- * List all incomplete drafts for current user (created in last 7 days)
- */
+/*
+  Function: apiListUserDrafts
+  LAYMAN:    Lists the current user's still-valid (unexpired) PIA drafts for the "resume a draft" screen.
+  TECHNICAL: Scans Drafts for (user, 'PIA') rows whose ExpiresAt is in the future, projecting
+             {draftId, sessionId, savedAt, expiresAt, status}. try/catch.
+  PARAMS:    (none)
+  RETURNS:   { success:true, drafts:[...] } or { success:false, error }.
+*/
 function apiListUserDrafts() {
   try {
     Logger.log('📋 apiListUserDrafts called');
@@ -7401,9 +8290,14 @@ function apiListUserDrafts() {
   }
 }
 
-/**
- * Load specific draft by draftId (only if owned by user)
- */
+/*
+  Function: apiLoadDraft
+  LAYMAN:    Opens a specific saved draft by its id (only the owner can) and marks it as being edited.
+  TECHNICAL: Finds the (user, draftId, 'PIA') row, parses state, and tags it with draftId/draftStatus/
+             isLoadingExistingDraft for the frontend lock. try/catch.
+  PARAMS:    - draftId — the draft UUID.
+  RETURNS:   { success:true, state } or { success:false, error }.
+*/
 function apiLoadDraft(draftId) {
   try {
     Logger.log('📥 apiLoadDraft called: draftId=' + draftId);
@@ -7444,9 +8338,13 @@ function apiLoadDraft(draftId) {
   }
 }
 
-/**
- * Delete a draft by draftId (for user to disregard incomplete drafts)
- */
+/*
+  Function: apiDeleteDraft
+  LAYMAN:    Lets a user discard one of their incomplete drafts.
+  TECHNICAL: Deletes the (user, draftId, 'PIA') Drafts row. try/catch.
+  PARAMS:    - draftId — the draft UUID.
+  RETURNS:   { success:true, message } or { success:false, error }.
+*/
 function apiDeleteDraft(draftId) {
   try {
     Logger.log('🗑️  apiDeleteDraft called: draftId=' + draftId);
@@ -7476,9 +8374,15 @@ function apiDeleteDraft(draftId) {
   }
 }
 
-/**
- * Mark draft as completed after successful submission
- */
+/*
+  Function: apiMarkDraftComplete
+  LAYMAN:    After a draft is successfully submitted, this removes it so it no longer shows up as
+             incomplete.
+  TECHNICAL: Deletes the user's 'PIA' Drafts row matching draftId OR sessionId (fallback ensures
+             cleanup even if the id drifted). try/catch.
+  PARAMS:    - draftId, sessionId.
+  RETURNS:   { success:true, message } or { success:false, error }.
+*/
 function apiMarkDraftComplete(draftId, sessionId) {
   try {
     Logger.log('🏁 apiMarkDraftComplete called: draftId=' + draftId + ', sessionId=' + sessionId);
@@ -7509,9 +8413,14 @@ function apiMarkDraftComplete(draftId, sessionId) {
   }
 }
 
-/**
- * Cleanup old drafts (older than 7 days) - call periodically via trigger.
- */
+/*
+  Function: cleanupExpiredDrafts
+  LAYMAN:    Housekeeping: deletes drafts that have passed their 7-day expiry. Meant to run on a trigger.
+  TECHNICAL: Rebuilds the Drafts sheet keeping only rows whose ExpiresAt (epoch or legacy string) is >=
+             now: clearContents then writes back the survivors. try/catch.
+  PARAMS:    (none)
+  RETURNS:   undefined.
+*/
 function cleanupExpiredDrafts() {
   try {
     const draftsSheet = getDatabaseSheet(DB_SHEET_NAMES.DRAFTS, true);
@@ -7549,6 +8458,17 @@ function cleanupExpiredDrafts() {
   }
 }
 
+/*
+  Function: apiGenerateRevisionSessionId
+  LAYMAN:    When a user wants to fix and resubmit a returned/rejected application, this safely issues
+             the next revision id — but only for their own app, only if it really was returned/rejected,
+             and not while the linked DCS is still 'Returned'.
+  TECHNICAL: Validates base id format, finds the latest revision row for that base, enforces owner ==
+             active user and status in (rejected|returned), and blocks if DCS-flagged and the DCS is
+             still 'Returned'. Then returns getNextRevisionSessionId(baseId). Throws on any gate failure.
+  PARAMS:    - baseSessionId — the original/any-version application id.
+  RETURNS:   { success:true, sessionId } ; throws Error on invalid/unauthorized/not-revisable.
+*/
 function apiGenerateRevisionSessionId(baseSessionId) {
   const baseId = String(baseSessionId || '').trim().replace(/-V\d+$/, '');
   if (!/^PIA-\d{6}$/.test(baseId)) {
@@ -7616,10 +8536,16 @@ function apiGenerateRevisionSessionId(baseSessionId) {
   return { success: true, sessionId: getNextRevisionSessionId(baseId) };
 }
 
-/**
- * Retrieves application data for the frontend.
- * Restricts access to the applicant and members of the approval chain.
- */
+/*
+  Function: apiGetApplicationData
+  LAYMAN:    The access-controlled "load my application" endpoint for the frontend. Only the applicant
+             or someone on the approval chain may view it.
+  TECHNICAL: getApplicationData then authorizes active user as owner or an approver email; otherwise
+             logs a security alert and throws. Stringifies approver decisionDate Date objects to keep the
+             google.script.run serialization safe.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   The (serialization-safe) app object; null if not found; throws on unauthorized access.
+*/
 function apiGetApplicationData(sessionId) {
   const appData = getApplicationData(sessionId);
   if (!appData) {
@@ -7661,11 +8587,13 @@ function apiGetApplicationData(sessionId) {
   throw new Error("Access Denied: You are not authorized to view this record.");
 }
 
-/**
- * Returns a named script property or throws a descriptive error.
- * @param {string} key
- * @returns {string}
- */
+/*
+  Function: getProp_
+  LAYMAN:    Reads a required Script Property and complains loudly (throws) if it is missing.
+  TECHNICAL: PropertiesService getter that throws a descriptive Error when the key is unset.
+  PARAMS:    - key — the Script Property name.
+  RETURNS:   The property value string. Throws if not set.
+*/
 function getProp_(key) {
   const val = PropertiesService.getScriptProperties().getProperty(key);
   if (!val) throw new Error(`Script property "${key}" is not set. Configure it in Project Properties.`);
@@ -7678,11 +8606,16 @@ function getProp_(key) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
-/**
- * ONE-TIME MIGRATION: Adds ReminderDate column to existing workflow sheets.
- * Run this once after deploying the daily reminders feature.
- * Safe to run multiple times — skips sheets that already have the column.
- */
+/*
+  Function: migrateAddReminderColumns
+  LAYMAN:    One-time upgrade helper: adds the ReminderDate / EmailStatus / EmailError columns (and the
+             queue's NotifiedAdmin column) to existing sheets so older databases work with the reminder
+             and failsafe features. Safe to re-run.
+  TECHNICAL: For each target sheet, appends any missing header from def.headers (idempotent check) and
+             styles it. Does not touch data rows.
+  PARAMS:    (none)
+  RETURNS:   { success:true, message }.
+*/
 function migrateAddReminderColumns() {
   var sheets = [
     { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, headers: ['ReminderDate', 'EmailStatus', 'EmailError'] },
@@ -7724,14 +8657,17 @@ function migrateAddReminderColumns() {
   return { success: true, message: 'Reminder and failsafe columns migrated. Run setupReminderTrigger() next.' };
 }
 
-/**
- * 🧪 TEST: Comprehensive reminder engine test.
- * Creates test entries with ALL possible statuses, runs sendDailyReminders(),
- * validates Email_Queue output, then cleans up.
- *
- * Run this in the Apps Script editor to verify the reminder system.
- * Check View → Logs for detailed results.
- */
+/*
+  Function: testReminderEngine
+  LAYMAN:    A manual test harness for the daily-reminder logic. It creates fake applications covering
+             every status (pending, approved, draft, denied, returned, phantom, already-reminded, ISM),
+             runs sendDailyReminders, checks the right ones got reminded, and cleans up after itself.
+  TECHNICAL: Diagnostics only (not used at runtime). Seeds Applications + workflow rows under a TEST-
+             prefix, invokes sendDailyReminders, asserts Email_Queue results per scenario, then deletes
+             the test rows. Logs a pass/fail report.
+  PARAMS:    (none)
+  RETURNS:   undefined (writes results to Logger).
+*/
 function testReminderEngine() {
   Logger.log('╔════════════════════════════════════════════════════════════╗');
   Logger.log('║  REMINDER ENGINE — COMPREHENSIVE TEST                      ║');
@@ -7963,19 +8899,16 @@ function testReminderEngine() {
   return results;
 }
 
-/**
- * 🏆 ULTIMATE SYSTEM FLOW TEST — Phase 2 & 3 end-to-end
- * Tests the COMPLETE PIA lifecycle:
- *   ✓ Phase 2: Submit → Approve → Return → Deny → Re-submit
- *   ✓ Phase 3: ISM workflow → Approve → Escalate → DivHead → Route
- *   ✓ Email Queue processing
- *   ✓ Admin APIs (queue summary, email log, reminder config)
- *   ✓ Sequence enforcement (Step 1 before Step 2)
- *   ✓ Duplicate/re-process prevention
- *   ✓ Scalability: batch create 25 records and verify throughput
- *
- * Run from Apps Script editor. View → Logs for results.
- */
+/*
+  Function: testFullSystemFlow
+  LAYMAN:    A big manual end-to-end test of the whole PIA lifecycle — submit, approve, return, deny,
+             resubmit, the ISM/Division-Head path, email queue, and admin APIs — plus a small scalability
+             batch. For developer verification in the Apps Script editor.
+  TECHNICAL: Diagnostics only (not used at runtime). Drives the real functions against TEST-prefixed
+             records, asserts sequence enforcement and duplicate-prevention, then reports pass/fail.
+  PARAMS:    (none)
+  RETURNS:   A results object (also logged).
+*/
 function testFullSystemFlow() {
   Logger.log('╔══════════════════════════════════════════════════════════════╗');
   Logger.log('║  ULTIMATE SYSTEM FLOW — COMPREHENSIVE END-TO-END TEST       ║');
@@ -8381,10 +9314,19 @@ function testFullSystemFlow() {
   return results;
 }
 
-/**
- * 🔥 ULTIMATE MEGA-TEST — Every feature, every path, 20 concurrent users
- * 
- * Tests end-to-end:
+/*
+  Function: testUltimateSystem
+  LAYMAN:    The most thorough manual mega-test — runs every Phase 2 & 3 path (approvals, return, deny,
+             ISM full/deny/return/escalate, Division Head, routing), the email failsafe, all admin APIs,
+             the reminder engine, and a 20-user concurrency batch. Developer use only; expects >=2
+             InfoSec members configured.
+  TECHNICAL: Diagnostics only (not used at runtime). Drives the real functions against TEST-prefixed
+             data, asserts sequence enforcement / duplicate-prevention / no corruption under batch load,
+             then reports pass/fail. See the checklist below.
+  PARAMS:    (none)
+  RETURNS:   A results object (also logged).
+
+  Tests end-to-end:
  *   ✓ Head Approval Chain (Submit → Step1 → Step2 → ISM init)
  *   ✓ Return to Requestor (with flags)
  *   ✓ Deny application
@@ -8946,6 +9888,14 @@ function testUltimateSystem() {
 // END
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/*
+  Function: checkProperties
+  LAYMAN:    Quick developer check that logs whether the ADMIN_API_KEY Script Property is set (without
+             revealing the full value).
+  TECHNICAL: Reads ADMIN_API_KEY and logs a masked status. Diagnostics only.
+  PARAMS:    (none)
+  RETURNS:   undefined (writes to Logger).
+*/
 function checkProperties() {
   var key = PropertiesService.getScriptProperties().getProperty('ADMIN_API_KEY');
   Logger.log('ADMIN_API_KEY: ' + (key ? '✅ SET (' + key.substring(0, 6) + '...)' : '❌ MISSING'));
