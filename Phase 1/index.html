@@ -4557,7 +4557,7 @@ function renderForm() {
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text2);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
             </div>
             <div class="upload-text">
-              <strong>Replace ${isOJT ? 'School' : 'Agency'} Endorsement Letter (optional) ${infoTip('An official letter from the agency endorsing the personnel for access.')}</strong>
+              <strong>Replace <span id="endorse-scope-word" style="display:inline;font-size:inherit;color:inherit;margin:0;">${isOJT ? 'School' : 'Agency'}</span> Endorsement Letter (optional) ${infoTip('An official letter from the agency endorsing the personnel for access.')}</strong>
               <span>Upload a new version only if you need to update the retained file</span>
             </div>
             <div class="upload-action">Browse</div>
@@ -4575,7 +4575,7 @@ function renderForm() {
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text2);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
             </div>
             <div class="upload-text">
-              <strong>Upload ${isOJT ? 'School' : 'Agency'} Endorsement Letter (Required) ${infoTip('An official letter from the agency endorsing the personnel for access. Must be signed and on agency letterhead.')}</strong>
+              <strong>Upload <span id="endorse-scope-word" style="display:inline;font-size:inherit;color:inherit;margin:0;">${isOJT ? 'School' : 'Agency'}</span> Endorsement Letter (Required) ${infoTip('An official letter from the agency endorsing the personnel for access. Must be signed and on agency letterhead.')}</strong>
               <span>This file was flagged — please re-upload a corrected version</span>
             </div>
             <div class="upload-action">Browse</div>
@@ -4589,7 +4589,7 @@ function renderForm() {
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text2);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
             </div>
             <div class="upload-text">
-              <strong>Upload ${isOJT ? 'School' : 'Agency'} Endorsement Letter ${infoTip('An official letter from the agency endorsing the personnel for access. Must be signed and on agency letterhead.')}</strong>
+              <strong>Upload <span id="endorse-scope-word" style="display:inline;font-size:inherit;color:inherit;margin:0;">${isOJT ? 'School' : 'Agency'}</span> Endorsement Letter ${infoTip('An official letter from the agency endorsing the personnel for access. Must be signed and on agency letterhead.')}</strong>
               <span>${isRevision ? 'Upload a new file' : 'PDF, DOC, DOCX up to 10MB'}</span>
             </div>
             <div class="upload-action">Browse</div>
@@ -4704,6 +4704,9 @@ function renderForm() {
     if (endorseWrapper) {
       endorseWrapper.style.display = isCU ? 'block' : 'none';
     }
+    // Endorsement label scope: "School" for OJT, "Agency" otherwise (re-render on change)
+    const endorseWord = document.getElementById('endorse-scope-word');
+    if (endorseWord) endorseWord.textContent = (involve === 'ojt') ? 'School' : 'Agency';
   }
 
   // DSA visibility toggle + label update on access dropdown change
