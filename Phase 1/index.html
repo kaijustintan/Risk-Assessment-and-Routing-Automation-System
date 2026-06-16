@@ -4010,19 +4010,19 @@ function renderGuide() {
     sheet row. Until that row exists the link falls back to '#' and shows "Link not set".
   */
   const DOWNLOADABLES = [
-    { configKey: 'LINK_NDA_TEMPLATE', title: 'Non-Disclosure Agreement', descSet: 'Click to download', descStyle: '',
+    { configKey: 'LINK_NDA_TEMPLATE', title: 'Non-Disclosure Agreement', descSet: 'For employees / internal personnel', descStyle: '',
       iconStyle: 'background: #fef2f2; border-color: #fca5a5; color: #dc2626;',
       icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' },
-    { configKey: 'LINK_DPA_TEMPLATE', title: 'Data Protection Agreement', descSet: 'Click to download', descStyle: '',
+    { configKey: 'LINK_DPA_TEMPLATE', title: 'Data Protection Agreement', descSet: 'For employees', descStyle: 'font-weight:600;color:var(--navy);',
       iconStyle: 'background: #eff6ff; border-color: #93c5fd; color: #2563eb;',
       icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>' },
-    { configKey: 'LINK_DSA_TEMPLATE', title: 'Data Sharing Agreement', descSet: 'Click to download', descStyle: '',
+    { configKey: 'LINK_DSA_TEMPLATE', title: 'Data Sharing Agreement', descSet: 'For external / third-party data sharing', descStyle: '',
       iconStyle: 'background: #ecfdf5; border-color: #6ee7b7; color: #059669;',
       icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg>' },
-    { configKey: 'LINK_CU_TEMPLATE', title: 'Confidentiality Undertaking', descSet: 'View agency document', descStyle: 'color: #6b7280;',
+    { configKey: 'LINK_CU_TEMPLATE', title: 'Confidentiality Undertaking', descSet: 'For agency personnel', descStyle: 'color: #6b7280;',
       iconStyle: 'background: #eff6ff; border: 1px solid #93c5fd; color: #2563eb; border-radius: 8px; padding: 6px; display: flex; justify-content: center; align-items: center;',
       icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' },
-    { configKey: 'LINK_OJT_NDA_TEMPLATE', title: 'OJT Confidentiality Undertaking', descSet: 'Click to download', descStyle: '',
+    { configKey: 'LINK_OJT_NDA_TEMPLATE', title: 'OJT Confidentiality Undertaking', descSet: 'For OJT / interns', descStyle: '',
       iconStyle: 'background: #fef2f2; border-color: #fca5a5; color: #dc2626;',
       icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>' },
   ];
@@ -4367,7 +4367,7 @@ function renderForm() {
         <div class="input-wrapper">
           <div class="select-wrap">
             <select id="dcs-involvement">
-              <option value="" ${(!isAgency && !isOJT) ? 'selected' : ''}>No — standard request</option>
+              <option value="" ${(!isAgency && !isOJT) ? 'selected' : ''}>This is a standard request</option>
               <option value="agency" ${isAgency ? 'selected' : ''}>This request involves an Agency</option>
               <option value="ojt" ${isOJT ? 'selected' : ''}>This request involves an OJT</option>
             </select>
@@ -4557,7 +4557,7 @@ function renderForm() {
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text2);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
             </div>
             <div class="upload-text">
-              <strong>Replace Endorsement Letter (optional) ${infoTip('An official letter from the agency endorsing the personnel for access.')}</strong>
+              <strong>Replace ${isOJT ? 'School' : 'Agency'} Endorsement Letter (optional) ${infoTip('An official letter from the agency endorsing the personnel for access.')}</strong>
               <span>Upload a new version only if you need to update the retained file</span>
             </div>
             <div class="upload-action">Browse</div>
@@ -4575,7 +4575,7 @@ function renderForm() {
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text2);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
             </div>
             <div class="upload-text">
-              <strong>Upload Endorsement Letter (Required) ${infoTip('An official letter from the agency endorsing the personnel for access. Must be signed and on agency letterhead.')}</strong>
+              <strong>Upload ${isOJT ? 'School' : 'Agency'} Endorsement Letter (Required) ${infoTip('An official letter from the agency endorsing the personnel for access. Must be signed and on agency letterhead.')}</strong>
               <span>This file was flagged — please re-upload a corrected version</span>
             </div>
             <div class="upload-action">Browse</div>
@@ -4589,7 +4589,7 @@ function renderForm() {
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text2);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
             </div>
             <div class="upload-text">
-              <strong>Upload Endorsement Letter ${infoTip('An official letter from the agency endorsing the personnel for access. Must be signed and on agency letterhead.')}</strong>
+              <strong>Upload ${isOJT ? 'School' : 'Agency'} Endorsement Letter ${infoTip('An official letter from the agency endorsing the personnel for access. Must be signed and on agency letterhead.')}</strong>
               <span>${isRevision ? 'Upload a new file' : 'PDF, DOC, DOCX up to 10MB'}</span>
             </div>
             <div class="upload-action">Browse</div>
@@ -5358,7 +5358,7 @@ function renderSummary() {
         ${summaryRow('Agency Personnel', ag.agencyPersonnel)}
         ${getContainerFlagHtml('dcs-agency-contract-start')}
         ${summaryRow('Contract Start Date', ag.contractStartDate)}
-        ${summaryRow('Endorsement Letter', ag.endorsementLetter || 'Not attached')}
+        ${summaryRow('Agency Endorsement Letter', ag.endorsementLetter || 'Not attached')}
         ${getContainerFlagHtml('dcs-agency-network-drive')}
         ${summaryRow('Network Drive', ag.networkDrive)}
         ${getContainerFlagHtml('dcs-agency-recovery-email')}
@@ -5432,7 +5432,7 @@ function renderSummary() {
           }
           return summaryRow('DSA', dsaName || 'Not attached');
         })()}
-        ${state.dcs.isOJT ? summaryRow('Endorsement Letter', (state.dcs.agency && state.dcs.agency.endorsementLetter) || 'Not attached') : ''}
+        ${state.dcs.isOJT ? summaryRow('School Endorsement Letter', (state.dcs.agency && state.dcs.agency.endorsementLetter) || 'Not attached') : ''}
       </div>
     </div>
 
@@ -6082,7 +6082,7 @@ function renderRequestDetails(data) {
         ${summaryRow('Agency Personnel', ag.agencyPersonnel)}
         ${getContainerFlagHtml('dcs-agency-contract-start')}
         ${summaryRow('Contract Start Date', ag.contractStartDate)}
-        ${summaryRow('Endorsement Letter', (ag.endorsementLetter && ag.endorsementLetter.name) ? ag.endorsementLetter.name : 'Not attached')}
+        ${summaryRow('Agency Endorsement Letter', (ag.endorsementLetter && ag.endorsementLetter.name) ? ag.endorsementLetter.name : 'Not attached')}
         ${getContainerFlagHtml('dcs-agency-network-drive')}
         ${summaryRow('Network Drive', ag.networkDrive)}
         ${getContainerFlagHtml('dcs-agency-recovery-email')}
