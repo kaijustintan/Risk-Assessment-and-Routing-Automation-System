@@ -58,6 +58,7 @@ script property. Each phase is deployed separately by manual copy-paste into its
 | Application Requests list | no filtering | search + status filter |
 | Status badge after PIA submit | wrongly stayed "Ready for Phase 2" | correctly "PIA In Progress" |
 | Code documentation | inconsistent / Taglish / sparse | full English doc format, ~455 functions |
+| Form labeling | generic "Click to download"; static "Endorsement Letter" | audience tags per form + type-aware "School / Agency Endorsement Letter" |
 
 ---
 
@@ -152,6 +153,35 @@ script property. Each phase is deployed separately by manual copy-paste into its
 - **V1→V2:** V1 emails were a mix of plain text (Admin) and Arial/blue (PIA); V2 unifies everything to
   one professional navy style. (Chosen path: "Option C" — restyle PIA to match the navy template.)
 - **Scenario:** An approver gets a navy "Action Required — Review" card with a working Review button.
+
+### 3.10 Downloadable & endorsement labeling clarity (audience-aware copy)
+- **Layman:** Three copy/labeling fixes so users instantly know *who each form is for* and
+  *which endorsement letter to attach*: (1) each downloadable form now shows its audience
+  ("For employees", "For external / third-party sharing", "For OJT / interns"); (2) the
+  vague "No — standard request" option now reads "This is a standard request"; (3) the
+  Endorsement Letter upload renames itself by request type — **"School Endorsement Letter"**
+  for OJT, **"Agency Endorsement Letter"** for Agency — on the upload card *and* the review
+  summary.
+- **Technical:** All in `Phase 1/index.html` (frontend/copy only — no backend).
+  - Downloadables: repurposed each `DOWNLOADABLES` entry's `descSet` from "Click to download"
+    into an audience tag; DPA's `descStyle` bolded navy for emphasis.
+  - Dropdown: relabeled the empty `<option>` in `renderForm()`'s `#dcs-involvement` select.
+  - Endorsement label: wrapped the dynamic scope word in `<span id="endorse-scope-word">`
+    across all 3 upload-card states (fresh / flagged / retained), and taught
+    `updateMainUploadLabel()` to set it to "School"/"Agency" on every dropdown change (the
+    label was previously frozen at initial render, so switching to OJT kept showing "Agency").
+    Gave the span inline overrides (`display:inline; font-size/color:inherit`) so it isn't
+    captured by the `.upload-text span` sub-line style. Summary rows relabeled to match
+    ("School Endorsement Letter" for OJT, "Agency Endorsement Letter" for Agency).
+- **V1→V2:** V1 used generic "Click to download" subtexts, a confusing "No — standard request"
+  option, and a single static "Endorsement Letter" label regardless of request type; V2 makes
+  all three audience-aware and self-updating.
+- **Scenario:** A user picks "OJT" → the upload card live-updates to "Upload School Endorsement
+  Letter" and the review summary shows "School Endorsement Letter"; picking "Agency" shows the
+  Agency variant. The guide's download cards each state who they're for.
+- **Where:** `Phase 1/index.html` — `renderGuide()` (`DOWNLOADABLES`), `renderForm()`
+  (`#dcs-involvement` option + endorsement upload cards + `updateMainUploadLabel()`), and the
+  summary render rows.
 
 ---
 
