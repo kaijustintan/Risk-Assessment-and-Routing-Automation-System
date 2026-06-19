@@ -76,6 +76,58 @@ cloud project; this repo is where we edit, then Kai copy-pastes into the right p
 
 ---
 
+## 3b. 🚨 Deployment golden rule & Script-Property URL map
+
+> Learned the hard way (a multi-hour debug). The cross-app links (the "Proceed to Phase 2"
+> button + every email link) are wired through **Script Properties that store deployment URLs**,
+> and those URLs only stay valid if you deploy correctly. Read this before touching any
+> deployment.
+
+**LAYMAN (Tropang Ex):** A deployment's `/exec` URL is like a phone number. Script Properties
+are contacts saving that number. Nothing auto-updates. **Edit an existing deployment → New
+version = same number** (contacts stay valid forever). **New deployment = brand-new number**
+(every saved contact now calls a dead line, and you must hand-fix each one). All the "links
+not working" pain came from making *new deployments* per change instead of versioning one.
+
+**THE GOLDEN RULE — each app keeps exactly ONE web-app deployment.** To ship a change:
+`Deploy → Manage deployments → ✏️ Edit the one deployment → Version → "New version" → Deploy`.
+**Never** click **"New deployment."** New version keeps the same `/exec` URL → every stored
+URL below stays valid → zero property edits needed. One stray "New deployment" silently
+orphans the URLs and breaks the button + all email links.
+
+**Why it's manual at all:** the 3 apps are **separate GAS projects** that can't discover each
+other's URLs. A project's *own* URL is auto-derivable (`ScriptApp.getService().getUrl()`, used
+as the fallback in PIA's `getWebAppUrl()`), but **cross-app URLs must be stored** — that's the
+integration glue. "Set once" (one stable deployment) beats "set every deploy."
+
+**Property → URL map (set ONCE if you follow the golden rule).** Each value = that app's live
+`/exec`. ⚠️ `DCS_WEB_APP_URL` exists in **both** DCS and PIA projects — the **PIA** copy is the
+one the email code reads.
+
+| Project (Script Properties) | Property | Must hold | Feeds / read by |
+|---|---|---|---|
+| **DCS** | `PIA_APP_URL` | live **PIA** `/exec` | "Proceed to Phase 2" button (`generatePhase2Url_`) |
+| **DCS** | `DCS_WEB_APP_URL` | live **DCS** `/exec` | DCS self-reference |
+| **PIA** | `WEB_APP_URL` | live **PIA** `/exec` | approver "Review Access Request", ISM/approval forms, reminders (`getWebAppUrl`) |
+| **PIA** | `DCS_WEB_APP_URL` | live **DCS** `/exec` | applicant "View DCS Submission" link (`getDCSWebAppUrl`) |
+| **Admin** | (check if it sends links) | live URLs as needed | Admin email senders |
+
+Consistency check: **DCS `PIA_APP_URL` == PIA `WEB_APP_URL`** (both = live PIA), and **DCS
+`DCS_WEB_APP_URL` == PIA `DCS_WEB_APP_URL`** (both = live DCS). If a pair disagrees, a link is
+about to break.
+
+**Gotchas when links die:**
+- **Emails freeze their links at send time.** Updating a property only fixes **future** emails;
+  ones already in inboxes stay dead. Re-trigger/resend to test.
+- **Review tokens have a 14-day TTL** (`isTokenValid`) — judge only with freshly generated links.
+- **`?parentID=` only:** PIA's `doGet` evaluates the `index` template **only** on the
+  `?parentID=` path, so template bugs surface on "Proceed to Phase 2" but not on a bare URL.
+- **Never write literal `<? … ?>` inside comments** in a templated HTML file (`index`): the GAS
+  template engine parses scriptlets even in comments → a stray `...` throws
+  `Unexpected token '...'` during `template.evaluate()`.
+
+---
+
 ## 4. File map (by phase)
 
 | Path | Role | Touch it? |
