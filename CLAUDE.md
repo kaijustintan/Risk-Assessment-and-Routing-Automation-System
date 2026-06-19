@@ -302,6 +302,33 @@ Final: all InfoSec approve → 'Approved by ISM' → applicant notified, DCS mar
 Key fns: `buildApproversFromAppData` (seeds Stage A), `initializeApprovalWorkflow`,
 `apiPhase3_ProcessISMDecision` (Stage B/C/D), `getISMReviewerStep` (1=Person1, 2=Person2).
 
+**Who fills each approver (hybrid by design):** the **fixed, org-wide** roles are
+**admin-configured** — InfoSec reviewers + DCOPS/TechServe live in `InfoSec_Email_Config`
+(active=YES), and `PRIVACY_OFFICER_EMAIL` is the head fallback. The **per-applicant** roles
+(Immediate / Dept / **Division** Head) are **filled by the applicant in PIA1** — because they're
+that person's own reporting line, which varies per request and would be unmaintainable as a
+central org chart. Integrity risk (naming yourself/a friend) is mitigated, not prevented, by
+`analyzeApplicationRisk` (flags drafter-email == head-email, `pia_code.js` ~3602). Future
+hardening = source the head chain from an HR directory / Workspace org unit.
+
+**⬆️ Escalation = "up to Division Head, then back down" (NOT a skip-to-final).** When an InfoSec
+member picks `EscalateToDivisionHead` (`apiPhase3_ProcessISMDecision` ~7154):
+- That ISM row → `EscalatedToDivisionHead`; app status → `Escalated to Division Head`; the ISM
+  chain **pauses** (the *next* ISM member is NOT notified yet).
+- A **single** Pending `DivisionHead_Approval_Workflow` row is created (dedup guard ~7197 skips
+  if one is already Pending — a safety net for simultaneous escalations), and the **Division
+  Head named in PIA1** (`divHeadEmail`) is emailed a review link.
+- The Division Head decides (`processDivHeadDecision` ~3910):
+  - **Approve** → the escalated ISM step is marked `Approved`. If that makes **all** ISM rows
+    Approved → **finalize** (certificate + route + DCS Complete). If not (e.g. the other ISM
+    member hasn't acted) → **resume the ISM chain at the next step** (`apiPhase3_NotifyISMember`
+    ~3999) — i.e. it comes *back down* to the remaining reviewer.
+  - **Deny** → app `Denied` (terminal). **Return** → app `Returned` to applicant (+DCS if DCS
+    flags) → full restart on resubmit.
+- If **both** InfoSec members escalate (only reachable sequentially — Step 2 escalates after a
+  DivHead approve resumes the chain to them), the Division Head is reviewed **once per
+  escalation** (the prior DivHead row is already resolved, so a fresh Pending one is created).
+
 **🔁 Return = FULL restart, not resume.** A "Return" from **any** approver (head, InfoSec, or
 DivHead) always bounces to the **applicant** — never to a previous approver. On resubmit,
 `submitApplication` **deletes all** `Approval_Workflow` + `ISM_Approval_Workflow` +
