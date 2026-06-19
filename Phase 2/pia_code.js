@@ -2011,11 +2011,11 @@ function handleEmailAction(params) {
       // Person 1: Can Approve (with destination), Return, Deny, or Escalate
       actionButtonsHtml = `
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%;">
-          <div class="action-approve-group" style="display:none; flex-direction:column; gap:4px;">
+          <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Advance this application to the next approval stage or finalize it.</div>
             <button type="button" class="btn btn-success" style="padding:16px; width:100%; justify-content:center; font-size:16px;" onclick="submitWithRouting('Approve')">Approve</button>
           </div>
-          <div class="action-approve-group" style="display:none; flex-direction:column; gap:4px;">
+          <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Forward this application to the Division Head for executive review.</div>
             <button type="button" class="btn btn-secondary" style="background:#7c3aed; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#7c3aed;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
           </div>
@@ -2034,14 +2034,14 @@ function handleEmailAction(params) {
       let escalateBtnHtml = '';
       if (hasDivHeadReviewed) {
         escalateBtnHtml = `
-          <div class="action-approve-group" style="display:none; flex-direction:column; gap:4px;">
+          <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Forward this application to the Division Head for executive review.</div>
             <button type="button" class="btn btn-secondary" disabled style="background:#d1d5db; color:#9ca3af; cursor:not-allowed; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#d1d5db;" title="Escalation not available - Division Head already reviewed">Escalate to Division Head</button>
           </div>
         `;
       } else {
         escalateBtnHtml = `
-          <div class="action-approve-group" style="display:none; flex-direction:column; gap:4px;">
+          <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Forward this application to the Division Head for executive review.</div>
             <button type="button" class="btn btn-secondary" style="background:#7c3aed; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#7c3aed;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
           </div>
@@ -2049,7 +2049,7 @@ function handleEmailAction(params) {
       }
       actionButtonsHtml = `
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%;">
-          <div class="action-approve-group" style="display:none; flex-direction:column; gap:4px;">
+          <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Advance this application to the next approval stage or finalize it.</div>
             <button type="button" class="btn btn-success" style="padding:16px; width:100%; justify-content:center; font-size:16px;" onclick="submitWithRouting('Approve')">Approve</button>
           </div>
@@ -2096,12 +2096,39 @@ function handleEmailAction(params) {
           <span style="font-size: 11.5px; font-weight: 400; margin-left: 8px;">(Minimum ${COMMENT_MIN_CHARS_STANDARD} required)</span>
         </div>
         
-        <!-- Main Form Button -->
-        <div style="display: flex; justify-content: flex-end; margin-top: 15px;">
-          <button type="button" class="btn btn-primary" onclick="openDecisionModal()">Review & Submit Decision</button>
+        <!-- Inline decision panel: routing destination + all decision actions shown directly (no modal) -->
+        <div style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 18px;">
+          <div class="modal-step-title" style="margin-bottom:10px;">Routing Destination <span style="color:var(--text3); font-weight:400; font-size:12px;">(required only for Approve / Escalate)</span></div>
+          ${person1RoutingChoice}
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+            <label class="routing-option">
+              <input type="radio" name="routingDest" value="DCOPS" onclick="document.getElementById('routingErrorMain').style.display='none'">
+              <div><div class="routing-title">DCOPS Team</div><div class="routing-desc">Data Collection Operations</div></div>
+            </label>
+            <label class="routing-option">
+              <input type="radio" name="routingDest" value="TECHSERVE" onclick="document.getElementById('routingErrorMain').style.display='none'">
+              <div><div class="routing-title">TechServe Team</div><div class="routing-desc">Technical Services</div></div>
+            </label>
+            <label class="routing-option">
+              <input type="radio" name="routingDest" value="BOTH" onclick="document.getElementById('routingErrorMain').style.display='none'">
+              <div><div class="routing-title">Both Teams</div><div class="routing-desc">DCOPS &amp; TechServe</div></div>
+            </label>
+          </div>
+          <div id="routingErrorMain" style="display:none; color:var(--danger-text); font-size:12.5px; margin-top:8px;">⚠ Please select a routing destination for Approve or Escalate.</div>
+          <div style="font-size:12px; color:var(--text3); line-height:1.4; margin-top:8px;">Routing is required only for <strong>Approve</strong> or <strong>Escalate</strong>. Leave it unselected for <strong>Return</strong> or <strong>Deny</strong>.</div>
+
+          <div class="modal-step-title" style="margin:18px 0 10px;">Decision</div>
+          ${actionButtonsHtml}
         </div>
       </form>
-      
+
+      <!-- Submitting overlay (shown on any decision submit so the click has visible feedback) -->
+      <div id="submitOverlay" style="display:none; position:fixed; inset:0; background:rgba(255,255,255,0.9); z-index:99999; align-items:center; justify-content:center; flex-direction:column; gap:14px;">
+        <style>@keyframes ismSpin{to{transform:rotate(360deg)}}</style>
+        <div style="width:42px; height:42px; border:4px solid var(--navy-border,#cdd9ea); border-top-color:var(--navy,#1e3a5f); border-radius:50%; animation:ismSpin 0.8s linear infinite;"></div>
+        <div style="font-size:14px; font-weight:600; color:var(--navy-text,#0f2238);">Submitting your decision…</div>
+      </div>
+
       <!-- Decision Modal -->
       <div id="decisionModal" class="decision-modal-overlay" style="display:none;">
         <div class="decision-modal">
@@ -2406,29 +2433,29 @@ function handleEmailAction(params) {
           const routingInput = document.getElementById('routingDestinationInput');
           
           const plainText = editor.value.trim();
-          
-          // For Approve or EscalateToDivisionHead: validate that routing destination is selected
+
+          // Remarks (min 50 chars) required for every decision (the modal gate that used to enforce this is gone).
+          if (plainText.length < 50) {
+            showError('Please provide at least 50 characters of remarks before submitting a decision.');
+            return;
+          }
+
+          // For Approve or EscalateToDivisionHead: a routing destination is required.
           if (decision === 'Approve' || decision === 'EscalateToDivisionHead') {
             const selectedRouting = document.querySelector('input[name="routingDest"]:checked');
             if (!selectedRouting || !selectedRouting.value) {
-              goToStep1();
-              document.getElementById('routingError').style.display = 'flex';
-              showError('Please select a routing destination before proceeding.');
+              document.getElementById('routingErrorMain').style.display = 'block';
+              showError('Please select a routing destination before approving or escalating.');
               return;
             }
             routingInput.value = selectedRouting.value;
-            document.getElementById('routingError').style.display = 'none';
+            document.getElementById('routingErrorMain').style.display = 'none';
           } else {
             routingInput.value = '';
           }
-          
-          // For escalation, also require feedback
-          if (decision === 'EscalateToDivisionHead' && plainText.length < 50) {
-            showError('Please provide at least 50 characters of feedback when escalating.');
-            return;
-          }
-          
+
           decisionInput.value = decision;
+          showSubmittingOverlay();
           document.getElementById('ismReviewForm').submit();
         }
         
@@ -2441,6 +2468,7 @@ function handleEmailAction(params) {
           }
           document.getElementById('ismDecisionInput').value = decision;
           document.getElementById('routingDestinationInput').value = '';
+          showSubmittingOverlay();
           document.getElementById('ismReviewForm').submit();
         }
 
@@ -2453,7 +2481,13 @@ function handleEmailAction(params) {
           }
           document.getElementById('ismDecisionInput').value = 'Deny';
           document.getElementById('routingDestinationInput').value = '';
+          showSubmittingOverlay();
           document.getElementById('ismReviewForm').submit();
+        }
+
+        function showSubmittingOverlay() {
+          var ov = document.getElementById('submitOverlay');
+          if (ov) ov.style.display = 'flex';
         }
       </script>
     `;
@@ -5040,7 +5074,7 @@ function buildPiaEmailHtml_(opts) {
         '<div style="color:#ffffff;font-size:20px;font-weight:700;margin-top:4px;">' + heading + '</div>' +
       '</div>' +
       '<div style="padding:28px;">' + content + '</div>' +
-      '<div style="padding:14px 28px;border-top:1px solid #e5e7eb;background:#fff8e1;font-size:12px;color:#92400e;"><strong>Do NOT reply to this email.</strong> Replies are not monitored. Use the button above to take action. For help, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>' +
+      '<div style="padding:16px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;font-size:12px;color:#6b7280;line-height:1.5;"><strong style="color:#374151;">No-reply notice.</strong> This mailbox is not monitored, so please do not reply. Use the button above to take action. For assistance, contact ISM-InfoSec at <strong style="color:#374151;">infosec@megaworldcorp.com</strong>.</div>' +
     '</div></div>';
 }
 
@@ -5177,17 +5211,17 @@ function notifyApplicant(sessionId, status) {
   }
 
   if (status === 'approved') {
-    statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your Privacy Impact Assessment application has been <strong>APPROVED</strong>. A certificate has been generated.</div></div>`;
+    statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your Privacy Impact Assessment application has been <strong>FULLY APPROVED</strong>. A certificate has been generated.</div></div>`;
   } else if (status === 'submitted') {
     statusMessage = `<div style="background: #e3f2fd; color: #1e88e5; border: 1px solid rgba(30,136,229,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your Privacy Impact Assessment application has been <strong>SUBMITTED</strong> and is now being reviewed by your Immediate/Department Head.</div></div>`;
   } else if (status === 'progressing') {
     statusMessage = `<div style="background: #e3f2fd; color: #1e88e5; border: 1px solid rgba(30,136,229,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application has been approved by the current reviewer and is now <strong>PROGRESSING</strong> to the next Head for review.</div></div>`;
   } else if (status === 'approved_main') {
-    statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application was <strong>APPROVED</strong> by the required Heads and is now being reviewed by the ISM team.</div></div>`;
+    statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application is now <strong>HEADS APPROVED</strong> — it cleared all required Head approvals and is being reviewed by the ISM (InfoSec) team. This is not yet final approval.</div></div>`;
   } else if (status === 'escalated_divhead') {
     statusMessage = `<div style="background: #f3e8ff; color: #6b21a8; border: 1px solid rgba(107,33,168,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application has been <strong>ESCALATED</strong> to the Division Head for executive review.</div></div>`;
   } else if (status === 'approved_divhead_progressing') {
-    statusMessage = `<div style="background: #e3f2fd; color: #1e88e5; border: 1px solid rgba(30,136,229,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application was <strong>APPROVED</strong> by the Division Head and is returning to the ISM team for continued review.</div></div>`;
+    statusMessage = `<div style="background: #e3f2fd; color: #1e88e5; border: 1px solid rgba(30,136,229,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application was <strong>approved by the Division Head</strong> and is returning to the ISM team for continued review. This is not yet final approval.</div></div>`;
   } else if (status === 'progressing_ism') {
     statusMessage = `<div style="background: #e3f2fd; color: #1e88e5; border: 1px solid rgba(30,136,229,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application has been approved by an ISM member and is now <strong>PROGRESSING</strong> to the next ISM member.</div></div>`;
   } else if (status === 'approved_ism_final' || status === 'approved_divhead_final') {
@@ -6141,7 +6175,7 @@ function adminResendToStage(sessionId, stageType, approverEmail) {
       'This is a re-sent notification regarding PIA session ' + sessionId + ' (' + piaTitle + ').\n' +
       'Please review and take action.\n\n' +
       'Review Link: ' + reviewUrl + '\n\n' +
-      '⚠️ CAUTION: Do NOT reply to this email. This mailbox is not monitored. Use the review link above to take action. If you have a problem or query, email ISM-InfoSec at infosec@megaworldcorp.com.\n\n' +
+      'No reply: This mailbox is not monitored, so please do not reply. Use the review link above to take action. For assistance, contact ISM-InfoSec at infosec@megaworldcorp.com.\n\n' +
       'Thank you.\nPIA System (Admin Resend)';
 
     var queueId = queueEmail(sessionId, approverEmail,
@@ -7360,6 +7394,10 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
       return { success: false, error: 'Invalid destination routing: ' + destination };
     }
 
+    // Human-friendly routing label for the certificate (BOTH → "DCOPS and TechServe").
+    const routedLabel = normalizedDest === 'BOTH' ? 'DCOPS and TechServe'
+      : (normalizedDest === 'TECHSERVE' ? 'TechServe' : 'DCOPS');
+
     const ismInfo = apiPhase3_GetInfoSecMembers();
     if (!ismInfo.success) {
       return { success: false, error: 'Could not retrieve destination email configuration' };
@@ -7627,17 +7665,14 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
           <!-- Routing Information -->
           <div style="margin-top: 40px; padding-top: 25px; border-top: 2px solid #2a5285; text-align: center;">
             <p style="margin: 0; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Implementation Routing</p>
-            <p style="margin: 5px 0 0 0; font-size: 15px; font-weight: 600; color: #1a3a5c;">Routed to: ${escapeHtml(normalizedDest)}</p>
+            <p style="margin: 5px 0 0 0; font-size: 15px; font-weight: 600; color: #1a3a5c;">Routed to: ${escapeHtml(routedLabel)}</p>
             <p style="margin: 5px 0 0 0; font-size: 13px; color: #9ca3af;">Received at: ${escapeHtml(nowStr)}</p>
           </div>
 
         </div>
         
-        <div style="background: #fff8e1; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; margin-top: 20px; font-size: 12px; color: #92400e;">
-          <div style="display: flex; align-items: flex-start; gap: 8px;">
-            <span style="font-size: 16px; flex-shrink: 0; line-height: 1.3;">⚠️</span>
-            <div><strong>CAUTION: Do NOT reply to this email.</strong> Replies are not monitored and will not be received. This is an automated notification for your records and action. If you have a problem or query, email ISM-InfoSec at <strong>infosec@megaworldcorp.com</strong>.</div>
-          </div>
+        <div style="border-top: 1px solid #e5e7eb; margin-top: 24px; padding-top: 16px; font-size: 12px; color: #6b7280; text-align: center; line-height: 1.6;">
+          <strong style="color: #374151;">No-reply notice.</strong> This mailbox is not monitored, so please do not reply. This is an automated notification for your records and action. For assistance, contact ISM-InfoSec at <strong style="color: #374151;">infosec@megaworldcorp.com</strong>.
         </div>
 
         <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">

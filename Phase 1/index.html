@@ -6367,6 +6367,19 @@ function boot() {
   state.currentScreen = 'landing';
   renderLanding();
   show('landing');
+
+  // Deep-link: an email "View DCS Submission" link opens this app with ?parentID=<DCS ReqID>.
+  // Read it the sandbox-safe way (google.script.url.getLocation — no server-side templating needed)
+  // and jump straight to that request's details instead of leaving the user on the landing screen.
+  if (typeof google !== 'undefined' && google.script && google.script.url) {
+    google.script.url.getLocation(function(location) {
+      var reqId = (location && location.parameter && location.parameter.parentID)
+        ? String(location.parameter.parentID).trim() : '';
+      if (reqId && /^DCS-\d+$/i.test(reqId)) {
+        viewRequestDetails(reqId);
+      }
+    });
+  }
 }
 
 window.addEventListener('load', () => {
