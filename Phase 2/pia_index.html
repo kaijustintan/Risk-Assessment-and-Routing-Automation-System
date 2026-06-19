@@ -14,7 +14,7 @@
 
   TECHNICAL: Single-page Google Apps Script (GAS) HtmlService web app. It is opened with a
     URL query like ?parentID=<DCS ReqID>; the server injects that ReqID into the page via the
-    scriptlet `<?!= parentID ? ... ?>` at the bottom of the <script>. On load it calls
+    parentID printing scriptlet (a server-side tag) at the bottom of the script. On load it calls
     apiGetDCSContext(parentID) to verify the link and pre-populate fields from the DCS row,
     then routes through screens that are EMPTY divs in the HTML and filled at runtime by
     render*()/renderPIA*() functions. State lives in a single `state` object; text is
@@ -4013,8 +4013,10 @@ function promptForUserEmail() {
     debounce-saves on PIA input changes and mirrors p2-custom-* edits into pia2CustomOthers;
     reads parentID from the server scriptlet (see note below); seeds state and boots the dcs
     screen; then loadUserEmail().
-  NOTE: `const parentId = <?!= parentID ? ... ?>;` is a GAS server-side template tag, not
-  plain JS — it is rendered server-side before the page is sent. Do not "fix" it.
+  NOTE: the `const parentId = ...` line near the bottom of the script is a GAS server-side
+  template tag (a printing scriptlet), not plain JS — it is rendered server-side before the
+  page is sent. Do not "fix" it, and never write the scriptlet delimiters inside a comment
+  (the template engine parses them even in comments).
 */
 document.addEventListener('DOMContentLoaded', () => {
   hideLoading(); // Clear any stuck loading overlay on init
