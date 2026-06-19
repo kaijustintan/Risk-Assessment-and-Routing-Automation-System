@@ -275,6 +275,61 @@ ask before inventing one — consistency with the navy system matters to the sup
 
 ---
 
+## 8b. PIA (Phase 2) reference — approval ladder, returns & email links
+
+> Built from reading `Phase 2/pia_code.js`. The PIA approval workflow is **not** obvious from
+> the sheets alone; this is the canonical map. (DCS itself has **no** approval gate — it's
+> `COMPLETE` on submit; the whole ladder lives in PIA.)
+
+**The approval ladder (top to bottom):**
+
+```
+Applicant submits PIA
+  └─ STAGE A — Main heads        (Approval_Workflow sheet)
+       Step 1: Immediate Head     ← from the applicant's PIA1 answers (per-request, not fixed)
+       Step 2: Department Head     ← from PIA1.  Fallback: PRIVACY_OFFICER_EMAIL if neither valid.
+  └─ STAGE B — InfoSec / ISM      (ISM_Approval_Workflow sheet)
+       InfoSec Member Step 1 (Person 1) → Step 2 (Person 2)   ← from InfoSec_Email_Config (active=YES)
+       both must Approve in sequence.  Each can: Approve · Deny · Return · EscalateToDivisionHead.
+  └─ STAGE C — Routing            (chosen by the InfoSec reviewer on Approve/Escalate, NOT a gate)
+       DCOPS · TECHSERVE · BOTH    ← where the access gets provisioned after final approval.
+  └─ STAGE D — Division Head      (DivisionHead_Approval_Workflow sheet) — ONLY if an InfoSec
+       member escalates. Not in the normal path.
+Final: all InfoSec approve → 'Approved by ISM' → applicant notified, DCS marked COMPLETE,
+       routed to DCOPS/TechServe/Both.
+```
+
+Key fns: `buildApproversFromAppData` (seeds Stage A), `initializeApprovalWorkflow`,
+`apiPhase3_ProcessISMDecision` (Stage B/C/D), `getISMReviewerStep` (1=Person1, 2=Person2).
+
+**🔁 Return = FULL restart, not resume.** A "Return" from **any** approver (head, InfoSec, or
+DivHead) always bounces to the **applicant** — never to a previous approver. On resubmit,
+`submitApplication` **deletes all** `Approval_Workflow` + `ISM_Approval_Workflow` +
+`DivisionHead_Approval_Workflow` rows for that session and **rebuilds the ladder from Stage A,
+Step 1 (Immediate Head)**. All prior approvals are wiped; nothing resumes mid-chain. Lineage is
+kept via a revision id (`-V2`, `-V3`…) but approval progress resets to zero. (`pia_code.js`
+~3790.) ⚠️ **Return ≠ Deny:** Return is a fixable loop; Deny/Reject is terminal. And if the
+linked **DCS** is `Returned`, PIA resubmission is **blocked** until the DCS is fixed first
+(`pia_code.js` ~3730).
+
+**📧 Email links — how they're built & why they break.** All workflow emails (approver review,
+ISM, reminders, applicant status) build their links **at send time** from Script Properties,
+then freeze that link into the sent email:
+- Approver "Review Access Request" / ISM / approval forms / reminders → **`WEB_APP_URL`** (PIA)
+  via `getWebAppUrl()` (falls back to `ScriptApp.getService().getUrl()`).
+- Applicant "View DCS Submission" / "Update DCS Request" → **`DCS_WEB_APP_URL`** (PIA) via
+  `getDCSWebAppUrl()`.
+- Review/approve/deny links carry an **HMAC token** (`generateAuthToken`) bound to the approver
+  email + action, with a **14-day TTL** (`isTokenValid`).
+
+Consequences (see §3b for the full URL-property map + golden rule):
+- A link is only as valid as the deployment URL in its property **at the moment the email was
+  sent**. Updating a property fixes **future** emails only — ones already in inboxes stay dead.
+- Test with a **fresh** transaction (re-trigger), and only with **freshly generated** links
+  (tokens expire in 14 days).
+
+---
+
 ## 9. Session start ritual for this project
 
 State the goal ("Today's task: [the supervisor's specific design change]"), confirm it's

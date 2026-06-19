@@ -257,6 +257,40 @@ script property. Each phase is deployed separately by manual copy-paste into its
 
 ### 4.10 📚 Full code documentation (see §8).
 
+### 4.11 🐞 PIA "Proceed to Phase 2" crash — `<?…?>` scriptlet examples in doc comments
+- **Layman:** Clicking "Proceed to Phase 2" threw a full-page `SyntaxError: Unexpected token '...'`.
+  The PIA app itself was fine — the crash came from two **documentation comments** that happened
+  to contain the literal example `<?!= parentID ? ... ?>`.
+- **Technical:** The GAS HtmlService template engine scans **raw file text** for `<?…?>` tags and
+  does **not** skip comments. `pia_index.html` had the example scriptlet (with a literal `...`) in
+  its file-header and a `DOMContentLoaded` note; the engine compiled them as real printing
+  scriptlets and choked on `...`. It surfaced **only** on the `?parentID=` path, because that's the
+  only `doGet` branch that calls `createTemplateFromFile('index').evaluate()` (the no-parentID path
+  uses `createHtmlOutput`). The error reported as `file "Code", line 1201` — the `template.evaluate()`
+  call site — which sent the debug down a long wrong trail (runtime, deployments, properties) before
+  the real cause (the template file) was isolated. Fix: rephrased both doc comments to describe the
+  tag **without** the `<?…?>` delimiters; the one real scriptlet (now ~line 4044) is untouched.
+  Verified DCS `index.html` and Admin `adminView.html` contain no `<?…?>` sequences.
+- **V1→V2:** This was a **self-inflicted regression from the V2 documentation pass** (commit
+  `39f2a46`) — the doc comments that added the literal example scriptlet are what broke it. Pre-doc
+  PIA had only the one real scriptlet and worked. **Rule recorded in CLAUDE.md §3b:** never write
+  literal `<?…?>` inside comments in a templated HTML file.
+
+### 4.12 🔌 Deployment-URL & Script-Property untangling (ops, not code)
+- **Layman:** After redeploys, the "Proceed to Phase 2" button and **all email links** broke. Root
+  cause was never the code — it was that the cross-app URLs are stored in **Script Properties** that
+  had drifted to old/archived deployments, made worse by creating a **new deployment per change**
+  (which mints a new `/exec` URL each time) instead of versioning one.
+- **Technical:** Established the canonical map (now CLAUDE.md §3b): DCS holds `PIA_APP_URL` +
+  `DCS_WEB_APP_URL`; **PIA** holds `WEB_APP_URL` (its own, for approver/ISM/reminder links via
+  `getWebAppUrl`) + `DCS_WEB_APP_URL` (for the applicant "View DCS Submission" link via
+  `getDCSWebAppUrl`). `DCS_WEB_APP_URL` exists in **both** projects — the **PIA** copy is the one the
+  email code reads. Links freeze at **send time**; tokens have a **14-day TTL**. **The golden rule:
+  one web-app deployment per app, always `Edit → New version` (never "New deployment") → the `/exec`
+  URL is permanent and the properties are set-once.**
+- **V1→V2:** V1 had no documentation of this wiring; V2 documents the full property→URL map, the
+  golden rule, and the failure modes so the links never silently rot again.
+
 ---
 
 ## 5. The Journey — Key Iterations & Decisions
