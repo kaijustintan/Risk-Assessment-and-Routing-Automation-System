@@ -50,7 +50,7 @@ cloud project; this repo is where we edit, then Kai copy-pastes into the right p
 - ✅ **Frontend/design changes are the common, low-risk work** (CSS, render functions, copy,
   client validation). Phase 1 is the original supervisor scope.
 - ⚠️ **Backend (`*_code.js`) edits are higher-risk** — they send real emails to real people
-  and write the shared DB. When a task genuinely needs one (e.g. the approval reminder),
+  and write the shared DB. When a task genuinely needs one (e.g. an email resend/notifier),
   do it, but: reuse existing helpers, never weaken domain/auth checks, isolate sends in
   try/catch, and cap blast radius. Flag it clearly.
 - ⛔ **Never break the cross-app contract:** don't rename/repurpose shared sheet columns, the
@@ -110,7 +110,7 @@ one the email code reads.
 | **DCS** | `DCS_WEB_APP_URL` | live **DCS** `/exec` | DCS self-reference |
 | **PIA** | `WEB_APP_URL` | live **PIA** `/exec` | approver "Review Access Request", ISM/approval forms, reminders (`getWebAppUrl`) |
 | **PIA** | `DCS_WEB_APP_URL` | live **DCS** `/exec` | applicant "View DCS Submission" link (`getDCSWebAppUrl`) |
-| **Admin** | (check if it sends links) | live URLs as needed | Admin email senders |
+| **Admin** | `WEB_APP_URL` | live **PIA** `/exec` | manual-resend email CTAs (`notifyApprover` / `notifyApplicant` / `apiPhase3_NotifyISMember`, via `getOptionalUrl_`). Generic "Open the System" link — **no token, no `parentID`**. Missing prop → button silently omitted (graceful). Admin uses **no** `DCS_WEB_APP_URL` / `PIA_APP_URL`. |
 
 Consistency check: **DCS `PIA_APP_URL` == PIA `WEB_APP_URL`** (both = live PIA), and **DCS
 `DCS_WEB_APP_URL` == PIA `DCS_WEB_APP_URL`** (both = live DCS). If a pair disagrees, a link is
@@ -133,11 +133,11 @@ about to break.
 | Path | Role | Touch it? |
 |------|------|-----------|
 | `Phase 1/index.html` | **DCS frontend** — CSS, 9 screens, client JS, validation | ✅ main work |
-| `Phase 1/Code.js` | DCS backend (~2,670 lines) — `doGet`, drafts, `submitDCS`, risk audit. **No email code.** | ⚠️ careful |
+| `Phase 1/Code.js` | DCS backend (~2,670 lines) — `doGet`, drafts, `submitDCS`, risk audit. **One email:** `notifyDcsRequester_` ("Proceed to Phase 2" confirmation). | ⚠️ careful |
 | `Phase 2/pia_index.html` | PIA frontend — multi-section assessment wizard | ⚠️ as needed |
 | `Phase 2/pia_code.js` | PIA backend (~9,000 lines) — approval workflow, ISM, **all email** (`notifyApplicant`) | ⚠️ careful |
 | `Admin/adminView.html` | Admin frontend — dashboard, settings, email routing | ⚠️ as needed |
-| `Admin/admin_code.js` | Admin backend — config, approval reminders, `MailApp` senders | ⚠️ careful |
+| `Admin/admin_code.js` | Admin backend — config, manual email resend (`adminResendEmail`), `MailApp` senders | ⚠️ careful |
 | `*/…_appsscript.json` | Per-phase GAS manifest (Asia/Manila, scopes, DOMAIN access) | ⚠️ only for a new scope |
 | `docs/` | Cross-team handoff specs (e.g. category dropdown) | ✅ |
 | `DPS_DB*.xlsx` | Real DB export for schema reference — **gitignored (PII)** | 📖 read-only |
@@ -267,11 +267,23 @@ ask before inventing one — consistency with the navy system matters to the sup
   backend code change needed). Missing row → link shows "Link not set" (`#`). The Admin app's
   Settings UI can edit these link rows; new keys (e.g. `LINK_OJT_NDA_TEMPLATE`) currently
   need a direct sheet row or an Admin UI addition.
-- **Approval reminders** (Phase 3): `adminApi_sendDailyReminders()` in `Admin/admin_code.js`
-  nudges the *current pending approver* daily (DCS Immediate Head + PIA head/ISM/DivHead
-  chains), driven by a `ScriptApp` time-based trigger at `REMINDER_HOUR`. Configure via Admin
-  → Settings (needs the `script.scriptapp` scope + re-auth). It reuses `notifyApprover` /
-  `apiPhase3_NotifyISMember` / `sendEmailWithRetry_` — don't duplicate email logic.
+- **Approval reminders live in PIA, not Admin** (corrected — the original "`adminApi_sendDailyReminders()`
+  in `Admin/admin_code.js`" was wrong on both the name and the location; verified by grep). The real
+  **daily reminder engine** is `sendDailyReminders()` / `buildReminderEmail()` / `setupReminderTrigger()`
+  in **`Phase 2/pia_code.js`** (~line 4671). A daily `ScriptApp` time-trigger **running inside the PIA
+  project** (`atHour().everyDays(1)`, needs `script.scriptapp`) scans the 3 workflow sheets for `Pending`
+  rows and emails **only the next pending approver per request**, stamping `ReminderDate` so each is
+  nagged **once per day** until they act. Reminder emails carry a **valid tokenized review link**
+  (`WEB_APP_URL`). The **Admin panel only *configures*** it — Settings (on/off, hour) calls PIA's
+  cross-app API (`getReminderConfig` / `setReminderConfig`, dispatched in PIA `doPost` ~line 1300).
+- **Admin's own emails are manual resend only** (`Admin/admin_code.js`): an ISM clicks "Resend Email" →
+  `adminResendEmail` (dispatched ~`admin_code.js:874–912`) re-fires `notifyApprover` / `notifyApplicant` /
+  `apiPhase3_NotifyISMember` via `sendEmailWithRetry_`. These are **generic "log in to the system" notices**
+  (CTA = `getOptionalUrl_('WEB_APP_URL')`, **no token / no `parentID`**), a fallback nudge — **not** the
+  primary tokenized PIA workflow emails, and **not** the daily reminder. Don't duplicate email logic.
+- **DCS sends exactly one email** (`Phase 1/Code.js`): `notifyDcsRequester_` (~line 1705), the styled
+  *"Request submitted — Proceed to Phase 2"* confirmation, fired auto inside `submitDCS` (~1681, try/catch
+  failsafe) with a `?parentID=` deep-link into PIA.
 
 ---
 
