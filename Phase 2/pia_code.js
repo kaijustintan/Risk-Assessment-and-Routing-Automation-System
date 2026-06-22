@@ -2129,69 +2129,6 @@ function handleEmailAction(params) {
         <div style="font-size:14px; font-weight:600; color:var(--navy-text,#0f2238);">Submitting your decision…</div>
       </div>
 
-      <!-- Decision Modal -->
-      <div id="decisionModal" class="decision-modal-overlay" style="display:none;">
-        <div class="decision-modal">
-          <h3 class="decision-modal-header">Review Decision</h3>
-          
-          <div class="modal-slider-container">
-            <div id="modalSlider" class="modal-slider">
-            <!-- Step 1 -->
-              <div class="modal-step-1">
-                <div class="modal-step-title">Step 1: Select Routing Destination <span style="color:var(--danger-text);">*</span></div>
-                ${person1RoutingChoice}
-                <div style="display:grid; grid-template-columns: 2fr 2fr; gap: 4px;">
-                  <label class="routing-option">
-                    <input type="radio" name="routingDest" value="DCOPS" onclick="handleRoutingChange()"> 
-                    <div>
-                      <div class="routing-title">DCOPS Team</div>
-                      <div class="routing-desc">Route to Data Collection Operations</div>
-                    </div>
-                  </label>
-                  <label class="routing-option">
-                    <input type="radio" name="routingDest" value="TECHSERVE" onclick="handleRoutingChange()"> 
-                    <div>
-                      <div class="routing-title">TechServe Team</div>
-                      <div class="routing-desc">Route to Technical Services</div>
-                    </div>
-                  </label>
-                  <label class="routing-option">
-                    <input type="radio" name="routingDest" value="BOTH" onclick="handleRoutingChange()"> 
-                    <div>
-                      <div class="routing-title">Both Teams</div>
-                      <div class="routing-desc">Route to DCOPS & TechServe simultaneously</div>
-                    </div>
-                  </label>
-                </div>
-                <div id="routingError" style="display:none; color:var(--danger-text); font-size:12.5px; margin-top:6px; align-items:center; gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> Please select a routing destination</div>
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-top:10px; gap: 10px;">
-                  <div style="font-size:12px; color:var(--text3); line-height:1.4;">Note: Routing is only required for Approvals or Escalations. You may skip this if you intend to Deny or Return.</div>
-                  <button type="button" class="btn btn-sm btn-danger" onclick="clearRoutingSelection()" style="padding:4px 10px; font-size:11px; flex-shrink: 0;">Clear Choice</button>
-                </div>
-              </div>
-              
-              <!-- Step 2 -->
-              <div class="modal-step-2">
-                <div class="modal-step-title">Step 2: Select Action</div>
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                  ${person1RoutingChoice}
-                  ${actionButtonsHtml}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <div id="footer-step-1" style="display: flex; justify-content: space-between; width: 100%;">
-              <button type="button" class="btn btn-secondary" onclick="closeDecisionModal()">Cancel</button>
-              <button type="button" class="btn btn-primary" onclick="goToStep2()">Next Step &rarr;</button>
-            </div>
-            <div id="footer-step-2" style="display: none; justify-content: flex-start; width: 100%;">
-              <button type="button" class="btn btn-secondary" onclick="goToStep1()">&larr; Back to Step 1</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- Return Options Modal -->
       <div id="returnModal" class="decision-modal-overlay" style="display:none;">
         <div class="decision-modal" style="max-width: 400px;">
@@ -2366,18 +2303,6 @@ function handleEmailAction(params) {
           });
         });
         
-        function goToStep2() {
-          document.getElementById('modalSlider').style.transform = 'translateX(-50%)';
-          document.getElementById('footer-step-1').style.display = 'none';
-          document.getElementById('footer-step-2').style.display = 'flex';
-        }
-        
-        function goToStep1() {
-          document.getElementById('modalSlider').style.transform = 'translateX(0%)';
-          document.getElementById('footer-step-1').style.display = 'flex';
-          document.getElementById('footer-step-2').style.display = 'none';
-        }
-        
         function clearRoutingError() {
           document.getElementById('routingError').style.display = 'none';
         }
@@ -2404,22 +2329,7 @@ function handleEmailAction(params) {
           handleRoutingChange();
         }
         
-        function openDecisionModal() {
-          const editor = document.getElementById('editor');
-          if (editor.value.trim().length < 50) {
-            showError('Please provide at least 50 characters of feedback before proceeding.');
-            return;
-          }
-          document.getElementById('decisionModal').style.display = 'flex';
-          goToStep1(); // Reset to step 1
-        }
-        
-        function closeDecisionModal() {
-          document.getElementById('decisionModal').style.display = 'none';
-        }
-        
         function showReturnOptions() {
-          // document.getElementById('decisionModal').style.display = 'none';
           document.getElementById('returnModal').style.display = 'flex';
         }
         

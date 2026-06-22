@@ -1,5 +1,5 @@
 {
-  "timeZone": "Asia/Shanghai",
+  "timeZone": "Asia/Manila",
   "dependencies": {},
   "oauthScopes": [
     "https://www.googleapis.com/auth/gmail.send",
