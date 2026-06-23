@@ -543,6 +543,10 @@ function handleAdminApi_(request) {
              -> {success:true, data:[...], count:3}
 */
 function adminApi_getEmailQueue(params) {
+  // SECURITY: re-authorize the caller — directly callable via google.script.run; require INFOSEC member.
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     var auditSheet;
     try { auditSheet = getSheet_(SHEET_NAMES.RISK_AUDIT); } catch(e) { return { success: false, error: e.message }; }
@@ -592,6 +596,10 @@ function adminApi_getEmailQueue(params) {
              totalCancelled, queueHealth, byType}} or {success:false, error}.
 */
 function adminApi_getQueueSummary(params) {
+  // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     var ss = getSpreadsheet_();
     var auditSheet;
@@ -815,6 +823,10 @@ function adminApi_cancelQueuedEmails(sessionId, type) {
              or {success:false, error}.
 */
 function adminApi_getNotificationConfig() {
+  // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     var sysSheet;
     try { sysSheet = getSheet_(SHEET_NAMES.SYSTEM_CONFIG); } catch(e) { return { success: false, error: e.message }; }
@@ -963,6 +975,10 @@ function adminApi_resendToStage(sessionId, stageType, approverEmail) {
     Step 5-6 — Load email log and audit trail.
 */
 function adminApi_getPipelineView(sessionId) {
+  // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     if (!sessionId) return { success: false, error: 'Session ID required.' };
     sessionId = String(sessionId).trim();
@@ -2416,6 +2432,10 @@ function sendEmailWithRetry_(recipients, subject, plainText, options) {
     Step 5-6 — Resolve destination emails + DCS display fields.
 */
 function apiAdmin_GetRoutingStatus(sessionId) {
+  // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     if (!sessionId || String(sessionId).trim() === '') {
       return { success: false, error: 'Session ID is required.' };
@@ -2627,6 +2647,10 @@ function apiAdmin_GetRoutingStatus(sessionId) {
     Step 9 — Log ADMIN_REROUTE audit entry.
 */
 function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
+  // SECURITY: re-authorize the caller — regenerates a certificate and emails DCOPS/TechServe; require INFOSEC.
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     if (!sessionId || String(sessionId).trim() === '') {
       return { success: false, error: 'Session ID is required.' };
@@ -2947,6 +2971,10 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
   RETURNS:   {success:true, data:[appSummary...]} or {success:false, error}.
 */
 function apiAdmin_GetApprovedApplications() {
+  // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     var ss = getSpreadsheet_();
 
@@ -3159,6 +3187,10 @@ function apiAdmin_GetApprovedApplications() {
   RETURNS:   {success:true, data:{fileName, base64, mimeType}} or {success:false, error}.
 */
 function apiAdmin_DownloadCertificate(sessionId) {
+  // SECURITY: re-authorize the caller — returns a certificate PDF; require INFOSEC.
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     if (!sessionId || String(sessionId).trim() === '') {
       return { success: false, error: 'Session ID is required.' };
@@ -3885,6 +3917,10 @@ function adminGetFailedEmails(sinceDays) {
     Step 3 — Log the resend; return the outcome.
 */
 function adminResendEmail(sessionId, recipient, type) {
+  // SECURITY: re-authorize the caller — re-sends workflow emails; require INFOSEC.
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     if (!sessionId || String(sessionId).trim() === '') {
       return { success: false, error: 'Session ID is required.', message: '' };

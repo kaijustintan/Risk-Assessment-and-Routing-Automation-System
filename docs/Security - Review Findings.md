@@ -41,6 +41,24 @@ is the unguarded direct-call surface.
 
 ---
 
+## 0b. Remediation status (updated 2026-06-23 — code applied locally, pending deploy)
+
+| ID | Severity | Status | Fix |
+|---|---|---|---|
+| F-01 | 🔴 Critical | ✅ Fixed | Admin: `checkAccess_` on `deleteEntry`/`batchDeleteEntries`/`saveConfigData`/`getConfigData` + all frontend-reachable `adminApi_*`/`apiAdmin_*` (17 guards total) |
+| F-02 | 🔴 Critical | ✅ Fixed | PIA: identity guard (`activeUser == approverEmail`) on `apiPhase3_ProcessISMDecision`/`processApprovalDecision`/`processDivHeadDecision` |
+| F-03 | 🔴 Critical | ✅ Fixed | Covered by the `saveConfigData` + `adminApi_setNotificationConfig` guards |
+| F-04 | 🟠 High | ✅ Fixed | DCS: owner guard on `apiGetRequestData` (returns `{found:false}` for non-owner) |
+| F-05 | 🟠 High | ✅ Fixed | PIA: new `isAuthorizedForApplication_` (owner + Stage-A + ISM + DivHead) on `apiPhase3_FetchPIAData`/`FetchDCSData` |
+| F-07 | 🟡 Medium | ✅ Verified PASS | `submitApplication` already re-checks ownership in-lock + server-computes status; no change needed |
+| F-08 | 🟢 Low | ✅ Fixed | DCS: `getGatewayRecord` bound to `Session.getActiveUser()` (override ignored) |
+| F-06 | 🟡 Medium | ⏳ Deferred (3b) | Error-message sweep — 58 `error: e.toString()/e.message` sites across 3 files; do as a dedicated pass with a shared `safeError_` helper |
+| — | 🟡 Medium | ⏳ Deferred (3b) | `adminApi_resendToStage` / `adminApi_resendEmail` / `getFailedEmails` / `getEmailLog` — `handleAdminApi_`-only (not confirmed frontend-called); confirm no external API integration before guarding (a `checkAccess_` would break a no-active-user external caller) |
+
+All applied changes are backend-only and **pending deploy** (PIA + Admin + DCS, each Edit → New version).
+
+---
+
 ## 1. Findings summary (roll-up)
 
 | Severity | Count | IDs |
