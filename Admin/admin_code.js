@@ -1758,6 +1758,12 @@ function getAuditLogs(reqId, sessionId) {
 // ─── deleteEntry() ─────────────────────────────────────────────────────────────
 // Extracts the requestor email FROM the row before deleting, so we can notify them.
 function deleteEntry(reqId, logId, sessionId, sendEmail, ismComment) {
+  // SECURITY (F-01): re-authorize the caller server-side — doGet's INFOSEC gate does NOT protect a
+  // direct google.script.run call to this function. Same checkAccess_ idiom as doGet.
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
+
   // Normalise optional params
   sendEmail = !!sendEmail;
   ismComment = String(ismComment || '').trim();
@@ -1928,6 +1934,11 @@ function deleteRowsBySessionId_(ss, sheetName, sessionId) {
 // Returns a summary: {success, deleted, failed, emailsSent, results[]}.
 // This is more efficient than N individual GAS round-trips from the frontend.
 function batchDeleteEntries(items) {
+  // SECURITY (F-01): re-authorize the caller server-side (see deleteEntry).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
+
   try {
     if (!items || !Array.isArray(items)) {
       return { success: false, error: 'batchDeleteEntries: items must be an array.' };
@@ -2096,6 +2107,11 @@ function exportToSheet(rows) {
 */
 // ─── CONFIGURATION SETTINGS ────────────────────────────────────────────────────
 function getConfigData() {
+  // SECURITY (F-01): re-authorize the caller server-side (see deleteEntry).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
+
   try {
     var ss = getSpreadsheet_();
     var sysSheet, infoSheet;
@@ -2129,6 +2145,12 @@ function getConfigData() {
     Step 2 — Update + append InfoSec_Email_Config rows.
 */
 function saveConfigData(sysUpdates, infoUpdates) {
+  // SECURITY (F-01/F-03): re-authorize the caller server-side. Without this, any domain user could call
+  // saveConfigData directly to tamper config or add themselves to InfoSec_Email_Config (privilege escalation).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
+
   try {
     var ss = getSpreadsheet_();
 

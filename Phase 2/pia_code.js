@@ -3847,6 +3847,11 @@ function submitApplication(appData) {
   RETURNS:   { success:true, message } or { success:false, error }.
 */
 function processDivHeadDecision(sessionId, approverEmail, decision, comments, approverFlags = '{}') {
+  // SECURITY (F-02): authorize the actual caller server-side (see apiPhase3_ProcessISMDecision).
+  const _me = getNormalizedEmail(Session.getActiveUser().getEmail());
+  if (_me !== getNormalizedEmail(approverEmail)) {
+    return { success: false, error: 'Access denied: you may only submit your own decision.' };
+  }
   const lock = LockService.getScriptLock();
   let lockAcquired = false;
 
@@ -4091,6 +4096,11 @@ function initializeApprovalWorkflow(sessionId, appData) {
   RETURNS:   { success:true, message } or { success:false, error }.
 */
 function processApprovalDecision(sessionId, approverEmail, decision, comments, stepParam = null, approverFlags = '{}') {
+  // SECURITY (F-02): authorize the actual caller server-side (see apiPhase3_ProcessISMDecision).
+  const _me = getNormalizedEmail(Session.getActiveUser().getEmail());
+  if (_me !== getNormalizedEmail(approverEmail)) {
+    return { success: false, error: 'Access denied: you may only submit your own decision.' };
+  }
   try {
     const allowedDecisions = ['Approve', 'Return', 'Deny'];
     if (allowedDecisions.indexOf(decision) === -1) {
@@ -6919,6 +6929,13 @@ function apiPhase3_RetryISMWorkflow(sessionId) {
   RETURNS:   { success:true, message, nextAction } or { success:false, error }.
 */
 function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comments, routingDestination = '', stepParam = null, approverFlags = '{}') {
+  // SECURITY (F-02): authorize the actual caller server-side — a direct google.script.run call must not
+  // be able to submit a decision as someone else. The legit email-link/inline-panel path already verified
+  // activeUser == targetEmail in handleEmailAction before reaching here, so this always passes there.
+  const _me = getNormalizedEmail(Session.getActiveUser().getEmail());
+  if (_me !== getNormalizedEmail(ismMemberEmail)) {
+    return { success: false, error: 'Access denied: you may only submit your own decision.' };
+  }
   try {
     // CRITICAL FIX C1: Get URL at runtime
     const webAppUrl = getWebAppUrl() || ScriptApp.getService().getUrl();
