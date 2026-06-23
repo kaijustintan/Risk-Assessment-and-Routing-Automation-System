@@ -193,7 +193,10 @@ Phase 2** is a separate GAS web app sharing the same database + `Drafts` sheet.
 workflow sheets — they are NOT stored strings. Don't assume a badge maps 1:1 to a column.
 
 **Secrets** live in Script Properties (never in code): `DB_ID`, `ADMIN_FOLDER_ID`,
-`HMAC_SECRET`, `PIA_APP_URL`, `DOMAIN`.
+`PIA_APP_URL`, `DOMAIN`. ⚠️ **The approval-token signing secret is named `SYSTEM_SECRET`
+and lives in the PIA project** (read by `getSystemSecret()` → `pia_code.js`), NOT `HMAC_SECRET`
+— the old "`HMAC_SECRET`" name in these docs/`Code.js` comments is a misnomer; DCS does not
+functionally read it. When verifying token security, check **`SYSTEM_SECRET` in the PIA project**.
 
 **Security (do not weaken):** `doGet` blocks non-domain accounts before serving the HTML;
 `submitDCS` re-validates domain + required fields + email formats server-side
