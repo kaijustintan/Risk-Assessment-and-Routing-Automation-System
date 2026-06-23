@@ -1,310 +1,316 @@
-# 🧪 TEST GUIDE — RARS (DCS + PIA) Session Changes
+# 🧪 TEST GUIDE — RARS (DCS · PIA · Admin) Changes
 
-> **Para sa tester (tropa):** Sundin mo ito step-by-step. Bawat item may **(1) ano 'to**,
-> **(2) ano dati / ano binago** (kung change), **(3) steps**, at **(4) ✅ Expected** (kung anong
-> dapat mangyari — may mag-upload ba sa Drive, may email ba, saang page mapupunta, etc.).
-> Kung may **hindi tumugma sa ✅**, i-screenshot at sabihin kay Kai.
+> **Para sa tester:** Sundin step-by-step. Bawat item: **(1) ano 'to**, **(2) ano dati / ano binago**,
+> **(3) steps**, **(4) ✅ Expected**. Kung hindi tumugma sa ✅ → screenshot + sabihin kay Kai (isama
+> kung anong account ang ginamit).
+>
+> May **bagong PART E — SECURITY** na nangangailangan ng **2nd test account** + **browser console**.
+> Hiwalay na minarkahan kung sino dapat tester.
 
----
-
-## ⚠️ BASAHIN MUNA — Setup & Rules (importante, wag laktawan)
-
-1. **Gumamit ng BAGONG test request** (fresh transaction) para sa buong test. Wag yung luma.
-   - **Bakit:** Ang mga link sa lumang email ay **"frozen"** — naka-save na sila sa oras na
-     na-send. Kahit i-update ang settings, hindi na gagana ang lumang link. Bagong request
-     lang ang totoong test.
-2. **Mag-login sa TAMANG account** kada role:
-   - Applicant email = yung nag-submit ng DCS/PIA.
-   - Approver / InfoSec links = buksan habang naka-login sa **eksaktong** approver account na
-     nakalagay sa request. Maling account = hindi gagana ang link.
-3. **Review links may 14-day expiry.** Gumamit lang ng **bagong-generate** na link.
-4. Kung may makita kang **GAS error page** (gray na "Script error"), mag **hard refresh**
-   (Ctrl+Shift+R) o dagdagan ang URL ng `?cb=1` — minsan naka-cache lang.
-5. **Domain-gated** ang lahat — dapat `@megaworldcorp` (o ang naka-set na domain) ang account.
+Updated: 2026-06-23.
 
 ---
 
-# PART A — DCS FORM (Applicant side, Phase 1)
+## ⚠️ BASAHIN MUNA — Setup & Rules (wag laktawan)
 
-## A1. Downloadable forms — relabeled by audience
-**Ano 'to:** Sa **Step 1 (Guide screen)** ng DCS, may mga downloadable na form templates
-(NDA, DPA, DSA, CU, OJT CU). Bawat isa may maliit na label kung **para kanino**.
+1. **Fresh test request** para sa bawat run. Lumang transaction = lumang frozen email links.
+2. **Tamang account kada role.** Para sa security tests (Part E), kailangan **DALAWANG** `@megaworldcorp.com`
+   account: (a) ang biktima/approver, (b) isang **ordinaryong account na hindi approver/hindi INFOSEC**
+   (ang "attacker"). Confirmed na meron kayo nito.
+3. **Totoong, binabantayang inbox.** ⚠️ *(Lesson learned:)* ang email ay padala sa account na nakalagay
+   sa form (applicant + heads). Gumamit ng inbox na **talagang chineck** ng tester. Kung "walang email":
+   check muna ang **Spam** AT ang **"All Mail"** + **Filters** (baka may "Skip the Inbox" filter — yan ang
+   dating dahilan ng "walang email").
+4. **Deployment requirement:** lahat ng test dito ay valid **LANG** kung na-deploy na ni Kai ang bagong
+   version ng bawat app (PIA `pia_code.js`, Admin `admin_code.js`, DCS `index.html` + `Code.js`).
+5. GAS error page? **Hard refresh** (Ctrl+Shift+R) o `?cb=1`.
+6. Review links: **14-day expiry** — gumamit ng bagong-generate lang.
 
-**Dati → Ngayon:** Dati walang malinaw na "para kanino" ang bawat form. Ngayon may audience
-label na bawat isa.
+---
 
-**Steps:**
-1. Buksan ang DCS app → **New Request** → pumunta sa **Step 1 (Guide)**.
-2. Tingnan ang listahan ng downloadable forms.
+# PART A — DCS FORM (Applicant side)
 
-**✅ Expected — eto dapat ang mga label:**
-| Form | Label dapat |
+## A1. Downloadable forms — restructured to 7, by audience
+**Ano 'to:** Sa **Step 1 (Guide)**, may downloadable form templates.
+
+**Dati → Ngayon:** **Dati 5 forms** (NDA, DPA, DSA, CU, OJT CU). **Ngayon 7 forms** na may mas
+descriptive na pangalan + bawat DPA ay per-entity:
+
+**✅ Expected — eto dapat ang 7 forms (sa ganitong grupo):**
+| Form (display name) | Audience |
 |---|---|
-| Non-Disclosure Agreement (NDA) | **For employees / internal personnel** |
-| Data Protection Agreement (DPA) | **For employees** *(naka-bold, navy color)* |
-| Data Sharing Agreement (DSA) | **For external / third-party data sharing** |
-| Confidentiality Undertaking (CU) | **For agency personnel** |
-| OJT Confidentiality Undertaking | **For OJT / interns** |
+| **Non-Disclosure Agreement for Employee** | employees |
+| **Data Sharing Agreement** | external / third-party |
+| **DPA for Megaworld Employee** | DPA (Megaworld) |
+| **DPA for Luxury Global Employee** | DPA (Luxury Global) |
+| **DPA for Global One Employee** | DPA (Global One) |
+| **Confidentiality Undertaking for Agency** | agency personnel |
+| **Confidentiality Undertaking for OJT** | OJT / interns |
 
-✅ Ang DPA label dapat mas **bold/navy** kaysa sa iba (in-emphasize).
-✅ Pag click sa download link → bubukas ang form file (Google Drive/Docs link). Kung
-   "Link not set" o `#` ang lumabas, sabihin kay Kai (admin config issue, hindi bug ng code).
+✅ **Bawat link bumubukas ng tamang form file.** Kung "Link not set" (`#`) → hindi pa naka-set ang link
+sa config (sabihin kay Kai — admin config, hindi bug).
 
----
+## A1b. Confidentiality Undertaking — natatanging icon + kulay
+**Ano 'to:** Visual distinction ng forms.
 
-## A2. Dropdown copy — "This is a standard request"
-**Ano 'to:** Sa form, may dropdown kung ang request ba ay may kasamang Agency/OJT o standard lang.
+**Dati → Ngayon:** **Dati** ang 2 CU forms ay kamukha ng iba (CU Agency = asul gaya ng DPA, CU OJT = pula
+gaya ng NDA). **Ngayon** ang **2 CU forms** ay may **amber/dilaw na kulay + "person-with-check" icon** —
+distinct na sila.
 
-**Dati → Ngayon:** Dati `"No — standard request"`. Ngayon `"This is a standard request"`
-(mas malinaw, hindi mukhang sagot sa tanong).
+**✅ Expected:** Ang CU Agency at CU OJT ay parehong **amber** na may icon ng **taong may check ✓** —
+iba sa NDA (pulang padlock), DPA (asul na shield), DSA (berdeng share).
 
-**Steps:**
-1. Sa DCS form (Step 2), hanapin ang dropdown para sa involvement/type ng request.
+## A2. Dropdown copy
+**✅ Expected:** Ang involvement dropdown default option = **"This is a standard request"** (hindi na
+"No — standard request").
 
-**✅ Expected:** Ang default/first option ay nakasaad **"This is a standard request"** — wala
-nang `"No — standard request"`.
+## A3. Context-aware Endorsement Letter label
+**Dati → Ngayon:** Nagbabago ang label: **OJT → "School Endorsement Letter"**, **Agency → "Agency
+Endorsement Letter"**, at **live nag-uupdate** pag pinalitan ang dropdown.
 
----
-
-## A3. Context-aware Endorsement Letter label (School vs Agency)
-**Ano 'to:** May upload field para sa **Endorsement Letter**. Ang pangalan ng label nagbabago
-depende kung **OJT** o **Agency** ang request.
-
-**Dati → Ngayon:** Dati pareho lang ang tawag. Ngayon:
-- Kung **OJT/intern** ang request → **"School Endorsement Letter"**
-- Kung **Agency** ang request → **"Agency Endorsement Letter"**
-- At ito ay **live na nag-uupdate** — pag pinalitan mo ang dropdown, agad magbabago ang label
-  (hindi mo kailangan i-refresh).
-
-**Steps:**
-1. Sa DCS form, piliin sa dropdown na ang request ay **may Agency**.
-2. Pumunta sa Agency section → tingnan ang label ng Endorsement Letter upload card.
-3. Balik sa dropdown, palitan papuntang **OJT** (kung applicable) → tingnan ulit ang label.
-4. I-check din ang **Summary/Review page (Step 3)** bago mag-submit.
-
-**✅ Expected:**
-- Agency mode → label = **"…Agency Endorsement Letter…"** (upload card **at** sa summary).
-- OJT mode → label = **"…School Endorsement Letter…"** (upload card **at** sa summary).
-- Pag pinalit ang dropdown, **agad** nagbabago ang salita (Agency ⇄ School) — no refresh needed.
-- Pareho dapat sa **3 states** ng upload card: fresh (bagong upload), required, at retained
-  (dating naka-upload na).
-
----
+**Steps:** Sa form, piliin **Agency** → tingnan ang Endorsement upload label + sa Summary; palitan papuntang
+**OJT** → tingnan ulit.
+**✅ Expected:** Agency mode → "Agency Endorsement Letter"; OJT mode → "School Endorsement Letter";
+**agad nagbabago** (walang refresh); pareho sa upload card **at** summary.
 
 ## A4. Removed "Pending Immediate Head" filter option
-**Ano 'to:** Sa **"My Applications / Review Applications"** list, may dropdown filter para sa status.
+**Steps:** DCS → **Review Applications** → status filter dropdown.
+**✅ Expected:** **WALA** nang "Pending Immediate Head". Ibang filters gumagana pa rin.
 
-**Dati → Ngayon:** Dati may option na **"Pending Immediate Head"** sa filter — pero hindi ito
-kailanman natatamaan (unreachable, kasi sa DCS walang ganung stored status). Inalis na.
+## A5. Terms & Conditions
+**Ano 'to:** Bago mag-proceed, kailangang i-agree ang T&C. Bubukas ito sa **modal (iframe ng Google Doc)**
+na may **5-second read gate**.
+
+**Dati → Ngayon:** **Dati blangko** ang T&C content. **Ngayon** may aktwal na T&C (naka-host sa Google Doc,
+naka-link via `LINK_TC_PAGE`). At ang **inline summary card** ay in-update (kasama na ang CU + RA 10173).
 
 **Steps:**
-1. DCS app → **Review Applications** → buksan ang **status filter dropdown**.
+1. Step 1 (Guide) → i-click ang row na **"I agree to the Terms & Conditions"**.
+2. Tingnan ang modal.
 
-**✅ Expected:** **WALA** nang "Pending Immediate Head" sa choices. Yung ibang status filters
-(All, Pending, Complete, etc.) nandiyan pa rin at gumagana.
+**✅ Expected:**
+- **May lumalabas na T&C content** sa modal (hindi blangko).
+- May **5-second countdown** → pagkatapos, active ang **"I Have Read and Agree"** button.
+- Pagka-agree → naka-tick (at locked) ang checkbox, at active na ang **"Proceed to Form"**.
+- ✅ Ang inline summary card (Guide) ay may **4 bullets** na binabanggit ang **NDA, DPA, DSA, o CU** + **Data
+  Privacy Act (RA 10173)**.
+> Kung **blangko** ang modal → hindi naka-set/naka-share nang tama ang Google Doc / `LINK_TC_PAGE` (config
+> issue, sabihin kay Kai — hindi bug ng code).
+
+## A6. "Confidentiality Undertaking" wording (Agency/OJT)
+**Ano 'to:** Pag Agency/OJT ang request, ang main upload ay isang **Confidentiality Undertaking**.
+
+**Dati → Ngayon:** **Dati** mali ang baybay sa ilang lugar (**"Confidential Undertaking"** — kulang ng
+"-iality"). **Ngayon** tama na: **"Confidentiality Undertaking"** sa lahat (upload label, guide text,
+validation alert, summary).
+
+**Steps:** Piliin sa dropdown na **Agency** o **OJT** → tingnan ang main upload card label; subukan ding
+mag-submit nang walang main file → tingnan ang error alert; tingnan sa Summary.
+**✅ Expected:** Lahat nagsasabi ng **"Confidentiality Undertaking"** — walang natirang "Confidential
+Undertaking".
 
 ---
 
 # PART B — DCS SUBMIT → PROCEED TO PHASE 2
 
 ## B1. Submit DCS — Drive upload + confirmation email
-**Ano 'to:** Pag na-submit ang DCS, naa-upload ang files sa Drive at may confirmation email.
-
-**Steps:**
-1. Kumpletuhin ang isang **bagong** DCS request, mag-attach ng required files (NDA/DPA/etc.).
-2. I-submit.
-
+**Steps:** Kumpletuhin ang bagong DCS request, mag-attach ng required files, i-submit.
 **✅ Expected:**
-- Mapupunta sa **Success page** na may **DCS Request ID** (hal. `DCS-000123`).
-- Ang mga **naka-attach na file ay naka-upload sa admin Drive folder** (i-confirm kay Kai/admin
-  na nandoon ang files sa folder).
-- Ang applicant ay **makakatanggap ng email**: subject ≈
-  **"[Megaworld] DCS request DCS-xxxxxx submitted — Proceed to Phase 2"**, na may
-  **"Proceed to Phase 2 →"** button at navy na design.
-- ✅ Ang timestamp sa email dapat **Manila time** (tama ang oras, hindi mali ng ilang oras).
+- **Success page** + **DCS Request ID** (hal. `DCS-000030`).
+- Files **naka-upload sa admin Drive folder** (i-confirm kay Kai).
+- Applicant **may email**: subject ≈ "**[Megaworld] DCS request … submitted — Proceed to Phase 2**", may
+  navy design + "**Proceed to Phase 2 →**" button.
+- ✅ Timestamp sa email = **Manila time**.
+
+## B2. 🐞 "Proceed to Phase 2" — crash fix
+**Dati → Ngayon:** **Dati nagka-crash** ang Phase 2 (`Unexpected token '...'`, dahil sa `<?…?>` sa loob ng
+comments). **Ngayon** bumubukas nang maayos.
+**Steps:** Galing sa confirmation email o Success page, i-click ang **"Proceed to Phase 2"** (may `?parentID=`).
+**✅ Expected:** Bubukas ang **PIA form nang WALANG error page**. Handa nang sagutan.
 
 ---
 
-## B2. 🐞 "Proceed to Phase 2" — FIXED crash
-**Ano 'to:** Yung "Proceed to Phase 2" button na nagdadala sa applicant sa PIA form (Phase 2).
+# PART C — PIA APPROVAL FLOW
 
-**Dati → Ngayon:** **Dati nagka-crash/error** ang Phase 2 page (`Unexpected token '...'`).
-Sanhi: may halimbawang code (`<?…?>`) na nakasulat sa loob ng **comments** ng HTML file —
-binabasa pala ito ng Google Apps Script kahit comment lang, kaya nag-eerror. **Inalis na** ang
-mga halimbawang yun sa comments. Ngayon dapat bumukas nang maayos.
-
-**Steps:**
-1. Galing sa DCS confirmation email **o** sa Success page, i-click ang **"Proceed to Phase 2"**.
-   (Ang link ay may `?parentID=<DCS ReqID>`.)
-
-**✅ Expected:**
-- Bubukas ang **PIA form (Phase 2)** nang **WALANG error page**. Dati dito nag-crash.
-- Naka-load ang assessment wizard, handa nang sagutan.
-- ⚠️ Importante itong i-test kasi ang bug ay lumalabas **lang** sa `?parentID=` path (yung
-  galing sa button) — hindi sa plain na URL.
-
----
-
-# PART C — PIA APPROVAL FLOW (Heads → InfoSec)
-
-> I-submit muna ang PIA form para magkaroon ng request sa approval ladder. Ladder:
-> **Immediate Head → Dept Head → InfoSec ×2 → (routing) → optional Division Head**.
+> I-submit muna ang PIA. Ladder: **Immediate Head → Dept Head → InfoSec ×2 → (routing) → optional Division Head.**
 
 ## C1. 📧 Honest status wording sa applicant emails
-**Ano 'to:** Habang umaakyat ang request sa approval ladder, tumatanggap ang applicant ng
-**"Update on Application"** emails kada step.
-
-**Dati → Ngayon:** **Dati**, ang intermediate (gitnang) emails ay sumasabi ng plain
-**"APPROVED"** — nakakalito, akala tapos na e hindi pa pala. **Ngayon**, honest na ang wording:
-sinasabi kung **anong stage** at na **"not yet final approval."** Plain **"FULLY APPROVED"** lang
-ang lalabas kapag **tunay nang tapos**.
-
-**Steps:** Sundan ang request sa bawat approval. Buksan ang applicant email kada step.
-
-**✅ Expected — eto ang dapat sabihin ng email kada stage:**
+**Dati → Ngayon:** **Dati** plain "**APPROVED**" ang intermediate emails (nakakalito). **Ngayon** honest na.
+**✅ Expected — kada stage:**
 | Kailan | Email dapat magsabi ng |
 |---|---|
-| Pagka-submit ng PIA | **"SUBMITTED"** — being reviewed by Immediate/Department Head |
-| Pag-approve ng isang Head, may susunod pa | **"PROGRESSING"** to the next Head |
-| Pag-clear ng **lahat** ng Heads → papunta na sa ISM | **"HEADS APPROVED … reviewed by the ISM … not yet final approval"** |
-| Pag-approve ng isang ISM, may susunod pang ISM | **"PROGRESSING"** to the next ISM member |
-| Pag-escalate sa Division Head | **"ESCALATED"** to the Division Head |
-| Division Head nag-approve, balik sa ISM | **"approved by the Division Head … returning to the ISM … not yet final approval"** |
-| **Tunay nang tapos** (lahat ng ISM approved) | **"FULLY APPROVED"** |
+| Submit ng PIA | **"SUBMITTED"** |
+| Approve ng isang Head, may susunod | **"PROGRESSING"** to the next Head |
+| Lahat ng Heads clear → ISM na | **"HEADS APPROVED … not yet final approval"** |
+| Approve ng isang ISM, may susunod | **"PROGRESSING"** to the next ISM member |
+| Escalate sa Division Head | **"ESCALATED"** to the Division Head |
+| DivHead approve, balik sa ISM | **"approved by the Division Head … not yet final"** |
+| **Tapos na** | **"FULLY APPROVED"** |
 
-✅ **Pinaka-importante:** **WALANG** email na magsasabi ng plain **"APPROVED"** habang gitna pa
-lang. **"FULLY APPROVED"** lang sa dulo.
+✅ **WALANG** plain "APPROVED" habang gitna pa; **"FULLY APPROVED"** lang sa dulo.
 
----
+## C2. 🔗 "View DCS Submission" → exact request
+**Dati → Ngayon:** **Dati** → DCS homepage. **Ngayon** → diretso sa **mismong request details** (`?parentID=`).
+**Steps:** Buksan ang applicant "Update on Application" email → i-click **"View DCS Submission →"**.
+**✅ Expected:** Bubukas ang **details page ng mismong request**, hindi homepage.
 
-## C2. 🔗 "View DCS Submission" link → opens the EXACT request
-**Ano 'to:** Sa applicant na "Update on Application" emails (intermediate/approved statuses),
-may button na **"View DCS Submission →"**.
+## C3. 🆕 InfoSec reviewer — inline decision panel
+**Dati → Ngayon:** **Dati** may "Review & Submit Decision" **pop-up modal**. **Ngayon** wala nang pop-up —
+**lahat ng options nakikita agad** inline.
+**Steps:** Buksan ang **InfoSec review link** (naka-login bilang tamang InfoSec approver).
+**✅ Expected — base:** Nakikita agad ang **Approve / Escalate / Return / Deny** + routing (**DCOPS /
+TechServe / Both**). WALANG modal.
+**✅ Expected — validations:**
+- Remarks **< 50 chars** → i-click decision → **ma-block** (need ≥50 chars).
+- **Approve/Escalate na walang routing** → **ma-block** + error.
+- Kahit anong valid decision → **"Submitting your decision…"** spinner.
+**✅ Expected — Return flow (regression):** I-click **Return to Requestor** → may **confirm box** → gumagana
+pa rin (hindi nasira nang inalis ang lumang modal).
 
-**Dati → Ngayon:** **Dati** dinadala ka nito sa **DCS homepage** — hahanapin mo pa mismo ang
-request. **Ngayon** dumiretso na sa **specific request details page** (gamit ang `?parentID=`).
-
-**Steps:**
-1. I-submit ang PIA, hintayin ang **"Update on Application"** email.
-2. I-click ang **"View DCS Submission →"** button.
-
-**✅ Expected:**
-- Bubukas ang **mismong request's details page** (yung details/timeline ng partikular na request),
-  **HINDI** ang DCS homepage/landing.
-- Makikita ang timeline at status ng tamang request agad.
-
----
-
-## C3. 🆕 InfoSec (ISM) reviewer screen — inline panel (lahat ng options nakikita agad)
-**Ano 'to:** Pag bumukas ang InfoSec reviewer sa review link, dito niya ginagawa ang desisyon:
-Approve / Escalate / Return / Deny + routing (DCOPS / TechServe / Both).
-
-**Dati → Ngayon:** **Dati** may **"Review & Submit Decision" button** na magbubukas ng
-**pop-up modal** na may steps (Step 1 routing → Step 2 action). **Ngayon** wala nang pop-up —
-**lahat ng options nakikita na agad** sa page (inline panel).
-
-**Steps:**
-1. Buksan ang **InfoSec review link** (naka-login bilang tamang InfoSec approver).
-2. Tingnan ang layout ng decision area.
-
-**✅ Expected — base behavior:**
-- Makikita agad sa page ang **Approve / Escalate to Division Head / Return to Requestor / Deny**
-  **at** ang routing options (**DCOPS / TechServe / Both**). **WALANG** "Review & Submit Decision"
-  na pop-up/modal.
-
-**✅ Expected — validations (subukan lahat):**
-- **Remarks < 50 characters:** Magsulat ng kulang sa 50 letra na feedback → i-click ang kahit
-  anong decision → **dapat ma-block** ka (may error na kailangan ng at least 50 characters).
-- **Approve o Escalate na walang routing:** Wag pumili ng DCOPS/TechServe/Both → i-click
-  **Approve** o **Escalate** → **dapat ma-block** + may lumabas na error ("please select a routing").
-  *(Note: ang routing ay required LANG sa Approve/Escalate — pwedeng walang routing sa Deny/Return.)*
-- **Submitting overlay:** Pag-click ng kahit anong **valid** decision → dapat may lumabas na
-  **"Submitting your decision…"** spinner overlay habang pinoproseso.
-
-**✅ Expected — Return flow (regression check):**
-- I-click ang **Return to Requestor** → dapat may lumabas na **confirm box** ("Confirm Return to
-  Requestor" / Cancel). Ito ay **dapat gumana pa rin** (hindi nasira nang inalis ang lumang modal).
+## C4. Final certificate — routing label
+**Dati → Ngayon:** **Dati "BOTH"**. **Ngayon "DCOPS and TechServe"**; TechServe → "TechServe".
+**Steps:** Fully-approve kung saan ang **huling** InfoSec ay pumili ng **Both** → tingnan ang Certificate.
+**✅ Expected:** "Routed to: **DCOPS and TechServe**"; applicant may **"FULLY APPROVED"** email; DCS = **COMPLETE**.
 
 ---
 
-## C4. Final certificate — routing label "DCOPS and TechServe"
-**Ano 'to:** Pag fully approved, may **Certificate of Approval** na nagsasaad kung saan
-na-route (DCOPS / TechServe / Both).
+# PART D — LAHAT NG EMAIL
 
-**Dati → Ngayon:** **Dati** nakasulat na **"BOTH"** (all-caps, technical mukha). **Ngayon**:
-- Both → **"DCOPS and TechServe"**
-- TechServe → **"TechServe"** (hindi "TECHSERVE")
+## D1. Clean footer (no "CAUTION" box)
+**Dati → Ngayon:** **Dati** may dilaw na "CAUTION" box. **Ngayon** malinis na gray na "No-reply" notice.
+**✅ Expected:** Walang dilaw na "CAUTION"; malinis na no-reply notice (HTML email, certificate, at plain-text).
 
-**Steps:**
-1. I-fully-approve ang isang request kung saan ang **huling** InfoSec reviewer ay pumili ng **Both**.
-2. Tingnan ang **Certificate of Approval** (sa email/certificate).
-
-**✅ Expected:**
-- Sa certificate, ang **"Routed to:"** ay nakasaad **"DCOPS and TechServe"** — **hindi** "BOTH".
-- Subukan din ang **TechServe** lang na routing → dapat **"TechServe"**, hindi "TECHSERVE".
-- ✅ Ang applicant ay tatanggap ng **"FULLY APPROVED"** email, at ang linked **DCS ay magiging
-  COMPLETE**.
+## D2. Timezone — Asia/Manila
+**Dati → Ngayon:** **Dati** Asia/Shanghai (mali ng 1 oras). **Ngayon** Asia/Manila.
+**✅ Expected:** Tamang Manila time ang mga timestamp sa email/decision history.
 
 ---
 
-# PART D — CROSS-CUTTING (lahat ng emails)
+# 🔐 PART E — SECURITY (BAGO — attack simulation)
 
-## D1. Clean email footers (no "CAUTION" box)
-**Ano 'to:** Ang footer (ilalim) ng bawat system email.
+> **Mahalaga:** Ang mga bagong security guard ay pumipigil sa isang ordinaryong empleyado na gumamit ng
+> **browser console** para diretsong tawagin ang mga server function (`google.script.run`) at gawin ang
+> hindi dapat — basahin ang data ng iba, mag-forge ng approval, mag-delete. I-te-test natin na **(positive)**
+> gumagana pa rin ang lehitimong gamit, AT **(negative)** sarado na ang butas.
 
-**Dati → Ngayon:** **Dati** may **dilaw na "CAUTION" box** sa ilalim ng email (mukhang spam
-warning). **Ngayon** malinis na **gray na "No-reply notice"** na lang.
+## E0. Paano buksan ang console (kailangan sa negative tests)
+1. Buksan ang app (DCS/PIA/Admin) sa Chrome.
+2. **F12** (o right-click → Inspect) → tab na **"Console"**.
+3. ⚠️ **Importanteng gotcha:** kung mag-type ka ng `google.script.run` at sabihin **"undefined"**, ang app
+   ay nasa loob ng **sandbox iframe**. Sa taas ng Console, may **dropdown na nakasulat "top"** — palitan ito
+   papunta sa **iframe ng app** (yung may "userHtmlFrame"/sandbox URL). Doon available ang `google.script.run`.
+4. Format ng command: `google.script.run.withSuccessHandler(r => console.log('RESULT:', r)).<function>(<args>)`
 
-**Steps:**
-1. Buksan ang **kahit anong** system email (DCS confirmation, approver notice, applicant update,
-   certificate).
-2. Tingnan ang **pinakailalim**.
+> Gagamitin natin ang **"attacker" account** (ordinaryong @megaworldcorp, hindi approver, hindi INFOSEC) sa
+> mga negative test, maliban kung sinabing iba.
 
-**✅ Expected:**
-- **WALANG** dilaw na "CAUTION" box.
-- May malinis na gray na **"No-reply"** notice (e.g. "automated message… please do not reply").
-- I-check sa HTML email, sa certificate email, **at** sa plain-text version (kung naka-plain text view).
+## E1. F-04 — DCS: bawal basahin ang request ng iba (IDOR)
+**Setup:** Magkaroon ng request ng ibang tao, hal. `DCS-000028` (ni "Maria").
+**Positive (owner):** Bilang **may-ari** ng `DCS-000028`, buksan ito sa "Review Applications" → **lumalabas
+ang details mo** normally.
+**Negative (attacker):** Bilang **ibang account**, sa Console:
+```js
+google.script.run.withSuccessHandler(r => console.log('RESULT:', r)).apiGetRequestData('DCS-000028')
+```
+**✅ Expected:** `RESULT: {found:false}` — **walang data** na bumalik (hindi mo makikita ang email, files,
+approvers ni Maria). Subukan ding mag-loop ng ibang IDs → lahat `{found:false}` (maliban sa sarili mo).
+
+## E2. F-05 — PIA: ISM reviewer load (positive) + bawal basahin ng non-chain (negative)
+**Positive (ISM reviewer) — PINAKA-IMPORTANTENG i-test:** Bilang **tamang ISM reviewer** (o applicant, o
+head sa chain), buksan ang **review screen** → dapat **MAY LAMAN** ang "PIA facts" at "DCS context" panels.
+> ⚠️ Kung "Access denied" ang lumabas sa lehitimong reviewer → mali ang authz set (sabihin AGAD kay Kai).
+**Negative (attacker — non-chain):** Bilang account na **wala sa approval chain**, sa Console:
+```js
+google.script.run.withSuccessHandler(r => console.log('RESULT:', r)).apiPhase3_FetchPIAData('PIA-000010')
+google.script.run.withSuccessHandler(r => console.log('RESULT:', r)).apiPhase3_FetchDCSData('PIA-000010')
+```
+**✅ Expected:** Pareho → `{success:false, error:'Access denied: you are not authorized to view this application.'}`.
+
+## E3. F-02 — PIA: bawal mag-forge ng approval
+**Setup:** May request na naghihintay ng InfoSec decision (may Pending ISM row), hal. `PIA-000010` para kay
+`tine@megaworldcorp.com`.
+**Positive:** Bilang **tunay na approver**, mag-decide via review link/inline panel → **records normally**.
+**Negative (attacker):** Bilang **ibang account**, sa Console (palitan ng totoong approver email + session):
+```js
+google.script.run.withSuccessHandler(r => console.log('RESULT:', r))
+  .apiPhase3_ProcessISMDecision('PIA-000010', 'tine@megaworldcorp.com', 'Approve', 'forged attempt test 50 chars minimum padding here ok', 'BOTH')
+```
+**✅ Expected:** `{success:false, error:'Access denied: you may only submit your own decision.'}` — AT ang
+workflow row ni `PIA-000010` ay **HINDI nagbago** (i-verify sa sheet o sa status: walang nagbagong decision).
+(Subukan din ang `processApprovalDecision` para sa heads — parehong block.)
+
+## E4. F-01 / F-03 — Admin: bawal mag-delete / mag-tamper config / mag-promote sarili
+**Positive (INFOSEC):** Bilang **INFOSEC-001/002**, gawin sa Admin UI: mag-delete ng test entry, mag-save ng
+config link → **gumagana**.
+**Negative (attacker — hindi INFOSEC):**
+1. Buksan ang **Admin `/exec`** bilang ordinaryong account → makukuha ang **"Access Denied"** page.
+2. Sa Console (sa page na 'yon):
+```js
+// subukang mag-delete:
+google.script.run.withSuccessHandler(r => console.log('RESULT:', r)).deleteEntry('DCS-000028', '', 'PIA-000010', false, '')
+// subukang i-promote ang sarili:
+google.script.run.withSuccessHandler(r => console.log('RESULT:', r)).saveConfigData({}, {'INFOSEC-003': {name:'Attacker', email:'attacker@megaworldcorp.com'}})
+```
+**✅ Expected:** Pareho → `{success:false, error:'Access restricted to authorized ISM administrators (INFOSEC-001 / INFOSEC-002).'}`
+- **WALANG na-delete** (i-verify na nandiyan pa rin ang `DCS-000028`).
+- **WALANG INFOSEC-003** na naidagdag sa `InfoSec_Email_Config` sheet.
+
+## E5. F-08 — DCS: gateway lookup naka-bind sa caller
+**Negative (attacker):** Sa Console, subukang i-query ang gateway status ng iba:
+```js
+google.script.run.withSuccessHandler(r => console.log('RESULT:', r)).getGatewayRecord('maria@megaworldcorp.com')
+```
+**✅ Expected:** Ibinabalik ang **SARILI mong** record (o `NO_DCS_RECORD` kung wala kang request) — **HINDI**
+ang reqId/fileId/status ni Maria. (In-ignore ang email argument.)
+
+## E6. 🚨 INFOSEC ADMIN REGRESSION — pinaka-importanteng positive test
+**Ano 'to:** Naka-guard na ngayon ang **~17 Admin functions** (lahat dumadaan sa INFOSEC check). Dapat
+**hindi nasira** ang lehitimong admin dashboard.
+**Steps:** Mag-login bilang **INFOSEC-001/002** → subukan ang **bawat feature** ng Admin:
+- Email queue (load, retry, cancel, retry-all)
+- Pipeline view
+- Settings (load + **save** config/links)
+- Delete entry / batch delete
+- Routing status + **Reroute** (cert + email)
+- **Certificate download**
+- Resend email
+- Approved applications list
+**✅ Expected:** **Lahat gumagana** gaya ng dati. ⚠️ Kung may feature na biglang **"Access restricted"** kahit
+INFOSEC ka → may problema sa `checkAccess_` lookup (hal. hindi exact-match ang INFOSEC email sa
+`InfoSec_Email_Config` sheet) — sabihin AGAD kay Kai. **Ito ang #1 risk ng security batch.**
 
 ---
 
-## D2. Timezone — Asia/Manila (regression check)
-**Ano 'to:** Ang oras na ipinapakita sa mga PIA email/timestamp.
+# 📋 QUICK CHECKLIST
 
-**Dati → Ngayon:** **Dati** naka-set ang PIA sa **Asia/Shanghai** (mali — 1 oras nauuna).
-**Ngayon** **Asia/Manila** na.
+**DCS Form (A)**
+- [ ] A1 — 7 downloadables, tamang names/audience; A1b CU = amber + person-check icon
+- [ ] A2 — "This is a standard request"
+- [ ] A3 — Endorsement label Agency vs School (live + summary)
+- [ ] A4 — walang "Pending Immediate Head" filter
+- [ ] A5 — T&C modal may laman, 5s gate gumagana, inline card may CU + RA 10173
+- [ ] A6 — "Confidentiality Undertaking" (tamang baybay) sa lahat
 
-**Steps:**
-1. Mag-trigger ng bagong PIA email (hal. submit o approve).
-2. Tingnan ang timestamp / petsa-oras sa email o decision history.
+**DCS Submit + Phase 2 (B)**
+- [ ] B1 — Success + DCS ID, files sa Drive, confirmation email (Manila time)
+- [ ] B2 — "Proceed to Phase 2" WALANG crash
 
-**✅ Expected:** Ang oras ay **tamang Manila time** (PHT). Wala nang 1-oras na pagkakamali.
-*(Note: epektibo lang ito kapag na-redeploy ni Kai ang PIA — kung mali pa, sabihin sa kanya.)*
+**PIA Flow (C)**
+- [ ] C1 — honest status emails; C2 deep-link sa exact request
+- [ ] C3 — inline panel + <50 char blocked + no-routing blocked + overlay + Return confirm
+- [ ] C4 — cert "DCOPS and TechServe"; FULLY APPROVED; DCS COMPLETE
 
----
+**Emails (D)**
+- [ ] D1 — malinis na footer; D2 Manila time
 
-# 📋 QUICK CHECKLIST (i-tick habang nagte-test)
-
-**DCS form (Part A)**
-- [ ] A1 — 5 downloadable forms may tamang audience labels (DPA naka-emphasis)
-- [ ] A2 — dropdown nagsasabi "This is a standard request"
-- [ ] A3 — Endorsement label nagbabago: Agency vs School (live + sa summary)
-- [ ] A4 — walang "Pending Immediate Head" sa status filter
-
-**DCS submit + Phase 2 (Part B)**
-- [ ] B1 — submit → Success page + DCS ID, files nasa Drive, confirmation email (Manila time)
-- [ ] B2 — "Proceed to Phase 2" bumubukas nang WALANG error (crash fixed)
-
-**PIA flow (Part C)**
-- [ ] C1 — honest status emails (walang plain "APPROVED" hangga't di final; "FULLY APPROVED" sa dulo)
-- [ ] C2 — "View DCS Submission" → diretso sa exact request
-- [ ] C3 — InfoSec inline panel (lahat nakikita; <50 char blocked; Approve/Escalate walang routing blocked; overlay; Return confirm gumagana)
-- [ ] C4 — certificate "Routed to: DCOPS and TechServe" (hindi "BOTH"); "FULLY APPROVED"; DCS COMPLETE
-
-**Lahat ng email (Part D)**
-- [ ] D1 — malinis na footer, walang dilaw na "CAUTION"
-- [ ] D2 — Manila time ang timestamps
+**🔐 Security (E)**
+- [ ] E1 — F-04: non-owner → `{found:false}`
+- [ ] E2 — F-05: ISM reviewer **may laman** (positive) + non-chain → Access denied
+- [ ] E3 — F-02: forged decision → Access denied + row unchanged
+- [ ] E4 — F-01/03: delete + self-promote → Access restricted; walang epekto
+- [ ] E5 — F-08: gateway → sarili mong record lang
+- [ ] **E6 — INFOSEC admin dashboard LAHAT gumagana (kritikal)**
 
 ---
 
-**Kung may ✅ na hindi tumugma:** i-screenshot, isulat anong step + anong account ginamit, ipasa
-kay Kai. Salamat tropa! 🙏
+**Kung may ✅ na hindi tumugma:** screenshot + anong step + anong account → ipasa kay Kai. Salamat! 🙏
