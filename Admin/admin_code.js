@@ -673,6 +673,11 @@ function adminApi_resendEmail(sessionId, recipient, type) {
   RETURNS:   {success:true, message} or {success:false, error} (incl. not-found).
 */
 function adminApi_retryQueuedEmail(queueId) {
+  // SECURITY: re-authorize the caller — adminApi_* functions are directly callable via google.script.run,
+  // bypassing the ADMIN_API_KEY dispatch gate; require an INFOSEC member.
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     var ss = getSpreadsheet_();
     var auditSheet = ss.getSheetByName(SHEET_NAMES.RISK_AUDIT);
@@ -713,6 +718,10 @@ function adminApi_retryQueuedEmail(queueId) {
   RETURNS:   {success:true, retried:n, message} or {success:false, error}.
 */
 function adminApi_retryAllForSession(sessionId, status) {
+  // SECURITY: re-authorize the caller (see adminApi_retryQueuedEmail).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     if (!sessionId) return { success: false, error: 'Session ID required.' };
     sessionId = String(sessionId).trim();
@@ -758,6 +767,10 @@ function adminApi_retryAllForSession(sessionId, status) {
   RETURNS:   {success:true, cancelled:n, message} or {success:false, error}.
 */
 function adminApi_cancelQueuedEmails(sessionId, type) {
+  // SECURITY: re-authorize the caller (see adminApi_retryQueuedEmail).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     if (!sessionId) return { success: false, error: 'Session ID required.' };
     sessionId = String(sessionId).trim();
@@ -830,6 +843,10 @@ function adminApi_getNotificationConfig() {
   RETURNS:   {success:true, message} or {success:false, error}.
 */
 function adminApi_setNotificationConfig(config) {
+  // SECURITY: re-authorize the caller — config write (see adminApi_retryQueuedEmail).
+  var _me = Session.getActiveUser().getEmail();
+  var _authz = checkAccess_(_me);
+  if (!_authz.allowed) return { success: false, error: _authz.reason };
   try {
     if (!config || typeof config !== 'object') return { success: false, error: 'config object required.' };
     var ss = getSpreadsheet_();

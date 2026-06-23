@@ -2842,7 +2842,9 @@ function getLatestDCSRecord_(sheet, email) {
 */
 function getGatewayRecord(userEmail) {
   try {
-    const email = userEmail || Session.getActiveUser().getEmail();
+    // SECURITY (F-08): always use the signed-in user's identity. The userEmail override is ignored so a
+    // direct google.script.run call cannot query another user's gateway status / reqId / fileId.
+    const email = Session.getActiveUser().getEmail();
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName(DC_SHEET_NAME);
 
