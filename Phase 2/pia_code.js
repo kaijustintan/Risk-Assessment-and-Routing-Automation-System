@@ -916,12 +916,8 @@ function getStyledHtmlWrapper(header, content) {
           margin: 0 0 16px 0; font-size: 18px; font-weight: 600; color: var(--text);
           letter-spacing: -0.02em; border-bottom: 1px solid var(--border); padding-bottom: 12px;
         }
-        .modal-slider-container { width: 100%; overflow: hidden; }
-        .modal-slider { display: flex; width: 200%; transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
-        .modal-step-1 { width: 50%; box-sizing: border-box; }
-        .modal-step-2 { width: 50%; box-sizing: border-box; }
         .modal-step-title { font-weight: 600; margin-bottom: 12px; font-size: 14.5px; color: var(--text); }
-        .routing-option { 
+        .routing-option {
           display: flex; align-items: center; padding: 12px 14px; border: 1px solid var(--border); 
           border-radius: var(--radius); cursor: pointer; background: var(--bg2); 
           transition: all 0.2s ease; 
@@ -930,7 +926,6 @@ function getStyledHtmlWrapper(header, content) {
         .routing-option input[type="radio"] { margin-right: 14px; width: 18px; height: 18px; cursor: pointer; accent-color: var(--navy-bright); flex-shrink: 0; }
         .routing-title { font-weight: 600; color: var(--text); font-size: 14px; line-height: 1.2; }
         .routing-desc { font-size: 12.5px; color: var(--text2); margin-top: 4px; line-height: 1.4; }
-        .modal-footer { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 20px; display: flex; justify-content: space-between; align-items: center; }
         .btn-secondary { background: var(--bg3); border-color: var(--border2); color: var(--text); }
         .btn-secondary:hover { background: var(--border); }
         .ismApproverContainer { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
