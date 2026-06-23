@@ -6516,6 +6516,54 @@ function sanitizeInput(data, maxLength = 10000, depth = 0) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
+  Function: isAuthorizedForApplication_
+  LAYMAN (Tropang Ex):
+  Tanong nito: "pwede ba 'tong taong nakatingin makakita ng application na 'to?" Oo kung siya ang
+  nag-submit (applicant) O kasama siya sa approval chain — Immediate/Dept Head, ISM reviewer, o Division
+  Head. Kung hindi, bawal.
+
+  TECHNICAL:
+  Server-side read-authorization for an application. Normalizes the active user and matches against:
+  the applicant, the Stage-A approvers already on appData.approvers, then scans ISM_Approval_Workflow and
+  DivisionHead_Approval_Workflow for the session. Used to gate the ISM-reviewer Fetch endpoints (F-05) so
+  a direct google.script.run call cannot read another application by sessionId.
+
+  PARAMS:
+  - sessionId — application id (used to scan the ISM/DivHead workflow sheets).
+  - appData   — the object from getApplicationData(sessionId) (provides applicant + Stage-A approvers).
+
+  RETURNS:
+  Boolean. False on empty active user / missing appData / no match.
+*/
+function isAuthorizedForApplication_(sessionId, appData) {
+  const me = getNormalizedEmail(Session.getActiveUser().getEmail());
+  if (!me || !appData) return false;
+  // Owner (applicant)
+  if (me === getNormalizedEmail(appData.applicantEmail)) return true;
+  // Stage-A heads (Immediate / Department) — already enumerated on appData.approvers
+  if ((appData.approvers || []).some(function (a) { return getNormalizedEmail(a.email) === me; })) return true;
+  // ISM members + Division Heads — scan their workflow sheets for this session
+  const searchId = String(sessionId || '').trim().toUpperCase();
+  const scanSheet = function (sheetName, sessionCol, emailCol) {
+    try {
+      const sh = getDatabaseSheet(sheetName, false);
+      if (!sh) return false;
+      const vals = sh.getDataRange().getValues();
+      for (let i = 1; i < vals.length; i++) {
+        if (String(vals[i][sessionCol - 1] || '').trim().toUpperCase() === searchId &&
+            getNormalizedEmail(vals[i][emailCol - 1]) === me) {
+          return true;
+        }
+      }
+    } catch (e) { /* sheet missing → not authorized via this path */ }
+    return false;
+  };
+  if (scanSheet(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL)) return true;
+  if (scanSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL)) return true;
+  return false;
+}
+
+/*
   Function: apiPhase3_FetchPIAData
   LAYMAN:    Gives the ISM reviewer screen the key PIA facts: program, department, the PII collected,
              who submitted it, purposes and retention.
@@ -6529,6 +6577,11 @@ function apiPhase3_FetchPIAData(sessionId) {
     const appData = getApplicationData(sessionId);
     if (!appData) {
       return { success: false, error: 'Application not found' };
+    }
+
+    // SECURITY (F-05): authorize — only the applicant or someone on the approval chain may view this.
+    if (!isAuthorizedForApplication_(sessionId, appData)) {
+      return { success: false, error: 'Access denied: you are not authorized to view this application.' };
     }
 
     return {
@@ -6564,6 +6617,11 @@ function apiPhase3_FetchDCSData(sessionId) {
     const appData = getApplicationData(sessionId);
     if (!appData || !appData.linkedReqId) {
       return { success: false, error: 'No DCS request linked to this application' };
+    }
+
+    // SECURITY (F-05): authorize — only the applicant or someone on the approval chain may view this.
+    if (!isAuthorizedForApplication_(sessionId, appData)) {
+      return { success: false, error: 'Access denied: you are not authorized to view this application.' };
     }
 
     const dcsSheet = getDatabaseSheet(DB_SHEET_NAMES.DATA_COLLECTION, true);

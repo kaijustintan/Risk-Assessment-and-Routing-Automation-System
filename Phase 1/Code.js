@@ -2537,7 +2537,14 @@ function apiGetRequestData(reqId) {
     const row = lastMatchRange.getRow();
     // Get only needed row data (1 API call instead of full sheet load)
     const values = sheet.getRange(row, 1, 1, Math.max(DC_COL.METADATA_AGENCY, 11)).getValues()[0];
-    
+
+    // SECURITY (F-04): authorize the caller — only the request's owner may read its full data. A direct
+    // google.script.run call must not be able to read another user's request by guessing the reqId.
+    const _me = Session.getActiveUser().getEmail();
+    if (String(values[DC_COL.USER_EMAIL - 1] || '').toLowerCase() !== String(_me || '').toLowerCase()) {
+      return { found: false };
+    }
+
     /* Step 1 — Parse the row's metadata, file list, and status from the newest matching row. */
     const metadata = JSON.parse(values[DC_COL.METADATA_JSON - 1] || '{}');
     const files    = JSON.parse(values[DC_COL.FILE_ID - 1] || '[]');
