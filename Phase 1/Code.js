@@ -206,7 +206,7 @@ function getCachedSpreadsheet_(spreadsheetId) {
   PARAMS:    (none)
   RETURNS:   { success:true, config:{KEY:value,...,DOMAIN} } on success;
              { success:false, error } on failure.
-  EXAMPLE:   apiGetSystemConfig() -> { success:true, config:{ LINK_NDA_TEMPLATE:'https://…', DOMAIN:'megaworld.com' } }
+  EXAMPLE:   apiGetSystemConfig() -> { success:true, config:{ LINK_NDA_EMPLOYEE_TEMPLATE:'https://…', DOMAIN:'megaworld.com' } }
 */
 function apiGetSystemConfig() {
   try {
@@ -2940,7 +2940,7 @@ function computeIntegrityHash(dcsReqId, piaSessionId) {
              right headers and some starter config rows, without clobbering anything that already exists.
   TECHNICAL: Idempotent setup. Creates Data_Collection if absent and writes the 11-column header
              (styled, frozen) only when A1 is empty. Likewise creates DCS_Risk_Audit and
-             System_Configuration with headers if missing, seeding LINK_NDA_TEMPLATE and LINK_TC_PAGE.
+             System_Configuration with headers if missing, seeding LINK_NDA_EMPLOYEE_TEMPLATE and LINK_TC_PAGE.
              Run manually from the editor. Logs each action.
   PARAMS:    (none)
   RETURNS:   undefined (side effect: creates/initializes sheets; logs to Logger).
@@ -2997,7 +2997,7 @@ function setupDataCollectionSheet() {
       .setBackground('#1a3a5c')
       .setFontColor('#ffffff')
       .setFontWeight('bold');
-    configSheet.appendRow(['LINK_NDA_TEMPLATE', '#', 'URL for the NDA form']);
+    configSheet.appendRow(['LINK_NDA_EMPLOYEE_TEMPLATE', '#', 'URL for the NDA (Employee) form']);
     configSheet.appendRow(['LINK_TC_PAGE', 'https://docs.google.com/document/d/REPLACE_WITH_DOC_ID/preview', 'URL for the T&C page embed (Google Docs embed readonly)']);
     Logger.log('System_Configuration sheet initialized.');
   }

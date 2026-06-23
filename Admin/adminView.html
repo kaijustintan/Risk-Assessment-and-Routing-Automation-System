@@ -2072,24 +2072,36 @@
             </div>
             <div class="settings-card-body">
               <div class="form-group">
-                <label>NDA Template Link</label>
-                <input type="url" id="cfg-LINK_NDA_TEMPLATE" placeholder="https://...">
-              </div>
-              <div class="form-group">
-                <label>DPA Template Link</label>
-                <input type="url" id="cfg-LINK_DPA_TEMPLATE" placeholder="https://...">
+                <label>NDA (Employee) Template Link</label>
+                <input type="url" id="cfg-LINK_NDA_EMPLOYEE_TEMPLATE" placeholder="https://...">
               </div>
               <div class="form-group">
                 <label>DSA Template Link</label>
                 <input type="url" id="cfg-LINK_DSA_TEMPLATE" placeholder="https://...">
               </div>
               <div class="form-group">
-                <label>T&C Page Link</label>
-                <input type="url" id="cfg-LINK_TC_PAGE" placeholder="https://...">
+                <label>DPA (Megaworld) Template Link</label>
+                <input type="url" id="cfg-LINK_DPA_MEGAWORLD_TEMPLATE" placeholder="https://...">
               </div>
               <div class="form-group">
-                <label>OJT NDA Template Link</label>
-                <input type="url" id="cfg-LINK_OJT_NDA_TEMPLATE" placeholder="https://...">
+                <label>DPA (Luxury Global) Template Link</label>
+                <input type="url" id="cfg-LINK_DPA_LUXURY_GLOBAL_TEMPLATE" placeholder="https://...">
+              </div>
+              <div class="form-group">
+                <label>DPA (Global One) Template Link</label>
+                <input type="url" id="cfg-LINK_DPA_GLOBAL_ONE_TEMPLATE" placeholder="https://...">
+              </div>
+              <div class="form-group">
+                <label>CU (Agency) Template Link</label>
+                <input type="url" id="cfg-LINK_CU_AGENCY_TEMPLATE" placeholder="https://...">
+              </div>
+              <div class="form-group">
+                <label>CU (OJT) Template Link</label>
+                <input type="url" id="cfg-LINK_CU_OJT_TEMPLATE" placeholder="https://...">
+              </div>
+              <div class="form-group">
+                <label>T&C Page Link</label>
+                <input type="url" id="cfg-LINK_TC_PAGE" placeholder="https://...">
               </div>
             </div>
           </div>
@@ -6711,7 +6723,7 @@ function loadSettings(force) {
 */
 function saveSettings() {
   var sysUpdates = {};
-  ['LINK_NDA_TEMPLATE', 'LINK_DPA_TEMPLATE', 'LINK_DSA_TEMPLATE', 'LINK_TC_PAGE', 'LINK_OJT_NDA_TEMPLATE'].forEach(function(k) {
+  ['LINK_NDA_EMPLOYEE_TEMPLATE', 'LINK_DSA_TEMPLATE', 'LINK_DPA_MEGAWORLD_TEMPLATE', 'LINK_DPA_LUXURY_GLOBAL_TEMPLATE', 'LINK_DPA_GLOBAL_ONE_TEMPLATE', 'LINK_CU_AGENCY_TEMPLATE', 'LINK_CU_OJT_TEMPLATE', 'LINK_TC_PAGE'].forEach(function(k) {
     var el = document.getElementById('cfg-' + k);
     if (el) sysUpdates[k] = el.value.trim();
   });
