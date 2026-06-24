@@ -4507,19 +4507,7 @@ function renderForm() {
           </div>
         </label>
         `}
-        ${(() => {
-          // #5: only show "✓ selected" when an actual FILE is attached (state._savedFiles), not when a
-          // draft merely restored the filename text — drafts do not store the file itself.
-          const hasFile = !!(state._savedFiles && state._savedFiles.nda);
-          const draftName = s.nda || '';
-          if (mainFileRetained || !draftName) {
-            return `<div id="main-upload-success" class="upload-success hidden"></div>`;
-          }
-          if (hasFile) {
-            return `<div id="main-upload-success" class="upload-success">✓ ${draftName} selected</div>`;
-          }
-          return `<div id="main-upload-success" class="upload-success" style="background:#fff8e1;border:1px solid #fcd34d;color:#b46d14;">⚠ ${draftName} — please re-upload this file (drafts do not store the file itself)</div>`;
-        })()}
+        <div id="main-upload-success" class="upload-success${(mainFileRetained || !s.nda) ? ' hidden' : ''}"${(!mainFileRetained && s.nda && !(state._savedFiles && state._savedFiles.nda)) ? ' style="background:#fff8e1;border:1px solid #fcd34d;color:#b46d14;"' : ''}>${(mainFileRetained || !s.nda) ? '' : ((state._savedFiles && state._savedFiles.nda) ? ('&#10003; ' + s.nda + ' selected') : ('&#9888; ' + s.nda + ' &mdash; please re-upload this file (drafts do not store the file itself)'))}</div>
       </div>
 
       <div class="field" id="dsa-wrapper" style="display:${state.dcs.access === 'External' ? 'block' : 'none'}">
