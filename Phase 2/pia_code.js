@@ -625,26 +625,51 @@ function escapeHtml(str) {
 function getAndShareDCSFiles(dcsReqId) {
   if (!dcsReqId) return [];
   const foundFiles = [];
+  const seen = {};
+
+  // PRIMARY (#15): use the file IDs stored on the DCS Data_Collection record. This is reliable — it does
+  // not depend on the Admin folder configuration or the file-naming/search scope. Internal NDA/DPA docs
+  // are included here too (previously the folder title-search could miss them).
   try {
-    const folderId = PropertiesService.getScriptProperties().getProperty('ADMIN_FOLDER_ID') || ADMIN_FOLDER_ID;
-    const folder = DriveApp.getFolderById(folderId);
-    
-    // Search for files matching the DCS Request ID
-    const files = folder.searchFiles(`title contains '${dcsReqId}'`);
-    while (files.hasNext()) {
-      const file = files.next();
-      // Share as read-only to the entire domain so all approvers can view
-      // (all approvers are @megaworldcorp.com or configured domain)
-      try {
-        file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch(e) {
-        Logger.log('WARN: Could not set domain sharing for ' + file.getName() + ': ' + e.toString());
-        // Last resort: keep existing permissions, approvers still see it if they have direct access
+    const dcsSheet = getDatabaseSheet(DB_SHEET_NAMES.DATA_COLLECTION, false);
+    if (dcsSheet) {
+      const vals = dcsSheet.getDataRange().getValues();
+      for (let i = 1; i < vals.length; i++) {
+        if (String(vals[i][DCS_COLS.REQ_ID - 1] || '').trim() === String(dcsReqId).trim()) {
+          let arr = [];
+          try { arr = JSON.parse(vals[i][DCS_COLS.FILE_ID - 1] || '[]'); } catch (e) {}
+          (Array.isArray(arr) ? arr : []).forEach(function (f) {
+            if (f && f.id && !seen[f.id]) {
+              try {
+                const file = DriveApp.getFileById(f.id);
+                try { file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW); } catch (_) {}
+                foundFiles.push({ id: file.getId(), name: file.getName(), url: file.getUrl(), type: f.type || '' });
+                seen[f.id] = true;
+              } catch (e) { Logger.log('WARN: could not open DCS file ' + f.id + ': ' + e.toString()); }
+            }
+          });
+          break;
+        }
       }
-      foundFiles.push({ id: file.getId(), name: file.getName(), url: file.getUrl() });
     }
-  } catch(e) {
-    Logger.log('Error searching/sharing DCS files from Admin Folder: ' + e.toString());
+  } catch (e) { Logger.log('Error reading DCS file IDs from Data_Collection: ' + e.toString()); }
+
+  // FALLBACK (legacy): Admin-folder title search, only if nothing was found above.
+  if (foundFiles.length === 0) {
+    try {
+      const folderId = PropertiesService.getScriptProperties().getProperty('ADMIN_FOLDER_ID') || ADMIN_FOLDER_ID;
+      const folder = DriveApp.getFolderById(folderId);
+      const files = folder.searchFiles(`title contains '${dcsReqId}'`);
+      while (files.hasNext()) {
+        const file = files.next();
+        if (seen[file.getId()]) continue;
+        try { file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+        foundFiles.push({ id: file.getId(), name: file.getName(), url: file.getUrl() });
+        seen[file.getId()] = true;
+      }
+    } catch (e) {
+      Logger.log('Error searching/sharing DCS files from Admin Folder: ' + e.toString());
+    }
   }
   return foundFiles;
 }
@@ -7560,6 +7585,31 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
 
     const subject = `[CERTIFICATE OF APPROVAL] Implementation Required for: ${sessionId} (${appData.pia1?.program || 'No Program Name'})`;
 
+    // #19: list the uploaded supporting documents on the certificate.
+    let supportingDocsListHtml = '';
+    try {
+      const certDocs = getAndShareDCSFiles(appData.linkedReqId);
+      if (certDocs && certDocs.length > 0) {
+        const docLabelFor = function (f) {
+          const n = (f.name || '').toUpperCase();
+          if (f.type === 'CU' || n.includes('-CU') || n.includes('CONFIDENTIALITY')) return 'Confidentiality Undertaking';
+          if (f.type === 'NDA' || n.includes('-NDA') || n.includes('NON-DISCLOSURE')) return 'Non-Disclosure Agreement';
+          if (f.type === 'DPA' || n.includes('-DPA') || n.includes('DATA PROTECTION')) return 'Data Protection Agreement';
+          if (f.type === 'DSA' || n.includes('-DSA')) return 'Data Sharing Agreement';
+          if (f.type === 'ENDORSEMENT' || n.includes('ENDORSEMENT')) return 'Endorsement Letter';
+          return 'Supporting Document';
+        };
+        const docRows = certDocs.map(function (f) {
+          return `<tr><td style="padding:6px 0;font-weight:600;width:30%;color:#6b7280;">${escapeHtml(docLabelFor(f))}</td><td style="padding:6px 0;color:#1a3a5c;"><a href="${escapeHtml(f.url || '#')}" style="color:#185FA5;text-decoration:none;">${escapeHtml(f.name || 'Document')}</a></td></tr>`;
+        }).join('');
+        supportingDocsListHtml = `
+          <div style="margin-bottom: 30px;">
+            <h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Supporting Documents</h2>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">${docRows}</table>
+          </div>`;
+      }
+    } catch (e) { Logger.log('Cert supporting-docs build failed: ' + e.toString()); }
+
     const htmlBody = `
       <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333; line-height: 1.6; padding: 20px; background-color: #f9fafb;">
         <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 40px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
@@ -7606,6 +7656,9 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
               ${accountableRowsHtml}
             </table>
           </div>
+
+          <!-- Supporting Documents (#19) -->
+          ${supportingDocsListHtml}
 
           <!-- Agency Information -->
           ${dcsData.metadataAgency && typeof dcsData.metadataAgency === 'object' && Object.keys(dcsData.metadataAgency).length > 0 ? `

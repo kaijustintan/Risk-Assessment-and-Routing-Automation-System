@@ -281,6 +281,63 @@ INFOSEC ka → may problema sa `checkAccess_` lookup (hal. hindi exact-match ang
 
 ---
 
+# 🛠️ PART F — OJT FEEDBACK FIXES (Wave 1 + 2)
+
+> Mga inayos base sa test feedback. Kailangan **na-deploy** ang **DCS `index.html`** + **PIA `pia_code.js`**
+> (Edit → New version). Gumamit ng **bagong** transaction + **totoong inbox** (check All Mail/Spam/Filters).
+
+## Wave 1 — emails, approvals, drafts, navigation
+
+**F1. Personalized greeting (#14)**
+- Submit PIA → may approver mag-act → buksan ang applicant **"Update on Application"** email.
+- ✅ Dapat **"Hello, \<pangalan mo\>!"** (hindi plain "Hello,"). Approver emails din → "Hello, \<approver\>,".
+
+**F2. Approver ROLE sa email (#13)**
+- Sa "Review Status" ng email → ✅ bawat approver may **role**: *"… — Immediate Head: Approved"*, *"… —
+  Department Head"*, *"… — InfoSec Reviewer"*, *"… — Division Head"* — hindi lang pangalan.
+
+**F3. Isang email na lang sa final approval (#20)**
+- Dalhin hanggang **fully approved** (heads + ISM lahat).
+- ✅ **ISANG** "FULLY APPROVED" email lang — **wala** nang pangalawang "completed/routed to DCOPS/TechServe" na sunod.
+
+**F4. Spinner sa Head/Dept approve (#12)**
+- Buksan ang **Head/Department** review link → magsulat ng comment → **Approve** (o Deny/Return).
+- ✅ Lumalabas ang **"Submitting your decision…" spinner** habang pinoproseso (dati mukhang frozen).
+
+**F5. Home redirect after Proceed to Phase 2 (#10)**
+- Mula sa request details (o success page) → **"Proceed to Phase 2"**.
+- ✅ Bubukas ang PIA sa bagong tab, at ang **DCS tab ay babalik sa Home** — kaya pagbalik mo, **walang stale**
+  na "Proceed to Phase 2" / lumang status.
+
+**F6. Draft re-upload warning (#5)**
+- Gumawa ng DCS request, mag-attach ng main doc, **i-save as draft**, umalis.
+- Balik → **Resume/Load** ang draft → punta sa upload (Section 2).
+- ✅ Sa halip na maling green **"✓ \<file\> selected"**, dapat **amber "⚠ \<file\> — please re-upload this file
+  (drafts do not store the file itself)."** Pumili ulit ng file → ✅ magiging green "✓ selected."
+
+## Wave 2 — documents, timeline, reviewer docs, certificate
+
+**F7. Clickable document links (#2)**
+- Buksan ang details ng isang request → **Documents** section.
+- ✅ Ang **NDA/DPA File** at **DSA File** ay **clickable "View ↗" links** na bumubukas sa Drive (hindi na puro text).
+
+**F8. 5-stage progress timeline (#11)**
+- Sa request details → **"Overall Progress Timeline"**.
+- ✅ Dapat **5 stages** na: *DCS Request → PIA Assessment → **Heads Approval** → ISM Approval → Certification*.
+  Ang **Heads Approval** ay hiwalay na ngayon sa ISM Approval, may sariling In Progress/Approved/Returned na status.
+
+**F9. Reviewer sees ALL docs (#15)**
+- Buksan ang **InfoSec/Head review link** ng request na may **internal DPA** (o anumang uploaded doc).
+- ✅ Sa **"Supporting Documents"** card → **lumalabas na ang DPA/NDA** (dati: "No documents attached" kahit may upload).
+
+**F10. Certificate lists supporting documents (#19)**
+- Dalhin ang request hanggang **fully approved** → tingnan ang **Certificate of Approval** (email/PDF).
+- ✅ May bagong **"Supporting Documents"** section na naglilista ng bawat uploaded file (label + link).
+
+> **Note (#16):** Ang status badge ay **honest na dati pa** ("PIA Heads Approved — Awaiting ISM review") — walang binago. I-confirm lang na ganoon pa rin ang itsura.
+
+---
+
 # 📋 QUICK CHECKLIST
 
 **DCS Form (A)**
@@ -310,6 +367,11 @@ INFOSEC ka → may problema sa `checkAccess_` lookup (hal. hindi exact-match ang
 - [ ] E4 — F-01/03: delete + self-promote → Access restricted; walang epekto
 - [ ] E5 — F-08: gateway → sarili mong record lang
 - [ ] **E6 — INFOSEC admin dashboard LAHAT gumagana (kritikal)**
+
+**🛠️ Feedback fixes (F)**
+- [ ] F1 greeting by name · F2 approver roles · F3 isang final email · F4 head-approve spinner
+- [ ] F5 home redirect on Proceed · F6 draft re-upload warning
+- [ ] F7 doc "View ↗" links · F8 5-stage timeline (Heads Approval) · F9 reviewer sees DPA · F10 cert lists docs
 
 ---
 

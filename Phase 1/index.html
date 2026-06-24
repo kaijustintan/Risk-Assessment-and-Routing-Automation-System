@@ -2566,8 +2566,8 @@ function getDetailedDcsSummaryCardHtml(s, reqId, ndaFile, dsaFile, remarks) {
         </div>
         <div class="summary-section">
           <h3>Documents</h3>
-          ${summaryRow('NDA/DPA File', ndaFile)}
-          ${summaryRow('DSA File', dsaFile)}
+          ${summaryRowRaw('NDA/DPA File', ndaFile)}
+          ${summaryRowRaw('DSA File', dsaFile)}
         </div>
         <div class="summary-section">
           <h3>Remarks</h3>
@@ -2628,69 +2628,82 @@ function renderPiaTimeline(data) {
      step1Comment = 'Awaiting Immediate Head approval.';
   }
 
-  // Step 2: PIA Assessment
+  // Step 2: PIA Assessment (the requester submits the PIA)
   let step2Class = '';
   let step2Sub = '<span class="status-badge" style="background: var(--bg3); color: var(--text2);">Upcoming</span>';
   let step2Comment = 'Complete DCS Phase 1 to unlock Phase 2.';
 
-  // Step 3: ISM Approval
+  // Step 3: Heads Approval (Immediate / Department Head)  [#11 — distinct stage]
+  let stepHClass = '';
+  let stepHSub = '<span class="status-badge" style="background: var(--bg3); color: var(--text2);">Upcoming</span>';
+  let stepHComment = 'Awaiting Immediate Head / Department Head approval.';
+
+  // Step 4: ISM Approval
   let step3Class = '';
   let step3Sub = '<span class="status-badge" style="background: var(--bg3); color: var(--text2);">Upcoming</span>';
   let step3Comment = 'The request will undergo review by InfoSec (ISM).';
 
-  // Step 4: Certification
+  // Step 5: Certification
   let step4Class = '';
   let step4Sub = '<span class="status-badge" style="background: var(--bg3); color: var(--text2);">Upcoming</span>';
   let step4Comment = 'Final certification and approval.';
 
   const isDcsCleared = ['approved', 'complete', 'approved by ism', 'rejected by ism', 'escalated to division head'].includes(dcsLower);
-  
+
   if (isDcsCleared) {
-    // PIA started
     if (!piaLower || piaLower === '') {
+      // PIA not yet started
       step2Class = 'active';
       step2Sub = '<span class="status-badge status-pending">Action Required</span>';
       step2Comment = 'Please proceed to Phase 2 (PIA) to continue your application.';
-    } else if (piaLower === 'pending') {
-      step2Class = 'active';
-      step2Sub = '<span class="status-badge status-pending">In Progress</span>';
-      step2Comment = 'Awaiting approvals in the PIA system (Immediate Head / Dept Head).';
-    } else if (piaLower === 'returned') {
-      step2Class = 'rejected';
-      step2Sub = '<span class="status-badge status-returned">Returned</span>';
-      step2Comment = comments ? `Returned from PIA: "${escapeHtml(comments)}"` : `The PIA process requires revision.`;
-    } else if (piaLower === 'denied') {
-      step2Class = 'denied';
-      step2Sub = '<span class="status-badge status-denied">Denied</span>';
-      step2Comment = comments ? `Denied from PIA: "${escapeHtml(comments)}"` : `The PIA process was denied.`;
     } else {
-      // piaLower is approved, escalated to division head, approved by ism, rejected by ism, complete
+      // PIA has been submitted
       step2Class = 'done';
-      step2Sub = '<span class="status-badge status-approved">Completed</span>';
-      step2Comment = 'Initial PIA approvals (Department Heads) are complete.';
-      
-      // Step 3 logic
-      if (piaLower === 'approved') {
-        step3Class = 'active';
-        step3Sub = '<span class="status-badge status-pending">In Progress</span>';
-        step3Comment = 'Awaiting review by the InfoSec (ISM) team.';
-      } else if (piaLower === 'escalated to division head') {
-        step3Class = 'active';
-        step3Sub = '<span class="status-badge" style="background:#eff6ff;color:#1e40af;border:none;">Escalated</span>';
-        step3Comment = 'Escalated to Division Head for review.';
-      } else if (piaLower === 'rejected by ism') {
-        step3Class = 'denied';
-        step3Sub = '<span class="status-badge status-denied">Rejected</span>';
-        step3Comment = comments ? `Rejected by InfoSec: "${escapeHtml(comments)}"` : `Rejected by the InfoSec team.`;
-      } else if (piaLower === 'approved by ism' || piaLower === 'complete') {
-        step3Class = 'done';
-        step3Sub = '<span class="status-badge status-approved">Approved</span>';
-        step3Comment = 'The application has been approved by InfoSec.';
-        
-        // Step 4 logic
-        step4Class = 'done';
-        step4Sub = '<span class="status-badge status-approved">Certified</span>';
-        step4Comment = '<strong>Please check your email</strong> for your generated certification.';
+      step2Sub = '<span class="status-badge status-submitted">Submitted</span>';
+      step2Comment = 'Your Privacy Impact Assessment has been submitted.';
+
+      // Heads Approval stage
+      if (piaLower === 'pending') {
+        stepHClass = 'active';
+        stepHSub = '<span class="status-badge status-pending">In Progress</span>';
+        stepHComment = 'Awaiting approvals from your Immediate Head / Department Head.';
+      } else if (piaLower === 'returned') {
+        stepHClass = 'rejected';
+        stepHSub = '<span class="status-badge status-returned">Returned</span>';
+        stepHComment = comments ? `Returned: "${escapeHtml(comments)}"` : 'The application was returned and requires revision.';
+      } else if (piaLower === 'denied') {
+        stepHClass = 'denied';
+        stepHSub = '<span class="status-badge status-denied">Denied</span>';
+        stepHComment = comments ? `Denied: "${escapeHtml(comments)}"` : 'The application was denied.';
+      } else {
+        // approved, escalated to division head, approved by ism, rejected by ism, complete → heads done
+        stepHClass = 'done';
+        stepHSub = '<span class="status-badge status-approved">Approved</span>';
+        stepHComment = 'Immediate Head / Department Head approvals are complete.';
+
+        // ISM Approval stage
+        if (piaLower === 'approved') {
+          step3Class = 'active';
+          step3Sub = '<span class="status-badge status-pending">In Progress</span>';
+          step3Comment = 'Awaiting review by the InfoSec (ISM) team.';
+        } else if (piaLower === 'escalated to division head') {
+          step3Class = 'active';
+          step3Sub = '<span class="status-badge" style="background:#eff6ff;color:#1e40af;border:none;">Escalated</span>';
+          step3Comment = 'Escalated to Division Head for review.';
+        } else if (piaLower === 'rejected by ism') {
+          step3Class = 'denied';
+          step3Sub = '<span class="status-badge status-denied">Rejected</span>';
+          step3Comment = comments ? `Rejected by InfoSec: "${escapeHtml(comments)}"` : 'Rejected by the InfoSec team.';
+        } else if (piaLower === 'approved by ism' || piaLower === 'complete') {
+          step3Class = 'done';
+          step3Sub = '<span class="status-badge status-approved">Approved</span>';
+          step3Comment = 'The application has been approved by InfoSec.';
+
+          // Certification stage
+          step4Class = 'done';
+          step4Sub = '<span class="status-badge status-approved">Certified</span>';
+          step4Comment = '<strong>Please check your email</strong> for your generated certification.';
+        }
       }
     }
   }
@@ -2719,6 +2732,14 @@ function renderPiaTimeline(data) {
               <div class="horizontal-timeline-title">PIA Assessment</div>
               <div class="horizontal-timeline-sub">${step2Sub}</div>
               <div class="horizontal-timeline-comment">${step2Comment}</div>
+            </div>
+          </div>
+          <div class="horizontal-timeline-item">
+            <div class="horizontal-timeline-dot ${stepHClass}" aria-hidden="true"></div>
+            <div class="horizontal-timeline-content">
+              <div class="horizontal-timeline-title">Heads Approval</div>
+              <div class="horizontal-timeline-sub">${stepHSub}</div>
+              <div class="horizontal-timeline-comment">${stepHComment}</div>
             </div>
           </div>
           <div class="horizontal-timeline-item">
@@ -5305,6 +5326,12 @@ function summaryRow(label, value) {
   return `<div class="summary-row"><div class="summary-label">${safeLabel}</div><div class="summary-value">${display}</div></div>`;
 }
 
+// #2: like summaryRow but the value is pre-built trusted HTML (e.g. a document link); label still escaped.
+function summaryRowRaw(label, rawValue) {
+  const safeLabel = escapeHtml(label || '');
+  return `<div class="summary-row"><div class="summary-label">${safeLabel}</div><div class="summary-value">${rawValue || 'N/A'}</div></div>`;
+}
+
 /*
   Function Name: renderSummary
 
@@ -6015,8 +6042,12 @@ function renderRequestDetails(data) {
   const container = document.getElementById('screen-request-details');
   const s = data.metadata || {};
   const files = data.files || [];
-  const ndaFile = files.find(f => f.type === 'NDA' || f.type === 'CU' || f.type === 'DPA')?.name || 'Not attached';
-  const dsaFile = files.find(f => f.type === 'DSA')?.name || 'Not attached';
+  // #2: render uploaded documents as clickable Drive links (files carry {type,name,id})
+  const fileLinkHtml = (obj) => (obj && obj.id)
+    ? `<a href="https://drive.google.com/file/d/${escapeHtml(obj.id)}/view" target="_blank" rel="noopener" style="color:var(--navy-bright);text-decoration:underline;">${escapeHtml(obj.name || 'View file')} ↗</a>`
+    : 'Not attached';
+  const ndaFile = fileLinkHtml(files.find(f => f.type === 'NDA' || f.type === 'CU' || f.type === 'DPA'));
+  const dsaFile = fileLinkHtml(files.find(f => f.type === 'DSA'));
 
   let actionButtonHtml = '';
   const hasPhase2Url = data.phase2Url && data.phase2Url.trim() !== '';
