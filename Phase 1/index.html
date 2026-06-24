@@ -6031,9 +6031,13 @@ function renderRequestDetails(data) {
   const s = data.metadata || {};
   const files = data.files || [];
   // #2: render uploaded documents as clickable Drive links (files carry {type,name,id})
-  const fileLinkHtml = (obj) => (obj && obj.id)
-    ? `<a href="https://drive.google.com/file/d/${escapeHtml(obj.id)}/view" target="_blank" rel="noopener" style="color:var(--navy-bright);text-decoration:underline;">${escapeHtml(obj.name || 'View file')} &#8599;</a>`
-    : 'Not attached';
+  // NOTE: built with plain string concatenation (no template literal) on purpose — keep it ASCII.
+  const fileLinkHtml = function (obj) {
+    if (!obj || !obj.id) return 'Not attached';
+    var url = 'https://drive.google.com/file/d/' + escapeHtml(obj.id) + '/view';
+    var name = escapeHtml(obj.name || 'View file');
+    return '<a href="' + url + '" target="_blank" rel="noopener" style="color:var(--navy-bright);text-decoration:underline;">' + name + ' &#8599;</a>';
+  };
   const ndaFile = fileLinkHtml(files.find(f => f.type === 'NDA' || f.type === 'CU' || f.type === 'DPA'));
   const dsaFile = fileLinkHtml(files.find(f => f.type === 'DSA'));
 
