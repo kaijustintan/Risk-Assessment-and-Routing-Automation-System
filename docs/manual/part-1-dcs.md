@@ -1,0 +1,223 @@
+# Part 1 — DCS (Phase 1, Data Collection System)
+
+> The request form. For anything shared across apps (architecture, schema, deployment,
+> security, glossary) see **[Part 0 — Common Reference](part-0-common.md)**. This file
+> covers only what is specific to DCS.
+>
+> Source files: `Phase 1/index.html` (frontend), `Phase 1/Code.js` (backend),
+> `Phase 1/*_appsscript.json` (manifest).
+
+---
+
+## §1.1 — End-user guide 🧑
+
+### Accessing the system
+1. Open the DCS web-app link (from email or the company portal).
+2. Sign in with your **corporate Google Workspace account**. Personal accounts (Gmail,
+   Yahoo, etc.) are blocked — see the domain gate in [§0.6](part-0-common.md#06--security-model).
+3. The landing page offers two choices: **New DCS Request** or **Review Applications**.
+
+### Starting a new request
+The form is a guided flow across several screens (each rendered by JavaScript at runtime —
+see [§0.5](part-0-common.md#05--known-gotchas--debugging)):
+
+1. **Step 1 — Guidelines:** review purpose & Terms and Conditions (a countdown pop-up), then
+   download any required templates from the **7 available forms** (see the list in
+   [§1.2](#12--maintenance-)). Tick the agreement box and **Proceed to Form**. If you have
+   saved drafts, you'll be prompted to resume or start fresh.
+2. **Step 2 — Details:** Full Name, Office Location, Department, **Access Type**
+   (Internal / External); optional iHelp Reference (numbers only); a **"This request involves
+   a(n)"** dropdown — **None / Agency / OJT**; add up to 5 **Accountable Persons**; enter
+   approver emails (Immediate Head, Department Head, optional Division Head).
+3. **Upload documents** — the required upload changes with your selections:
+   - **Internal** → Data Protection Agreement (DPA)
+   - **External** → NDA + DSA
+   - **Agency** → Confidentiality Undertaking + **Agency** Endorsement Letter
+   - **OJT** → Confidentiality Undertaking + **School** Endorsement Letter
+   - Accepted: PDF/DOC/DOCX, ≤10 MB each. *(The endorsement-letter label changes to "School"
+     or "Agency" live, based on the dropdown.)*
+4. **Agency Details** (only when the dropdown = **Agency**): agency name, personnel, contract
+   start date, network-drive path, recovery contact. *(OJT skips this screen — straight to the
+   summary.)*
+5. **Step 3 — Review:** check the summary cards; **Edit Details** to fix anything; **Submit
+   Request**.
+6. **Success:** confirmation with your **Application ID** (e.g. `DCS-000042`) and, if
+   available, a direct **Proceed to Phase 2** link into PIA.
+
+### Tracking your application
+**Review Applications** lists your requests with name, Application ID, a color-coded status
+badge, submission date, and any approver remarks. Click a request for full details.
+
+### Viewing request details
+A request's detail screen shows:
+- **Summary card** — everything you submitted.
+- **Uploaded documents** — shown as clickable Drive **"View"** links *(Wave 2 update — was
+  previously plain filenames)*.
+- **Approval Workflow tracker** and **ISM / DivHead tracker** (Phase 2 progress).
+- **Overall Progress Timeline** — the **5 stages**: DCS Request → PIA Assessment → Heads
+  Approval → ISM Approval → Certification (see [§0.3](part-0-common.md#03--the-approval-ladder--progress-timeline)).
+
+### Editing a returned application
+If an approver **returns** your request: open it from Review Applications (yellow "Returned"
+badge + a note), click **Edit and Resubmit**, update the flagged fields (look for red flag
+icons with tooltips), **re-upload** documents (files are not kept in drafts), then
+**Resubmit**. *Return ≠ Deny — see [§0.3](part-0-common.md#03--the-approval-ladder--progress-timeline).*
+
+### Saving drafts
+Progress auto-saves (a "Saving…" indicator shows bottom-right). Drafts expire after **7
+days**; up to **5** at a time. Files are **not** saved in drafts (re-upload on resume — this
+is intended, [§0.5](part-0-common.md#05--known-gotchas--debugging)).
+
+### DCS status badges
+| Badge | Meaning |
+|-------|---------|
+| Pending | Awaiting initial review by Immediate Head |
+| Approved | Approved at the current step |
+| Returned | Needs revision — edit & resubmit |
+| Denied | Rejected (terminal) |
+| Escalated | Sent to Division Head |
+| Ready for Phase 2 / Processing | DCS cleared — proceed to PIA |
+| Fully Certified | All phases complete |
+
+*(Reminder from [§0.3](part-0-common.md#03--the-approval-ladder--progress-timeline): these
+badges are computed in the frontend, not stored strings.)*
+
+---
+
+## §1.2 — Maintenance 🛠
+
+### Script Properties (DCS project)
+*(Deployment itself: follow the golden rule in [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls) — never "New deployment.")*
+
+| Property | Required | Holds |
+|----------|----------|-------|
+| `DB_ID` | Yes | Spreadsheet ID of the shared database |
+| `ADMIN_FOLDER_ID` | Yes | Drive folder for uploaded NDA/DPA/DSA/CU files |
+| `PIA_APP_URL` | Yes | Live **PIA** `/exec` URL ("Proceed to Phase 2" button) |
+| `DCS_WEB_APP_URL` | Yes | Live **DCS** `/exec` URL (self-reference) |
+| `DOMAIN` | Yes | Corporate domain, no `@` (e.g. `megaworldcorp.com`) |
+
+> ⚠️ The old DCS manual listed an `HMAC_SECRET` property. It is a **misnomer** — DCS does no
+> token signing. The signing secret is `SYSTEM_SECRET` and lives in the **PIA** project
+> ([§0.6](part-0-common.md#06--security-model)).
+
+### Downloadable templates (7 forms)
+The Step-1 download buttons are driven by the `DOWNLOADABLES` array in `renderGuide()`
+(`Phase 1/index.html` ~line 4034). The actual link for each is admin-managed via a
+`LINK_*_TEMPLATE` row in the `System_Configuration` sheet (generic passthrough — no backend
+code change needed). A missing row shows "Link not set" (`#`). To add/remove a form, edit the
+`DOWNLOADABLES` array; the link is then set via its `System_Configuration` row (or the Admin
+Settings UI).
+
+| `System_Configuration` key | Form (display name) | Audience |
+|----------------------------|---------------------|----------|
+| `LINK_NDA_EMPLOYEE_TEMPLATE` | Non-Disclosure Agreement for Employee | employees / internal |
+| `LINK_DSA_TEMPLATE` | Data Sharing Agreement | external / third-party |
+| `LINK_DPA_MEGAWORLD_TEMPLATE` | DPA for Megaworld Employee | DPA (Megaworld) |
+| `LINK_DPA_LUXURY_GLOBAL_TEMPLATE` | DPA for Luxury Global Employee | DPA (Luxury Global) |
+| `LINK_DPA_GLOBAL_ONE_TEMPLATE` | DPA for Global One Employee | DPA (Global One) |
+| `LINK_CU_AGENCY_TEMPLATE` | Confidentiality Undertaking for Agency | agency personnel |
+| `LINK_CU_OJT_TEMPLATE` | Confidentiality Undertaking for OJT | OJT / interns |
+| `LINK_TC_PAGE` | *(not a form)* Terms & Conditions page | T&C modal |
+
+*(The two Confidentiality Undertaking forms render with a distinct amber color + "person-with-check"
+icon to set them apart from the NDA/DPA/DSA forms.)*
+
+### Email
+DCS sends **exactly one** email: `notifyDcsRequester_` (~`Code.js:1705`) — the styled
+*"Request submitted — Proceed to Phase 2"* confirmation, fired inside `submitDCS` in a
+try/catch failsafe, with a `?parentID=` deep-link into PIA. (All other RARS email lives in
+PIA / Admin — [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls).)
+
+### Routine tasks
+- Monitor GAS **Executions** for API failures.
+- Verify old drafts auto-expire (7-day TTL).
+- Update template links via `System_Configuration` as needed.
+- Confirm uploaded files remain accessible in the `ADMIN_FOLDER_ID` Drive folder.
+
+---
+
+## §1.3 — Developer handover 👨‍💻
+
+### Frontend (`Phase 1/index.html`)
+Single-page app, vanilla JS, no frameworks. Screens are `<div>`s that are **empty in the
+HTML** and filled by `render*()` at runtime — search the render function, not the markup
+([§0.5](part-0-common.md#05--known-gotchas--debugging)). CSS uses design tokens in `:root`
+(navy palette, `--radius`, motion vars). Responsive breakpoints at **768px** and **480px**.
+
+**The 9 screens** (swapped by `show(name)`):
+
+| Screen | Purpose | Render fn (approx) |
+|--------|---------|--------------------|
+| landing | Home: New Request vs Review Applications | `renderLanding()` ~2791 |
+| guide | Step 1: intro, T&Cs, template downloads | `renderGuide()` ~3043 |
+| form | Step 2: main input form | `renderForm()` ~3217 |
+| agency | Step 2b: extra fields (agency only) | `renderAgency()` ~4019 |
+| summary | Step 3: review before submit | `renderSummary()` ~4108 |
+| success | Confirmation + DCS ID | `renderSuccess()` ~4375 |
+| drafts | Resume / disregard drafts | `renderDrafts()` ~2917 |
+| requests | "My Applications" list + legend | `renderRequests()` ~4410 |
+| request-details | One request's timelines + comments | `renderRequestDetails()` ~4593 |
+
+Other key fns: `show()` (router), `validateDCSForm()`, `triggerAutoSave()`,
+`submitRequest()`, `editReturnedApplication()`, timelines `renderApprovalTracker()` /
+`renderPiaTimeline()`. *(Line numbers drift — treat as hints.)*
+
+### Backend (`Phase 1/Code.js`, ~2,670 lines)
+Functions prefixed `api*` are callable from the frontend; trailing-underscore fns are
+private.
+
+**Server API contract** (read the function before relying on a field):
+- `apiGetSystemConfig()` → `{success, config:{DOMAIN, LINK_*_TEMPLATE, …}}`
+- `apiGenerateNewSessionId()`
+- `apiSaveDraft(sessionId, stateData)` · `apiRestoreDraft` · `apiListUserDrafts` · `apiDeleteDraft`
+- `submitDCS(payload, sessionId)` → `{success, reqId, phase2Url?}`
+- `apiListUserRequests()`
+- `apiGetRequestData(reqId)` (form data + approvers + timelines)
+- `apiGetReturnedApplication(reqId)` (revision flags)
+
+### Data flow — how a request is processed
+1. User fills the form; frontend calls `submitDCS(payload, sessionId)` via `google.script.run`.
+2. Backend validates + sanitizes server-side ([§0.6](part-0-common.md#06--security-model)).
+3. Files upload (base64) to Drive (`ADMIN_FOLDER_ID`).
+4. Metadata → `Data_Collection`; cross-ref → `Applications`; approver rows → `Approval_Workflow`.
+5. Draft cleaned up; risk auto-flags (`analyzeDCSRisk()`) written to `Risk_Audit`.
+6. `notifyDcsRequester_` confirmation email sent; success returns `reqId` (+ `phase2Url`).
+
+### Key design notes
+Vanilla JS (GAS has no npm); `TextFinder` over `getDataRange()` for speed; `LockService` for
+concurrency; base64 file transfer (only way through `google.script.run`); filenames cleared
+on draft restore (files aren't stored); sanitize on both client and server.
+
+### Revision mode
+`state.isEditing = true` highlights flagged fields and forces re-upload of **flagged files
+only** — non-flagged files stay in Drive.
+
+---
+
+## §1.4 — Troubleshooting
+
+### For end users
+| Problem | Solution |
+|---------|----------|
+| "Access Denied" | Sign in with your corporate account; try an incognito window. |
+| Can't upload a file | Must be PDF/DOC/DOCX and ≤10 MB. |
+| "Files need to be re-uploaded" | Resuming a draft doesn't keep files — re-attach them. |
+| Form won't submit | Check required fields (red flags) and that emails are valid. |
+| Can't see my requests | Sign in with the same account you submitted with. |
+| Draft lost | Drafts expire after 7 days; start over if older. |
+| "Maximum 5 drafts" | Submit or delete existing drafts first. |
+
+### For administrators
+| Problem | Solution |
+|---------|----------|
+| "Script property not set" | Add the missing key in Project Settings → Script Properties ([§1.2](#12--maintenance-)). |
+| Emails not sending | Check approver emails; confirm the DCS confirmation email path (`notifyDcsRequester_`). |
+| Slow performance | Large sheets slow scans; consider archiving old records. |
+| File upload fails | Check the `ADMIN_FOLDER_ID` folder exists and has space. |
+| Deployment "not updating" / links dead | You likely clicked **New deployment**. See the golden rule, [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls). |
+| Page is blank with a parse error | Suspect GAS template-literal serve corruption, [§0.5](part-0-common.md#05--known-gotchas--debugging). |
+
+---
+
+*← [Part 0](part-0-common.md) · Next: [Part 2 — PIA](part-2-pia.md) →*

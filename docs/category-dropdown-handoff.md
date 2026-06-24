@@ -1,9 +1,13 @@
 # Handoff Spec — "Involves an Agency" checkbox → multi-category dropdown
 
-> Status: **BLOCKED / not started.** This documents what must change so the work is
-> ready to execute the moment two inputs arrive (see §0). Nothing here is implemented yet.
-> This is a **cross-team** change: it needs a backend edit owned by the GAS cloud team,
-> not just our frontend.
+> Status: **PARTIALLY IMPLEMENTED — generic framework still deferred.**
+> Since this was written, **OJT was implemented as a concrete one-off** (the "involves an
+> Agency" checkbox became a **None / Agency / OJT** dropdown; OJT requires a Confidentiality
+> Undertaking + a School Endorsement Letter; backend branches on `agencyData.type`). See
+> `docs/V2 - Difference from V1 (Old System).md` §3.6. **This blueprint remains the plan for
+> the *generic* multi-category framework** (any number of categories, each config-driven) — that
+> larger refactor is still **deferred** and is a **cross-team** change needing a backend edit
+> owned by the GAS cloud team, not just our frontend.
 
 ---
 
@@ -27,7 +31,7 @@ frontend UI and the backend validation.
 |--------------|--------------|----------------|----------------------|-----------------------|-------|
 | `standard` | (none / "Standard request") | NDA (or DPA if Internal) | — | — | the current non-agency default |
 | `agency` | "Agency" | Confidentiality Undertaking (CU) | Endorsement Letter | agencyName, agencyPersonnel, contractStartDate, networkDrive, recovery email/number | = today's agency flow |
-| `ojt` | "OJT" | OJT NDA (?) | _TBD_ | _TBD_ | sir to define |
+| `ojt` | "OJT" | Confidentiality Undertaking for OJT | School Endorsement Letter | — | ✅ **implemented** (one-off, not via the generic framework) |
 | `…` | … | … | … | … | |
 
 ---

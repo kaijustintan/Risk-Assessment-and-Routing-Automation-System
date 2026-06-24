@@ -18,6 +18,7 @@
 6. [Pending Inputs from Sir — Spoonfed Edit Guide](#6-pending-inputs-from-sir--spoonfed-edit-guide)
 7. [Architecture, Deployment & Verification Notes](#7-architecture-deployment--verification-notes)
 8. [Documentation Pass (V1 vs V2 code docs)](#8-documentation-pass)
+9. [Wave 2 — Latest Session Updates](#9-wave-2--latest-session-updates)
 
 ---
 
@@ -49,7 +50,7 @@ script property. Each phase is deployed separately by manual copy-paste into its
 | App branding | "Data Collection System" | "Privacy Impact Assessment" + "Megaworld Corporation" footer |
 | Greeting | none | "Hello, `<Surname>`!" headline on 5 screens |
 | Request categories | single "Agency" checkbox | dropdown **None / Agency / OJT** |
-| Downloadables | 4 hardcoded blocks | array-driven + **OJT Confidentiality Undertaking** (admin-manageable) |
+| Downloadables | 4 hardcoded blocks | array-driven, now **7 audience-named forms** incl. per-entity DPA (Megaworld / Luxury Global / Global One) + CU for Agency & OJT, admin-manageable *(see §9.1)* |
 | Stakeholder section (PIA) | always shows Internal **and** External | shows only the relevant one (by access type) |
 | Emails (Admin) | plain text | professional navy HTML card |
 | Emails (PIA) | Arial + blue, inconsistent | unified navy card style |
@@ -425,5 +426,93 @@ one line in `getCombinedStatusBadge` lumping `pending` with empty; one-line fix.
 
 ---
 
-*Prepared as context for the official documentation session. Everything above reflects the V2
-finalization pass over the previous intern's V1 build.*
+## 9. Wave 2 — Latest Session Updates
+
+> Everything in §§1–8 is the **first** V2 finalization pass. This section captures the **later
+> work** (OJT-test feedback "Wave 1/2" + a security-hardening pass + a serve-time bug fix +
+> the consolidated manual) so this document stays the canonical V1→V2 narrative. Same
+> **Layman · Technical · V1→V2** shape.
+
+### 9.1 Downloadables restructured: 5 → **7 audience-named forms** (per-entity DPA)
+- **Layman:** The download list grew from 5 generic forms to **7 clearly-named** ones, with a
+  **separate DPA per entity** (Megaworld / Luxury Global / Global One) and distinct, clearer
+  names. The two Confidentiality Undertaking forms now look different (amber + a person-with-check
+  icon) so users don't confuse them with NDA/DPA.
+- **Technical:** `DOWNLOADABLES` in `renderGuide()` (`Phase 1/index.html` ~4034) now has 7
+  entries with **new config keys**: `LINK_NDA_EMPLOYEE_TEMPLATE`, `LINK_DSA_TEMPLATE`,
+  `LINK_DPA_MEGAWORLD_TEMPLATE`, `LINK_DPA_LUXURY_GLOBAL_TEMPLATE`, `LINK_DPA_GLOBAL_ONE_TEMPLATE`,
+  `LINK_CU_AGENCY_TEMPLATE`, `LINK_CU_OJT_TEMPLATE`. (Only `LINK_DSA_TEMPLATE` kept its old key;
+  the earlier `LINK_OJT_NDA_TEMPLATE` from §3.3 was superseded by `LINK_CU_OJT_TEMPLATE`.)
+- **V1→V2:** V1 had 4 hardcoded forms; the first V2 pass made it 5 (array-driven + OJT); Wave 2
+  is **7 audience-named, per-entity forms**.
+
+### 9.2 5-stage progress timeline (Heads Approval split out)
+- **Layman:** The progress tracker now shows **5 stages** instead of 4 — the Immediate/Dept-Head
+  phase is its own step, separate from "PIA Assessment," so the requester sees where they really are.
+- **Technical:** `renderPiaTimeline` / the overall-timeline builder (`Phase 1/index.html` ~2636)
+  now renders: **DCS Request → PIA Assessment → Heads Approval → ISM Approval → Certification**.
+- **V1→V2:** earlier the timeline was 4 stops (DCS → PIA → ISM → Certification); Wave 2 adds a
+  distinct **Heads Approval** stop.
+
+### 9.3 Uploaded documents shown as clickable Drive "View" links
+- **Layman:** In a request's details, uploaded files (NDA/DPA/DSA) are now **clickable "View"
+  links** to the Drive file, not just plain filenames.
+- **Technical:** `renderRequestDetails` builds per-file Drive links. *(This is also the helper
+  that triggered the blank-page bug — see §9.6.)*
+- **V1→V2:** V1 showed plain filenames; V2 shows working View links.
+
+### 9.4 Reliable reviewer documents + Certificate supporting-docs list
+- **Layman:** Reviewers were sometimes shown "No documents attached" for internal requests;
+  fixed. And the Certificate of Approval now lists the supporting documents.
+- **Technical:** `getAndShareDCSFiles` (PIA) now resolves files by the **IDs stored on the DCS
+  record** (reliable), with an Admin-folder title-search fallback, so the internal NDA/DPA is
+  shown to reviewers. The same reliable lookup feeds a new "Supporting Documents" section on the
+  Certificate.
+- **V1→V2:** V1's reviewer doc lookup was title-search only (fragile for internal requests); V2
+  is ID-based with fallback. *(Note: saving the certificate **PDF to Drive** was intentionally
+  **deferred** — only the supporting-docs list was implemented.)*
+
+### 9.5 Security hardening pass (F-01 … F-08)
+- **Layman:** A security review found that some sensitive backend functions could be called
+  directly by any logged-in employee (bypassing the on-screen gates). These were closed.
+- **Technical:** Added server-side authorization **inside** the functions (not just at the page
+  gate): Admin destructive/config ops now call `checkAccess_` (INFOSEC-only — **22 guard sites**);
+  PIA decision processors verify `Session.getActiveUser()` == the approver (**identity guards**)
+  and reads gate via `isAuthorizedForApplication_`; DCS `apiGetRequestData` got an owner guard and
+  `getGatewayRecord` is bound to the active user. Critical/High/Low all fixed; one error-message
+  sweep (F-06) deferred.
+- **V1→V2:** V1 relied only on the `doGet`/`doPost` entry gates (the GAS "every global function is
+  directly callable" threat model was unmitigated); V2 enforces **per-function** authorization.
+- **Detail:** `docs/Security - Review Findings.md` (findings + remediation table) and
+  `docs/Security - Recommendations.md` (future backlog).
+
+### 9.6 🐞 Blank DCS page — GAS serve-time template-literal corruption (fixed)
+- **Layman:** After a deploy, the DCS page went **blank** with a JavaScript syntax error — even
+  though the file was valid on disk.
+- **Technical:** A string-building helper in `renderRequestDetails` (the §9.3 file-link helper)
+  was written as a **template literal** (backticks). GAS's serve-time serialization corrupted
+  that backtick string (leaving it unterminated), so the parser choked downstream on a `style=`.
+  `node --check` couldn't catch it because it validates the **disk** file, not GAS's serve
+  transform. **Fix:** rebuilt the helper with plain ASCII string concatenation. Recorded as a
+  permanent gotcha in CLAUDE.md §8 + the manual (§0.5).
+- **V1→V2:** A V2-introduced helper regressed at serve time; fixed and documented so it can't
+  recur silently.
+
+### 9.7 Resolved / updated "Pending Inputs" (§6)
+- **Terms & Conditions content** (§6.2) — now drafted in full as `docs/Terms and Conditions.md`
+  (paste into the `LINK_TC_PAGE` doc). No longer a blank pending item.
+- The OJT download **link** (§6.4) is set per the new key `LINK_CU_OJT_TEMPLATE`.
+- Remaining open items (e.g. the §6.3 Section-2 heading label) still await sir's final wording.
+
+### 9.8 📚 Consolidated manual created
+- The three separate phase manuals were superseded by **one unified manual** in
+  `docs/manual/` (a shared **Part 0** + per-phase Parts 1–3 + appendices), correcting several
+  stale facts from the old manuals (deployment golden rule, `SYSTEM_SECRET` vs the `HMAC_SECRET`
+  misnomer, the 5-stage timeline, strict-INFOSEC Admin access, domain-check now on). See
+  `docs/manual/README.md`.
+
+---
+
+*Prepared as context for the official documentation session. §§1–8 reflect the first V2
+finalization pass over the previous intern's V1 build; §9 captures the later Wave 2 + security +
+manual-consolidation work.*

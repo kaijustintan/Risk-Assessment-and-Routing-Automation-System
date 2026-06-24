@@ -24,7 +24,8 @@ ships by manual copy-paste of its files into the matching cloud project, then re
 | `Phase 1/` | DCS — `index.html` (frontend), `Code.js` (backend), `appsscript.json` |
 | `Phase 2/` | PIA — `pia_index.html`, `pia_code.js`, `pia_appsscript.json` |
 | `Admin/` | Phase 3 — `adminView.html`, `admin_code.js`, `admin_appsscript.json` |
-| `docs/` | Handoff specs + the V2 difference document |
+| `docs/manual/` | **Unified user & maintenance manual** (Part 0 common + Parts 1–3 + appendices) — start at `docs/manual/README.md` |
+| `docs/` | Handoff specs, security docs, test guide, T&Cs + the V2 difference document |
 | `CLAUDE.md` | Project guide — architecture, design tokens, workflow guardrails |
 | `DPS_DB*.xlsx` | DB export for schema reference — **gitignored (real PII)** |
 
@@ -36,5 +37,7 @@ ships by manual copy-paste of its files into the matching cloud project, then re
 - Don't break the cross-app contract: shared sheet column names, the `parentID`/`Linked_ReqID` link,
   and stored URLs.
 
-See [`CLAUDE.md`](CLAUDE.md) for the full architecture + conventions, and
-[`docs/`](docs/) for handoff specs and the V2 difference write-up.
+**New here?** Read the [unified manual](docs/manual/README.md) — its **Part 0** is the
+cross-app source of truth (architecture, deployment golden rule, security, glossary). See
+[`CLAUDE.md`](CLAUDE.md) for engineering conventions, and [`docs/`](docs/) for handoff specs,
+security docs, and the V2 difference write-up.

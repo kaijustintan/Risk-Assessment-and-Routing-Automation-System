@@ -139,7 +139,8 @@ about to break.
 | `Admin/adminView.html` | Admin frontend — dashboard, settings, email routing | ⚠️ as needed |
 | `Admin/admin_code.js` | Admin backend — config, manual email resend (`adminResendEmail`), `MailApp` senders | ⚠️ careful |
 | `*/…_appsscript.json` | Per-phase GAS manifest (Asia/Manila, scopes, DOMAIN access) | ⚠️ only for a new scope |
-| `docs/` | Cross-team handoff specs (e.g. category dropdown) | ✅ |
+| `docs/manual/` | **Unified user & maintenance manual** — Part 0 (common: architecture, ops, security, glossary) is the cross-app source of truth; Parts 1–3 per phase; appendices. Start at `docs/manual/README.md`. | ✅ keep current |
+| `docs/` | Cross-team handoff specs, security docs, test guide, T&Cs, V2-vs-V1 write-up | ✅ |
 | `DPS_DB*.xlsx` | Real DB export for schema reference — **gitignored (PII)** | 📖 read-only |
 | `CLAUDE.md` | This file | Update when facts change |
 
@@ -281,8 +282,11 @@ ask before inventing one — consistency with the navy system matters to the sup
   Add/remove a form by editing that array; the link itself is admin-managed via a
   `LINK_*_TEMPLATE` row in the `System_Configuration` sheet (generic config passthrough — no
   backend code change needed). Missing row → link shows "Link not set" (`#`). The Admin app's
-  Settings UI can edit these link rows; new keys (e.g. `LINK_OJT_NDA_TEMPLATE`) currently
-  need a direct sheet row or an Admin UI addition.
+  Settings UI can edit these link rows; new keys need a direct sheet row or an Admin UI
+  addition. ⚠️ There are now **7 forms** with per-entity keys: `LINK_NDA_EMPLOYEE_TEMPLATE`,
+  `LINK_DSA_TEMPLATE`, `LINK_DPA_MEGAWORLD_TEMPLATE`, `LINK_DPA_LUXURY_GLOBAL_TEMPLATE`,
+  `LINK_DPA_GLOBAL_ONE_TEMPLATE`, `LINK_CU_AGENCY_TEMPLATE`, `LINK_CU_OJT_TEMPLATE` (the old
+  `LINK_NDA_TEMPLATE`/`LINK_DPA_TEMPLATE`/`LINK_OJT_NDA_TEMPLATE` names are superseded).
 - **Approval reminders live in PIA, not Admin** (corrected — the original "`adminApi_sendDailyReminders()`
   in `Admin/admin_code.js`" was wrong on both the name and the location; verified by grep). The real
   **daily reminder engine** is `sendDailyReminders()` / `buildReminderEmail()` / `setupReminderTrigger()`
