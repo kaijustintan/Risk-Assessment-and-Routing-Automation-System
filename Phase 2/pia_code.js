@@ -2469,9 +2469,9 @@ function handleEmailAction(params) {
 
     const actionButtonsHtml = `
       <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
-        <button type="submit" name="action" value="Approve" class="btn btn-success" onclick="document.getElementById('actionTokenInput').value='${approveToken}'">Approve</button>
+        <button type="submit" name="action" value="Approve" class="btn btn-success" onclick="document.getElementById('actionTokenInput').value='${approveToken}'; showDecisionOverlay();">Approve</button>
         <button type="button" class="btn btn-warn" onclick="showReturnOptions()">Return to Requestor</button>
-        <button type="submit" name="action" value="Deny" class="btn btn-danger" onclick="document.getElementById('actionTokenInput').value='${denyToken}'">Deny</button>
+        <button type="submit" name="action" value="Deny" class="btn btn-danger" onclick="document.getElementById('actionTokenInput').value='${denyToken}'; showDecisionOverlay();">Deny</button>
       </div>
     `;
 
@@ -2533,13 +2533,20 @@ function handleEmailAction(params) {
           <span style="font-size: 11.5px; font-weight: 400; margin-left: 8px;">(Minimum ${COMMENT_MIN_CHARS_DECISION} required for Return/Deny)</span>
         </div>
         ${actionButtonsHtml}
-        
+
+        <div id="decisionOverlay" style="display:none; position:fixed; inset:0; background:rgba(255,255,255,0.92); z-index:99999; align-items:center; justify-content:center; flex-direction:column; gap:14px;">
+          <style>@keyframes decSpin{to{transform:rotate(360deg)}}</style>
+          <div style="width:42px; height:42px; border:4px solid #cdd9ea; border-top-color:#1e3a5f; border-radius:50%; animation:decSpin 0.8s linear infinite;"></div>
+          <div style="font-size:14px; font-weight:600; color:#0f2238;">Submitting your decision…</div>
+        </div>
+        <script>function showDecisionOverlay(){var o=document.getElementById('decisionOverlay');if(o)o.style.display='flex';}</script>
+
         <div id="returnModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center; margin:0; padding:15px;">
           <div style="background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-lg); padding:1.5rem; max-width:400px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,0.2);">
             <h3 style="margin-top:0; font-size:18px; font-weight:600; color:var(--text); letter-spacing:-0.02em;">Return to Requestor</h3>
             <p style="font-size:13.5px; color:var(--text2); line-height:1.5; margin-bottom:20px;">This application will be returned to the requestor. If DCS fields are flagged, the associated DCS request will also be returned. A comment of at least 100 characters is required. Continue?</p>
             <div style="display:flex; flex-direction:column; gap:10px;">
-              <button type="submit" name="action" value="Return" class="btn btn-warn" style="width:100%; justify-content:center;" onclick="document.getElementById('actionTokenInput').value='${returnToken}';">Confirm Return to Requestor</button>
+              <button type="submit" name="action" value="Return" class="btn btn-warn" style="width:100%; justify-content:center;" onclick="document.getElementById('actionTokenInput').value='${returnToken}'; showDecisionOverlay();">Confirm Return to Requestor</button>
               <button type="button" class="btn" style="width:100%; justify-content:center; margin-top:5px;" onclick="document.getElementById('returnModal').style.display='none'">Cancel</button>
             </div>
           </div>
@@ -5061,6 +5068,7 @@ function notifyApprover(sessionId, approverIndex) {
     const htmlBody = buildPiaEmailHtml_({
       heading: 'Action Required — Review',
       contentHtml: `
+        <p style="margin:0 0 14px;font-size:14px;">Hello, ${escapeHtml(approver.name || 'Approver')},</p>
         <p style="margin:0 0 14px;font-size:14px;">A new Privacy Impact Assessment (PIA) requires your review.</p>
         <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Approval chain — step ${stepCount} of ${totalSteps}</div>
         <div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">
@@ -5111,7 +5119,25 @@ function notifyApplicant(sessionId, status) {
   SpreadsheetApp.flush();
   const appData = getApplicationData(sessionId);
   if (!appData) return;
-  
+
+  // #14: resolve the requester's name from the linked DCS record for a personalized greeting (best-effort)
+  let applicantName = '';
+  try {
+    if (appData.linkedReqId) {
+      const dcsSheet = getDatabaseSheet(DB_SHEET_NAMES.DATA_COLLECTION, false);
+      if (dcsSheet) {
+        const dcsVals = dcsSheet.getDataRange().getValues();
+        for (let i = 1; i < dcsVals.length; i++) {
+          if (String(dcsVals[i][DCS_COLS.REQ_ID - 1] || '').trim() === String(appData.linkedReqId).trim()) {
+            const md = JSON.parse(dcsVals[i][DCS_COLS.METADATA_JSON - 1] || '{}');
+            applicantName = md.name || md.requestorName || md.drafterName || '';
+            break;
+          }
+        }
+      }
+    }
+  } catch (e) { /* name is best-effort; fall back to a generic greeting */ }
+
   const decisionsHTML = generateEmailDecisionsHTML(sessionId);
   let subject = `Update on Application: ${sessionId}`;
   let statusMessage = '';
@@ -5187,7 +5213,7 @@ function notifyApplicant(sessionId, status) {
   const htmlBody = buildPiaEmailHtml_({
     heading: 'Application Status Update',
     contentHtml: `
-      <p style="margin:0 0 14px;font-size:14px;">Hello,</p>
+      <p style="margin:0 0 14px;font-size:14px;">Hello${applicantName ? ', ' + escapeHtml(applicantName) + '!' : ','}</p>
       ${statusMessage}
       <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
         <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>
@@ -5229,7 +5255,7 @@ function generateEmailDecisionsHTML(sessionId) {
   let hasRecords = false;
   let html = `<div style="font-family: sans-serif;">`;
   
-  const processDecisions = (sheetName, idCol, nameCol, statusCol, commentCol, dateCol, defaultName) => {
+  const processDecisions = (sheetName, idCol, nameCol, statusCol, commentCol, dateCol, defaultName, roleType, stepCol) => {
     const sheet = getDatabaseSheet(sheetName, false);
     if (!sheet) return;
     const data = sheet.getDataRange().getValues();
@@ -5241,6 +5267,13 @@ function generateEmailDecisionsHTML(sessionId) {
         
         const rawName = nameCol ? data[i][nameCol - 1] : '';
         const approverName = escapeHtml(rawName || defaultName);
+        // #13: resolve a human role label so the requester knows WHICH head/reviewer acted
+        let roleLabel = defaultName;
+        if (roleType === 'head') {
+          const stepVal = stepCol ? Number(data[i][stepCol - 1] || 0) : 0;
+          roleLabel = stepVal === 1 ? 'Immediate Head' : stepVal === 2 ? 'Department Head' : 'Head';
+        } else if (roleType === 'divhead') { roleLabel = 'Division Head'; }
+        else if (roleType === 'ism') { roleLabel = 'InfoSec Reviewer'; }
         const comment = data[i][commentCol - 1];
         const decisionDateRaw = dateCol ? data[i][dateCol - 1] : '';
         
@@ -5271,7 +5304,7 @@ function generateEmailDecisionsHTML(sessionId) {
         const escapedComment = escapeHtml(comment);
         html += `
           <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #f0f0f0;">
-            <div style="font-size: 13px; color: #333;"><strong>${approverName}</strong>: <span style="color: ${color}; font-weight: 600;">${statusLabel}</span></div>
+            <div style="font-size: 13px; color: #333;"><strong>${approverName}</strong> <span style="color:#6b7280; font-weight:500;">— ${escapeHtml(roleLabel)}</span>: <span style="color: ${color}; font-weight: 600;">${statusLabel}</span></div>
             ${decisionDateStr ? `<div style="font-size: 11px; color: #999; margin-top: 2px;">${escapeHtml(decisionDateStr)}</div>` : ''}
             ${comment ? `<div style="font-size: 13px; color: #666; margin-top: 4px;">"${escapedComment}"</div>` : ''}
           </div>
@@ -5281,9 +5314,9 @@ function generateEmailDecisionsHTML(sessionId) {
   };
 
   // Process all approval stages to show comprehensive latest decisions
-  processDecisions(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS.SESSION_ID, APPROVAL_COLS.APPROVER_NAME, APPROVAL_COLS.STATUS, APPROVAL_COLS.COMMENTS, APPROVAL_COLS.DECISION_DATE, 'Approver');
-  processDecisions(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, null, DIV_HEAD_CONFIG_COLS.STATUS, DIV_HEAD_CONFIG_COLS.COMMENTS, DIV_HEAD_CONFIG_COLS.DECISION_DATE, 'Division Head');
-  processDecisions(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_NAME, ISM_WORKFLOW_COLS.STATUS, ISM_WORKFLOW_COLS.COMMENTS, ISM_WORKFLOW_COLS.DECISION_DATE, 'ISM Member');
+  processDecisions(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS.SESSION_ID, APPROVAL_COLS.APPROVER_NAME, APPROVAL_COLS.STATUS, APPROVAL_COLS.COMMENTS, APPROVAL_COLS.DECISION_DATE, 'Approver', 'head', APPROVAL_COLS.CURRENT_STEP);
+  processDecisions(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, null, DIV_HEAD_CONFIG_COLS.STATUS, DIV_HEAD_CONFIG_COLS.COMMENTS, DIV_HEAD_CONFIG_COLS.DECISION_DATE, 'Division Head', 'divhead', null);
+  processDecisions(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_NAME, ISM_WORKFLOW_COLS.STATUS, ISM_WORKFLOW_COLS.COMMENTS, ISM_WORKFLOW_COLS.DECISION_DATE, 'ISM Member', 'ism', null);
 
   html += `</div>`;
   return hasRecords ? html : `<div style="font-size: 13px; color: #666; font-style: italic;">No decisions recorded yet.</div>`;
@@ -7675,7 +7708,8 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
     });
 
     Logger.log(`[AUDIT] ${sessionId}: Request routed to ${normalizedDest}: ${validEmails}`);
-    notifyApplicant(sessionId, 'routed_implementation');
+    // #20: do NOT send a second applicant email here. The 'approved_ism_final' email already told the
+    // requester their request is fully approved; sending 'routed_implementation' too caused a duplicate.
 
     return {
       success: true,

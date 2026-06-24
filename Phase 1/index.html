@@ -4486,9 +4486,19 @@ function renderForm() {
           </div>
         </label>
         `}
-        <div id="main-upload-success" class="upload-success ${(s.nda || state.dcs.nda) && !mainFileRetained ? '' : 'hidden'}">
-          ✓ ${s.nda || state.dcs.nda || ''} selected
-        </div>
+        ${(() => {
+          // #5: only show "✓ selected" when an actual FILE is attached (state._savedFiles), not when a
+          // draft merely restored the filename text — drafts do not store the file itself.
+          const hasFile = !!(state._savedFiles && state._savedFiles.nda);
+          const draftName = s.nda || '';
+          if (mainFileRetained || !draftName) {
+            return `<div id="main-upload-success" class="upload-success hidden"></div>`;
+          }
+          if (hasFile) {
+            return `<div id="main-upload-success" class="upload-success">✓ ${draftName} selected</div>`;
+          }
+          return `<div id="main-upload-success" class="upload-success" style="background:#fff8e1;border:1px solid #fcd34d;color:#b46d14;">⚠ ${draftName} — please re-upload this file (drafts do not store the file itself)</div>`;
+        })()}
       </div>
 
       <div class="field" id="dsa-wrapper" style="display:${state.dcs.access === 'External' ? 'block' : 'none'}">
@@ -4781,6 +4791,7 @@ function handleFileChange(input, successId) {
   const successEl = document.getElementById(successId);
   if (input.files && input.files[0]) {
     successEl.textContent = `✓ ${input.files[0].name} selected`;
+    successEl.removeAttribute('style'); // #5: clear any "re-upload required" warning styling
     successEl.classList.remove('hidden');
     // If we were forcing re-upload, clear _hadFiles once any file is selected
     if (state.dcs._hadFiles) {
@@ -5628,7 +5639,7 @@ function renderSuccess(reqId = '', submittedAt = '', phase2Url = '') {
     <div class="page-content">
     ${(() => {
       const hasPhase2Url = phase2Url && phase2Url.trim() !== ''; // Check if phase2Url is valid
-      const proceedButton = hasPhase2Url ? `<button class="btn btn-primary" type="button" onclick="window.open('${escapeHtml(phase2Url)}', '_blank')">Proceed to Phase 2</button>` : `<button class="btn btn-primary" type="button" disabled title="Phase 2 URL not available or configured. Please contact support.">Proceed to Phase 2</button>`;
+      const proceedButton = hasPhase2Url ? `<button class="btn btn-primary" type="button" onclick="window.open('${escapeHtml(phase2Url)}', '_blank'); show('landing');">Proceed to Phase 2</button>` : `<button class="btn btn-primary" type="button" disabled title="Phase 2 URL not available or configured. Please contact support.">Proceed to Phase 2</button>`;
       return `
     <div class="page-header" style="text-align: center; display: flex; flex-direction: column; align-items: center;">
       <div class="landing-logo" style="margin-bottom: 1.5rem;">
@@ -6042,7 +6053,7 @@ function renderRequestDetails(data) {
       // Otherwise, show the regular "Proceed to Phase 2" button.
       actionButtonHtml = `
         ${hasPhase2Url ?
-          `<button class="btn btn-primary" type="button" onclick="window.open('${escapeHtml(data.phase2Url)}', '_blank')">Proceed to Phase 2</button>` :
+          `<button class="btn btn-primary" type="button" onclick="window.open('${escapeHtml(data.phase2Url)}', '_blank'); show('landing');">Proceed to Phase 2</button>` :
           `<button class="btn btn-primary" type="button" disabled title="Phase 2 URL not available or configured. Please contact support.">Proceed to Phase 2</button>`
         }
       `;
