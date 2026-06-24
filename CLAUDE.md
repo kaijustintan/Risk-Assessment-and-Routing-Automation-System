@@ -255,6 +255,19 @@ ask before inventing one — consistency with the navy system matters to the sup
 
 ## 8. Known gotchas
 
+- **🚨 GAS serve-time template-literal corruption (learned the hard way, 2026-06-24).** A
+  string-building helper written as a **template literal** (backticks) blanked the whole DCS page
+  with `Uncaught SyntaxError: Unexpected identifier 'style'` thrown at GAS's `document.write(s(g))`
+  serve step — even though the file passed `node --check` cleanly. `node --check` validates the file
+  **on disk**; it CANNOT see GAS's serve-time serialization, which corrupted that one backtick
+  template (it produced `<a … style="…">${…}</a>`), leaving an unterminated string so the parser
+  choked on the next `style=` downstream. The fix: **rebuild the helper with plain ASCII string
+  concatenation** (`'a' + x + 'b'`) — identical output, no backticks. (A `↗` Unicode char was a red
+  herring; removing it didn't help — the template *delimiters* were the trigger.) **Rule:** when a
+  GAS-served file blanks with a parse error that does NOT reproduce in `node --check`, suspect a
+  template literal in a string helper and switch it to concatenation. "Valid JS on disk" ≠ "GAS
+  serves it intact." To get ground truth, read the served **VM** file at the console error's
+  `VM##:line` — that's the actual served (corrupted) code, not your disk file.
 - **Screens are rendered by JS**, not present as static HTML — search render functions.
 - **Files are NOT stored in drafts** — only text autosaves (server-side, 7-day TTL).
   Resuming a draft requires re-uploading files. Don't "fix" this as a bug; it's intended.
