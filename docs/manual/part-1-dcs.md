@@ -105,9 +105,8 @@ badges are computed in the frontend, not stored strings.)*
 The Step-1 download buttons are driven by the `DOWNLOADABLES` array in `renderGuide()`
 (`Phase 1/index.html` ~line 4034). The actual link for each is admin-managed via a
 `LINK_*_TEMPLATE` row in the `System_Configuration` sheet (generic passthrough — no backend
-code change needed). A missing row shows "Link not set" (`#`). To add/remove a form, edit the
-`DOWNLOADABLES` array; the link is then set via its `System_Configuration` row (or the Admin
-Settings UI).
+code change needed). A missing row shows "Link not set" (`#`). **To add or remove a form**, see
+the end-to-end procedure below the table.
 
 | `System_Configuration` key | Form (display name) | Audience |
 |----------------------------|---------------------|----------|
@@ -122,6 +121,34 @@ Settings UI).
 
 *(The two Confidentiality Undertaking forms render with a distinct amber color + "person-with-check"
 icon to set them apart from the NDA/DPA/DSA forms.)*
+
+#### Adding a new downloadable form (end-to-end)
+A new form is added in **two apps** and then given a link — three edits, then redeploy both:
+
+1. **DCS — `Phase 1/index.html`.** Add an entry to the `DOWNLOADABLES` array in `renderGuide()`
+   (~line 4033). This makes it appear in the Step-1 download list:
+   ```js
+   { configKey: 'LINK_YOURKEY_TEMPLATE', title: 'Your Form Name', descSet: 'Short audience note',
+     descStyle: '', iconStyle: 'background:#eff6ff;border-color:#93c5fd;color:#2563eb;',
+     icon: '<svg …></svg>' },
+   ```
+2. **Admin — `Admin/adminView.html`.** So ISM can set/edit the link in **Settings → System Links**,
+   make **both** of these edits:
+   - Add an input field to the **System Links** card (~line 2073):
+     `<div class="form-group"><label>Your Label</label><input type="url" id="cfg-LINK_YOURKEY_TEMPLATE" placeholder="https://..."></div>`
+   - Add the **same key** (`LINK_YOURKEY_TEMPLATE`) to the key array inside `saveSettings()`
+     (~line 6726). ⚠️ The field alone will *display* a value but silently **won't save** edits
+     without this.
+3. **The link value.** Add a `System_Configuration` row — key `LINK_YOURKEY_TEMPLATE`, value = the
+   file URL — or just fill the new Admin field and **Save**. No backend code change is needed;
+   `apiGetSystemConfig` / `saveConfigData` pass any key through.
+4. **Redeploy both** the DCS and Admin projects (Edit → New version —
+   [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls)).
+
+> ⚠️ **No stray spaces in the link value.** The `System_Configuration` value must be the clean URL
+> only (`https://…`, never `␣https://…`). A leading/trailing space makes the link invalid — the DCS
+> **Download** button won't open the file, and the value may not display correctly in Admin Settings.
+> The Admin Settings form auto-trims on Save; pasting straight into the sheet does **not**.
 
 ### Email
 DCS sends **exactly one** email: `notifyDcsRequester_` (~`Code.js:1705`) — the styled

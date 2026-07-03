@@ -81,6 +81,13 @@ Config** (ISM members: Member ID, Name, Email, Role, Active). **Save Changes** p
 spreadsheet. Reminder on/off + hour here call **PIA's** cross-app reminder API
 ([§2.2](part-2-pia.md#the-daily-reminder-engine-lives-here-)).
 
+> ⚠️ **No stray spaces in link values.** When you set a downloadable's URL — in a **System Links**
+> field here **or** directly in a `System_Configuration` cell — the value must be the **clean URL
+> only**, with **no leading/trailing whitespace** (`https://…`, never `␣https://…`). A stray space
+> makes the link invalid: the **Download** button in the DCS app won't open the file, and the value
+> can fail to display/save correctly in this Settings form. Editing through this form **auto-trims**
+> on Save; pasting straight into the sheet does **not** — so sheet edits are the ones to double-check.
+
 ---
 
 ## §3.2 — Maintenance 🛠
@@ -111,6 +118,17 @@ spreadsheet. Reminder on/off + hour here call **PIA's** cross-app reminder API
   verify spreadsheet cell limits.
 - After a Workspace/domain change: update `DOMAIN` / `ALLOWED_DOMAIN`; if the spreadsheet
   moves, update `SPREADSHEET_ID`; if sheets are added, update `SHEET_NAMES`.
+
+### Adding a new downloadable form (Admin side)
+A download form touches **both** apps; the DCS-side change and the full end-to-end flow are in
+**[Part 1 §1.2](part-1-dcs.md#12--maintenance-)**. On the **Admin** side, so ISM can manage the
+link under **Settings → System Links**, edit `Admin/adminView.html`:
+1. Add an input field to the **System Links** card (~line 2073), copying the existing pattern —
+   `<div class="form-group"><label>Your Label</label><input type="url" id="cfg-LINK_YOURKEY_TEMPLATE" placeholder="https://..."></div>`.
+2. Add the **same key** (`LINK_YOURKEY_TEMPLATE`) to the key array inside `saveSettings()`
+   (~line 6726). ⚠️ Without this, the field will *display* a value but silently **won't save** edits.
+3. Redeploy the Admin project (Edit → New version —
+   [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls)).
 
 ---
 
@@ -170,6 +188,7 @@ limits; export placed in the source folder.
 | Can't delete an entry (batch) | Batch delete only removes PIA-status "Complete" rows. |
 | "Export failed" | Could not create the new Sheet — check Drive permissions. |
 | Stale data after refresh | Hard refresh (Ctrl/Cmd+Shift+R) — cache may be stale. |
+| A downloadable won't open (DCS), or a Settings link field looks blank | The stored link value likely has a **leading/trailing space**. Open the Settings field (or the `System_Configuration` cell) and delete any whitespace around the URL, then Save. |
 
 ### For administrators / developers
 | Problem | Solution |
