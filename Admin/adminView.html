@@ -2113,27 +2113,20 @@
             </div>
             <div class="settings-card-body">
               <div class="form-group row-group">
-                <div class="col"><label>INFOSEC-001 Name</label><input type="text" id="info-name-INFOSEC-001"></div>
-                <div class="col"><label>Email</label><input type="email" id="info-email-INFOSEC-001"></div>
+                <div class="col"><label>INFOSEC-ALL-1 Name</label><input type="text" id="info-name-INFOSEC-ALL-1"></div>
+                <div class="col"><label>Email</label><input type="email" id="info-email-INFOSEC-ALL-1"></div>
               </div>
               <div class="form-group row-group">
-                <div class="col"><label>INFOSEC-002 Name</label><input type="text" id="info-name-INFOSEC-002"></div>
-                <div class="col"><label>Email</label><input type="email" id="info-email-INFOSEC-002"></div>
-              </div>
-              <div class="form-group row-group">
-                <div class="col"><label>INFOSEC-003 Name (Optional)</label><input type="text" id="info-name-INFOSEC-003" placeholder="Optional ISM Member"></div>
-                <div class="col"><label>Email</label><input type="email" id="info-email-INFOSEC-003" placeholder="Optional"></div>
+                <div class="col"><label>INFOSEC-ALL-2 Name</label><input type="text" id="info-name-INFOSEC-ALL-2"></div>
+                <div class="col"><label>Email</label><input type="email" id="info-email-INFOSEC-ALL-2"></div>
               </div>
               <div class="divider"></div>
               <div class="form-group row-group">
-                <div class="col"><label>DCOPS Name</label><input type="text" id="info-name-DCOPS"></div>
-                <div class="col"><label>Email</label><input type="email" id="info-email-DCOPS"></div>
+                <div class="col"><label>DCOPS-ALL-1 Name</label><input type="text" id="info-name-DCOPS-ALL-1"></div>
+                <div class="col"><label>Email</label><input type="email" id="info-email-DCOPS-ALL-1"></div>
               </div>
-              <div class="form-group row-group">
-                <div class="col"><label>TECHSERVE (Default / Fallback) Name</label><input type="text" id="info-name-TECHSERVE"></div>
-                <div class="col"><label>Email</label><input type="email" id="info-email-TECHSERVE"></div>
-              </div>
-              <div style="font-size:12px;color:#6b7280;margin-top:-4px;line-height:1.5;">Per-site TechServe emails are managed directly in the <strong>InfoSec_Email_Config</strong> sheet: add a <strong>Site</strong> column and one row per site/email (Role = TechServe, Site = AGT/TWS/CIP/EGP/Eastgate). This field is the <strong>fallback</strong> used when a request's site has no TechServe row.</div>
+              <div class="divider"></div>
+              <div style="font-size:12px;color:#6b7280;line-height:1.5;"><strong>TechServe emails are managed per-site in the InfoSec_Email_Config sheet</strong> — one row per site/email (Role = TechServe, Site = AGT/GDP/EGP/TWS). They are not edited here.</div>
             </div>
           </div>
         </div>
@@ -6716,10 +6709,10 @@ function loadSettings(force) {
   Function: saveSettings
   LAYMAN: Saves the Settings screen — the template/T&C links (incl. OJT NDA) and the
     InfoSec/DCOPS/TechServe member name+email rows — then re-locks the form.
-  TECHNICAL: Collects sysUpdates from the LINK_* #cfg-<key> inputs and infoUpdates
-    from the INFOSEC/DCOPS/TECHSERVE #info-name-/#info-email- inputs, then calls
-    saveConfigData(sysUpdates, infoUpdates); manages the Save button spinner and toasts.
-    NOTE: these keys are the cross-app contract shared with DCS/PIA — do not rename.
+  TECHNICAL: Collects sysUpdates from the LINK_* #cfg-<key> inputs and infoUpdates from the
+    InfoSec/DCOPS #info-name-/#info-email- inputs (Member_IDs INFOSEC-ALL-1, INFOSEC-ALL-2,
+    DCOPS-ALL-1 — must match InfoSec_Email_Config), then calls saveConfigData. TechServe is
+    managed per-site directly in the sheet, not here.
   PARAMS: (none)  RETURNS: undefined (async).
 */
 function saveSettings() {
@@ -6730,7 +6723,8 @@ function saveSettings() {
   });
   
   var infoUpdates = {};
-  ['INFOSEC-001', 'INFOSEC-002', 'INFOSEC-003', 'DCOPS', 'TECHSERVE'].forEach(function(mid) {
+  // Member_IDs must match InfoSec_Email_Config. TechServe is managed per-site in the sheet, not here.
+  ['INFOSEC-ALL-1', 'INFOSEC-ALL-2', 'DCOPS-ALL-1'].forEach(function(mid) {
     var nEl = document.getElementById('info-name-' + mid);
     var eEl = document.getElementById('info-email-' + mid);
     if (nEl && eEl) infoUpdates[mid] = { name: nEl.value.trim(), email: eEl.value.trim() };
