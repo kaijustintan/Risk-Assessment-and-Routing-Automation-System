@@ -1125,7 +1125,8 @@ const INFOSEC_CONFIG_COLS = {
   MEMBER_EMAIL: 3,
   ROLE: 4,
   IS_ACTIVE: 5,
-  JOB_POS: 6
+  JOB_POS: 6,
+  SITE: 7   // Batch 3: for TechServe rows, the Office/Site this email serves (AGT/TWS/CIP/EGP/Eastgate). Blank = fallback.
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3040,14 +3041,14 @@ function initializeDatabase() {
     // Create InfoSec Email Config table with validation and seed data
     if (!sheetExists(DB_SHEET_NAMES.INFOSEC_CONFIG)) {
       const infoSecHeaders = [
-        'Member_ID', 'Member_Name', 'Member_Email', 'Role', 'IsActive', 'JobPos'
+        'Member_ID', 'Member_Name', 'Member_Email', 'Role', 'IsActive', 'JobPos', 'Site'
       ];
-      
+
       const seedData = [
-        ['INFOSEC-001', 'InfoSec Member 1', 'infosec1@company.com', 'InfoSec', 'YES', 'Security Officer'],
-        ['INFOSEC-002', 'InfoSec Member 2', 'infosec2@company.com', 'InfoSec', 'YES', 'InfoSec Analyst'],
-        ['DCOPS', 'DCOPS Team', 'dcops@company.com', 'DCOPS', 'YES', 'DCOPS Lead'],
-        ['TECHSERVE', 'TechServe Team', 'techserve@company.com', 'TechServe', 'YES', 'TechServe Lead']
+        ['INFOSEC-001', 'InfoSec Member 1', 'infosec1@company.com', 'InfoSec', 'YES', 'Security Officer', ''],
+        ['INFOSEC-002', 'InfoSec Member 2', 'infosec2@company.com', 'InfoSec', 'YES', 'InfoSec Analyst', ''],
+        ['DCOPS', 'DCOPS Team', 'dcops@company.com', 'DCOPS', 'YES', 'DCOPS Lead', ''],
+        ['TECHSERVE', 'TechServe Team', 'techserve@company.com', 'TechServe', 'YES', 'TechServe Lead', '']
       ];
       
       createPhase3SheetWithValidation(DB_SHEET_NAMES.INFOSEC_CONFIG, infoSecHeaders, seedData);
@@ -6838,6 +6839,9 @@ function apiPhase3_GetInfoSecMembers() {
     const members = [];
     let dcopsEmail = '';
     let techserveEmail = '';
+    const techserveBySite = {};    // { 'AGT': ['a@x'], 'EASTGATE': ['b@x'], ... } — per-site TechServe (Batch 3)
+    const techserveFallback = [];  // TechServe rows with a blank Site (the catch-all default)
+    const allTechserveEmails = []; // every active TechServe email, for a last-resort fallback
 
     for (let i = 1; i < data.length; i++) {
       const isActive = String(data[i][INFOSEC_CONFIG_COLS.IS_ACTIVE - 1] || 'YES').trim() === 'YES';
@@ -6856,11 +6860,20 @@ function apiPhase3_GetInfoSecMembers() {
                    '", email="' + email + '"');
       }
 
-      // Fetch destination emails
+      // Fetch destination emails. TechServe can have MANY rows (one per site/email); DCOPS stays single.
       if (isActive && rawRole.toLowerCase() === 'dcops') {
         dcopsEmail = email || '';
-      } else if (isActive && rawRole.toLowerCase() === 'techserve') {
-        techserveEmail = email || '';
+      } else if (isActive && rawRole.toLowerCase() === 'techserve' && email) {
+        allTechserveEmails.push(email);
+        const siteRaw = data[i][INFOSEC_CONFIG_COLS.SITE - 1];
+        const siteKey = siteRaw ? String(siteRaw).trim().toUpperCase() : '';
+        if (siteKey) {
+          if (!techserveBySite[siteKey]) techserveBySite[siteKey] = [];
+          techserveBySite[siteKey].push(email);
+        } else {
+          techserveFallback.push(email);
+        }
+        if (!techserveEmail) techserveEmail = email; // keep a flat value for backward-compatibility
       }
     }
 
@@ -6898,6 +6911,9 @@ function apiPhase3_GetInfoSecMembers() {
         destinationEmails: {
           dcops: dcopsEmail,
           techserve: techserveEmail,
+          techserveBySite: techserveBySite,
+          techserveFallback: techserveFallback,
+          allTechserve: allTechserveEmails,
           both: [dcopsEmail, techserveEmail].filter(e => e).join(',')
         }
       }
@@ -6906,6 +6922,34 @@ function apiPhase3_GetInfoSecMembers() {
     Logger.log('Error in apiPhase3_GetInfoSecMembers: ' + e.toString());
     return { success: false, error: e.toString() };
   }
+}
+
+/*
+  Function: resolveTechserveForSite_
+  LAYMAN (Tropang Ex): Kinukuha nito kung saang TechServe email(s) dapat mapunta ang request base sa
+  Office/Site nito (hal. AGT → AGT TechServe, pwedeng higit sa isa). Kapag walang naka-set para sa site
+  na 'yun, babagsak ito sa fallback (blangkong-Site na TechServe rows), o kung wala rin, sa LAHAT ng
+  TechServe email — para walang request na 'di maabot ninuman.
+  TECHNICAL: Normalizes the request site (trim+uppercase) and looks it up in destEmails.techserveBySite.
+  Falls back to techserveFallback (blank-Site rows), then allTechserve. Returns an array of emails.
+  PARAMS:
+  - destEmails — the destinationEmails object from apiPhase3_GetInfoSecMembers.
+  - siteRaw — the request's Office/Site value (dcsData.locations).
+  RETURNS: Array of TechServe email strings (possibly empty if nothing configured).
+*/
+function resolveTechserveForSite_(destEmails, siteRaw) {
+  const bySite = (destEmails && destEmails.techserveBySite) || {};
+  const siteKey = siteRaw ? String(siteRaw).trim().toUpperCase() : '';
+  if (siteKey && bySite[siteKey] && bySite[siteKey].length) {
+    return bySite[siteKey].slice();
+  }
+  const fallback = (destEmails && destEmails.techserveFallback && destEmails.techserveFallback.length)
+    ? destEmails.techserveFallback
+    : ((destEmails && destEmails.allTechserve) || []);
+  if (siteKey) {
+    Logger.log('WARN: No site-specific TechServe email for site "' + siteRaw + '"; using fallback: ' + fallback.join(','));
+  }
+  return fallback.slice();
 }
 
 /*
@@ -7478,12 +7522,17 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
     const dcsResult = apiPhase3_FetchDCSData(sessionId);
     const dcsData = dcsResult.success ? dcsResult.data : {};
 
+    // Resolve the site-specific TechServe email(s) for this request (Batch 3). Always computed so the
+    // applicant/cert "contact TechServe" message shows the right site's team even for DCOPS-only routing.
+    const siteTechserve = resolveTechserveForSite_(ismInfo.data.destinationEmails, dcsData.locations);
+    const techserveForMessage = siteTechserve.join(', ');
+
     const destinationEmails = [];
     if (normalizedDest === 'DCOPS' || normalizedDest === 'BOTH') {
       destinationEmails.push(ismInfo.data.destinationEmails.dcops);
     }
     if (normalizedDest === 'TECHSERVE' || normalizedDest === 'BOTH') {
-      destinationEmails.push(ismInfo.data.destinationEmails.techserve);
+      siteTechserve.forEach(function(e) { destinationEmails.push(e); });
     }
 
     const validEmails = destinationEmails.filter(e => e).join(',');
@@ -7787,7 +7836,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
             <p style="margin: 0; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Implementation Routing</p>
             <p style="margin: 5px 0 0 0; font-size: 15px; font-weight: 600; color: #1a3a5c;">Routed to: ${escapeHtml(routedLabel)}</p>
             <p style="margin: 5px 0 0 0; font-size: 13px; color: #9ca3af;">Received at: ${escapeHtml(nowStr)}</p>
-            <p style="margin: 14px 0 0 0; font-size: 13px; color: #1a3a5c;">This request is <strong>fully approved</strong> and is now being processed by the implementation team.${ismInfo.data.destinationEmails.techserve ? ` For follow-ups, please contact TechServe at <strong>${escapeHtml(ismInfo.data.destinationEmails.techserve)}</strong>.` : ''}</p>
+            <p style="margin: 14px 0 0 0; font-size: 13px; color: #1a3a5c;">This request is <strong>fully approved</strong> and is now being processed by the implementation team.${techserveForMessage ? ` For follow-ups, please contact TechServe at <strong>${escapeHtml(techserveForMessage)}</strong>.` : ''}</p>
           </div>
 
         </div>
@@ -7824,7 +7873,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
       message: `Request successfully routed to ${destination}`,
       sentTo: validEmails,
       pdfBlob: pdfBlob,
-      techserveEmails: ismInfo.data.destinationEmails.techserve || ''
+      techserveEmails: techserveForMessage
     };
   } catch (e) {
     Logger.log('Error in apiPhase3_RouteApprovedRequest: ' + e.toString());
