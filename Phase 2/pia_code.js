@@ -3962,12 +3962,16 @@ function processDivHeadDecision(sessionId, approverEmail, decision, comments, ap
         if (appRow > 0) {
           appSheet.getRange(appRow, APPLICATIONS_COLS.STATUS).setValue('Approved by ISM');
           Logger.log(`[AUDIT] ${sessionId}: Application Approved by ISM InfoSec Team (via DivHead Proxy)`);
-          notifyApplicant(sessionId, 'approved_divhead_final');
-          
+
           const linkedReqId = appSheet.getRange(appRow, APPLICATIONS_COLS.LINKED_REQ_ID).getValue();
           if (linkedReqId) updateDCSStatus(linkedReqId, 'Complete');
           
-          try { apiPhase3_RouteApprovedRequest(sessionId, routingDest); } catch (e) {}
+          let certResult = null;
+          try { certResult = apiPhase3_RouteApprovedRequest(sessionId, routingDest); } catch (e) {}
+          notifyApplicant(sessionId, 'approved_divhead_final', {
+            certBlob: (certResult && certResult.success) ? certResult.pdfBlob : null,
+            techserveEmails: (certResult && certResult.success) ? certResult.techserveEmails : ''
+          });
         }
       } else {
         // Don't notify applicant here — the ISM member's approval handler
@@ -5134,9 +5138,10 @@ function notifyApprover(sessionId, approverIndex) {
                         'returned','denied','approved_ism_final','routed_implementation', ...).
   RETURNS:   undefined. No-op if app data is missing.
 */
-function notifyApplicant(sessionId, status) {
+function notifyApplicant(sessionId, status, options) {
   // FAILSAFE: Email failures must never crash the caller (DB already updated)
   try {
+    const opts = options || {};
     // CRITICAL FIX C1: Get URL at runtime
     const webAppUrl = getWebAppUrl() || ScriptApp.getService().getUrl();
   const dcsWebAppUrl = getDCSWebAppUrl() || ScriptApp.getService().getUrl();
@@ -5235,11 +5240,22 @@ function notifyApplicant(sessionId, status) {
     }
   }
 
+  // Item 2: on full approval, add a "being processed / follow up with TechServe" note in the same
+  // email that carries the attached certificate.
+  let followUpMessage = '';
+  if (status === 'approved_ism_final' || status === 'approved_divhead_final') {
+    const tsEmails = opts.techserveEmails ? String(opts.techserveEmails).trim() : '';
+    const certLine = opts.certBlob ? ' Your Certificate of Approval is attached to this email.' : '';
+    const tsLine = tsEmails ? ` For any follow-up on the implementation, please contact TechServe at <strong>${escapeHtml(tsEmails)}</strong>.` : '';
+    followUpMessage = `<div style="background:#eef4fb;color:#1a3a5c;border:1px solid rgba(42,82,133,0.15);padding:12px;border-radius:6px;margin-bottom:16px;font-size:13px;">Your access request is now being <strong>processed</strong> by the implementation team.${certLine}${tsLine}</div>`;
+  }
+
   const htmlBody = buildPiaEmailHtml_({
     heading: 'Application Status Update',
     contentHtml: `
       <p style="margin:0 0 14px;font-size:14px;">Hello${applicantName ? ', ' + escapeHtml(applicantName) + '!' : ','}</p>
       ${statusMessage}
+      ${followUpMessage}
       <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
         <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>
         ${decisionsHTML}
@@ -5247,8 +5263,16 @@ function notifyApplicant(sessionId, status) {
       <div><a href="${actionUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">${buttonText}</a></div>`
   });
 
-  // Queue email for deferred reliable delivery (avoids Gmail throttling in-request)
-  queueEmail(sessionId, appData.applicantEmail, subject, "Please view this email in an HTML-compatible client.", 'applicant', htmlBody);
+  // Final-approval emails carry the Certificate of Approval PDF, which the async queue can't hold —
+  // send those synchronously with the attachment; every other status stays on the reliable queue.
+  if (opts.certBlob) {
+    sendEmailWithRetry(appData.applicantEmail, subject, "Please view this email in an HTML-compatible client.", {
+      htmlBody: htmlBody,
+      attachments: [opts.certBlob]
+    });
+  } else {
+    queueEmail(sessionId, appData.applicantEmail, subject, "Please view this email in an HTML-compatible client.", 'applicant', htmlBody);
+  }
   } catch (e) {
     Logger.log('FAILSAFE: Email queue for applicant failed for ' + sessionId + ': ' + e.toString());
     try {
@@ -7148,20 +7172,24 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
           if (appData[i][APPLICATIONS_COLS.SESSION_ID - 1] === sessionId) {
             appSheet.getRange(i + 1, APPLICATIONS_COLS.STATUS).setValue('Approved by ISM');
             Logger.log(`[AUDIT] ${sessionId}: Application Approved by ISM InfoSec Team (All Members)`);
-            notifyApplicant(sessionId, 'approved_ism_final');
-            
+
           const linkedReqId = appData[i][APPLICATIONS_COLS.LINKED_REQ_ID - 1];
           if (linkedReqId) updateDCSStatus(linkedReqId, 'Complete');
 
-            // If routing destination is specified, route to DCOPS/TECHSERVE
+            // Build + route the certificate FIRST so it can be attached to the applicant's email.
+            let certResult = null;
             if (routingDestination) {
               try {
-                apiPhase3_RouteApprovedRequest(sessionId, routingDestination);
+                certResult = apiPhase3_RouteApprovedRequest(sessionId, routingDestination);
                 Logger.log(`[AUDIT] ${sessionId}: Routed to: ${routingDestination}`);
               } catch (routeErr) {
                 Logger.log('Error routing to destination: ' + routeErr.toString());
               }
             }
+            notifyApplicant(sessionId, 'approved_ism_final', {
+              certBlob: (certResult && certResult.success) ? certResult.pdfBlob : null,
+              techserveEmails: (certResult && certResult.success) ? certResult.techserveEmails : ''
+            });
             break;
           }
         }
@@ -7496,6 +7524,9 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: center;">
               <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
             </td>
+            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
+              ${escapeHtml(a.comment || '—')}
+            </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
               ${escapeHtml(dateStr)}
             </td>
@@ -7524,6 +7555,9 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: center;">
               <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
             </td>
+            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
+              ${escapeHtml(divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1] || '—')}
+            </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
               ${escapeHtml(dateStr)}
             </td>
@@ -7533,7 +7567,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
     }
 
     if (!headsApproversHtml) {
-        headsApproversHtml = `<tr><td colspan="3" style="padding: 10px 0; color: #6b7280; font-style: italic; border-bottom: 1px solid #e5e7eb;">No head approvers found.</td></tr>`;
+        headsApproversHtml = `<tr><td colspan="4" style="padding: 10px 0; color: #6b7280; font-style: italic; border-bottom: 1px solid #e5e7eb;">No head approvers found.</td></tr>`;
     }
 
     // 3. ISM Members
@@ -7569,6 +7603,9 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: center;">
               <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
             </td>
+            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
+              ${escapeHtml(ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1] || '—')}
+            </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
               ${escapeHtml(dateStr)}
             </td>
@@ -7578,7 +7615,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
     }
     
     if (!ismApproversHtml) {
-        ismApproversHtml = `<tr><td colspan="3" style="padding: 10px 0; color: #6b7280; font-style: italic; border-bottom: 1px solid #e5e7eb;">No ISM approvers found.</td></tr>`;
+        ismApproversHtml = `<tr><td colspan="4" style="padding: 10px 0; color: #6b7280; font-style: italic; border-bottom: 1px solid #e5e7eb;">No ISM approvers found.</td></tr>`;
     }
 
     const nowStr = new Date().toLocaleString('en-PH', { dateStyle: 'long', timeStyle: 'short' });
@@ -7665,6 +7702,21 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
           <div style="margin-bottom: 30px;">
             <h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Agency Information</h2>
             <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              ${dcsData.metadataAgency.agencyRequestType ? `
+              <tr>
+                <td style="padding: 6px 0; font-weight: 600; width: 30%; color: #6b7280;">Request Type</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.agencyRequestType)}</td>
+              </tr>` : ''}
+              ${(dcsData.metadataAgency.agencyRequestType === 'Replacement' && dcsData.metadataAgency.replacementFullName) ? `
+              <tr>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Replacing (Person)</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.replacementFullName)}</td>
+              </tr>` : ''}
+              ${(dcsData.metadataAgency.agencyRequestType === 'Replacement' && dcsData.metadataAgency.replacementEmail) ? `
+              <tr>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Replaced Person Email</td>
+                <td style="padding: 6px 0; color: #1a3a5c;"><a href="mailto:${escapeHtml(dcsData.metadataAgency.replacementEmail)}" style="color: #185FA5; text-decoration: none;">${escapeHtml(dcsData.metadataAgency.replacementEmail)}</a></td>
+              </tr>` : ''}
               ${dcsData.metadataAgency.agencyName ? `
               <tr>
                 <td style="padding: 6px 0; font-weight: 600; width: 30%; color: #6b7280;">Agency Name</td>
@@ -7700,9 +7752,10 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
             <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
               <thead>
                 <tr>
-                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 45%;">Approver</th>
-                  <th style="text-align: center; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 25%;">Status</th>
-                  <th style="text-align: right; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 30%;">Date & Time of Approval</th>
+                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 30%;">Approver</th>
+                  <th style="text-align: center; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 15%;">Status</th>
+                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 35%;">Comments / Feedback</th>
+                  <th style="text-align: right; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 20%;">Date & Time of Approval</th>
                 </tr>
               </thead>
               <tbody>
@@ -7717,9 +7770,10 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
             <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
               <thead>
                 <tr>
-                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 45%;">Approver</th>
-                  <th style="text-align: center; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 25%;">Status</th>
-                  <th style="text-align: right; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 30%;">Date & Time of Approval</th>
+                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 30%;">Approver</th>
+                  <th style="text-align: center; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 15%;">Status</th>
+                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 35%;">Comments / Feedback</th>
+                  <th style="text-align: right; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 20%;">Date & Time of Approval</th>
                 </tr>
               </thead>
               <tbody>
@@ -7733,6 +7787,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
             <p style="margin: 0; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Implementation Routing</p>
             <p style="margin: 5px 0 0 0; font-size: 15px; font-weight: 600; color: #1a3a5c;">Routed to: ${escapeHtml(routedLabel)}</p>
             <p style="margin: 5px 0 0 0; font-size: 13px; color: #9ca3af;">Received at: ${escapeHtml(nowStr)}</p>
+            <p style="margin: 14px 0 0 0; font-size: 13px; color: #1a3a5c;">This request is <strong>fully approved</strong> and is now being processed by the implementation team.${ismInfo.data.destinationEmails.techserve ? ` For follow-ups, please contact TechServe at <strong>${escapeHtml(ismInfo.data.destinationEmails.techserve)}</strong>.` : ''}</p>
           </div>
 
         </div>
@@ -7767,7 +7822,9 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
     return {
       success: true,
       message: `Request successfully routed to ${destination}`,
-      sentTo: validEmails
+      sentTo: validEmails,
+      pdfBlob: pdfBlob,
+      techserveEmails: ismInfo.data.destinationEmails.techserve || ''
     };
   } catch (e) {
     Logger.log('Error in apiPhase3_RouteApprovedRequest: ' + e.toString());
