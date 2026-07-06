@@ -1442,6 +1442,11 @@ function submitDCS(payload, sessionId = '') {
       // Only AGENCY requires the agency detail fields; OJT needs just the endorsement letter.
       const involvementType = String(ad.type || 'AGENCY').toUpperCase();
 
+      // OJT requires External access (defense-in-depth; the form also forces this).
+      if (involvementType === 'OJT' && String(form.access || '').trim() !== 'External') {
+        return { success: false, error: 'OJT requests require External access type.' };
+      }
+
       if (involvementType !== 'OJT') {
         // Validate required agency fields
         if (!ad.agencyName || String(ad.agencyName).trim() === '') {
@@ -1449,6 +1454,10 @@ function submitDCS(payload, sessionId = '') {
         }
         if (!ad.agencyPersonnel || String(ad.agencyPersonnel).trim() === '') {
           return { success: false, error: 'Agency Personnel is required.' };
+        }
+        // Network Drive is required for agency requests (server-side parity with the form).
+        if (!ad.networkDrive || String(ad.networkDrive).trim() === '') {
+          return { success: false, error: 'Network Drive to Access is required for agency requests.' };
         }
         // Replacement requests must identify the person being replaced (for DCOPS).
         if (String(ad.agencyRequestType || '') === 'Replacement') {

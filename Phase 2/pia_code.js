@@ -5197,7 +5197,7 @@ function notifyApplicant(sessionId, status, options) {
   } else if (status === 'progressing_ism') {
     statusMessage = `<div style="background: #e3f2fd; color: #1e88e5; border: 1px solid rgba(30,136,229,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application has been approved by an ISM member and is now <strong>PROGRESSING</strong> to the next ISM member.</div></div>`;
   } else if (status === 'approved_ism_final' || status === 'approved_divhead_final') {
-    statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your Privacy Impact Assessment application has been <strong>FULLY APPROVED</strong> by all required parties.</div></div>`;
+    statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your Privacy Impact Assessment has been <strong>FULLY APPROVED</strong> by all required parties and is now being processed by the implementation team.</div></div>`;
   } else if (status === 'routed_implementation') {
     statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application has been <strong>COMPLETED</strong> and is now waiting for implementation (routed to DCOPS / TechServe).</div></div>`;
   } else if (status === 'returned') {
@@ -5241,14 +5241,23 @@ function notifyApplicant(sessionId, status, options) {
     }
   }
 
-  // Item 2: on full approval, add a "being processed / follow up with TechServe" note in the same
-  // email that carries the attached certificate.
-  let followUpMessage = '';
+  // Item 2: on full approval — a "certificate attached" note up top, and a clean TechServe
+  // contact list (Name / email per line) placed AFTER the Review Status.
+  let certNote = '';
+  let techserveBlock = '';
   if (status === 'approved_ism_final' || status === 'approved_divhead_final') {
-    const tsEmails = opts.techserveEmails ? String(opts.techserveEmails).trim() : '';
-    const certLine = opts.certBlob ? ' Your Certificate of Approval is attached to this email.' : '';
-    const tsLine = tsEmails ? ` For any follow-up on the implementation, please contact TechServe at <strong>${escapeHtml(tsEmails)}</strong>.` : '';
-    followUpMessage = `<div style="background:#eef4fb;color:#1a3a5c;border:1px solid rgba(42,82,133,0.15);padding:12px;border-radius:6px;margin-bottom:16px;font-size:13px;">Your access request is now being <strong>processed</strong> by the implementation team.${certLine}${tsLine}</div>`;
+    if (opts.certBlob) {
+      certNote = `<p style="margin:0 0 16px;font-size:13px;color:#1a3a5c;">Your <strong>Certificate of Approval</strong> is attached to this email for your reference.</p>`;
+    }
+    const tsList = Array.isArray(opts.techserveEmails) ? opts.techserveEmails : [];
+    if (tsList.length) {
+      const tsRows = tsList.map(function(t) {
+        const nm = (t && t.name) ? escapeHtml(String(t.name)) : '';
+        const em = (t && t.email) ? escapeHtml(String(t.email)) : '';
+        return `<div style="margin-top:8px;">${nm ? `<div style="font-weight:600;color:#1a3a5c;font-size:13px;">${nm}</div>` : ''}<div style="font-size:13px;color:#2a5285;">${em}</div></div>`;
+      }).join('');
+      techserveBlock = `<div style="background:#eef4fb;border:1px solid rgba(42,82,133,0.15);border-radius:8px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:#1a3a5c;"><div style="font-weight:600;">For follow-up, please contact the TechServe team:</div>${tsRows}</div>`;
+    }
   }
 
   const htmlBody = buildPiaEmailHtml_({
@@ -5256,11 +5265,12 @@ function notifyApplicant(sessionId, status, options) {
     contentHtml: `
       <p style="margin:0 0 14px;font-size:14px;">Hello${applicantName ? ', ' + escapeHtml(applicantName) + '!' : ','}</p>
       ${statusMessage}
-      ${followUpMessage}
+      ${certNote}
       <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
         <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>
         ${decisionsHTML}
       </div>
+      ${techserveBlock}
       <div><a href="${actionUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">${buttonText}</a></div>`
   });
 
@@ -6876,16 +6886,18 @@ function apiPhase3_GetInfoSecMembers() {
       if (isActive && rawRole.toLowerCase() === 'dcops') {
         dcopsEmail = email || '';
       } else if (isActive && rawRole.toLowerCase() === 'techserve' && email) {
-        allTechserveEmails.push(email);
+        // Carry the member NAME with the email so the cert/email can show "Name / email" per line.
+        const tsEntry = { name: String(data[i][INFOSEC_CONFIG_COLS.MEMBER_NAME - 1] || '').trim(), email: email };
+        allTechserveEmails.push(tsEntry);
         const siteRaw = data[i][INFOSEC_CONFIG_COLS.SITE - 1];
         const siteKey = siteRaw ? String(siteRaw).trim().toUpperCase() : '';
         if (siteKey) {
           if (!techserveBySite[siteKey]) techserveBySite[siteKey] = [];
-          techserveBySite[siteKey].push(email);
+          techserveBySite[siteKey].push(tsEntry);
         } else {
-          techserveFallback.push(email);
+          techserveFallback.push(tsEntry);
         }
-        if (!techserveEmail) techserveEmail = email; // keep a flat value for backward-compatibility
+        if (!techserveEmail) techserveEmail = email; // flat value stays a string for backward-compat
       }
     }
 
@@ -7539,7 +7551,12 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
     // Resolve the site-specific TechServe email(s) for this request (Batch 3). Always computed so the
     // applicant/cert "contact TechServe" message shows the right site's team even for DCOPS-only routing.
     const siteTechserve = resolveTechserveForSite_(ismInfo.data.destinationEmails, dcsData.locations);
-    const techserveForMessage = siteTechserve.join(', ');
+    // Name / email list (one per line) for the certificate footer + applicant email.
+    const techserveListHtml = siteTechserve.map(function(t) {
+      const nm = (t && t.name) ? escapeHtml(String(t.name)) : '';
+      const em = (t && t.email) ? escapeHtml(String(t.email)) : '';
+      return '<div style="margin-top:4px;">' + (nm ? '<span style="color:#1a3a5c;font-weight:600;">' + nm + '</span><br>' : '') + '<span style="color:#6b7280;">' + em + '</span></div>';
+    }).join('');
 
     const destinationEmails = [];
     if (normalizedDest === 'DCOPS' || normalizedDest === 'BOTH') {
@@ -7547,7 +7564,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
     }
     if (normalizedDest === 'TECHSERVE' || normalizedDest === 'BOTH') {
       if (siteTechserve.length) {
-        siteTechserve.forEach(function(e) { destinationEmails.push(e); });
+        siteTechserve.forEach(function(t) { destinationEmails.push(t.email); });
       } else {
         // L2: this site has no TechServe configured — route to DCOPS instead of every team's inbox.
         Logger.log('WARN: No TechServe email for site "' + dcsData.locations + '" on ' + sessionId + '; routing to DCOPS instead.');
@@ -7864,7 +7881,8 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
             <p style="margin: 0; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Implementation Routing</p>
             <p style="margin: 5px 0 0 0; font-size: 15px; font-weight: 600; color: #1a3a5c;">Routed to: ${escapeHtml(routedLabel)}</p>
             <p style="margin: 5px 0 0 0; font-size: 13px; color: #9ca3af;">Received at: ${escapeHtml(nowStr)}</p>
-            <p style="margin: 14px 0 0 0; font-size: 13px; color: #1a3a5c;">This request is <strong>fully approved</strong> and is now being processed by the implementation team.${techserveForMessage ? ` For follow-ups, please contact TechServe at <strong>${escapeHtml(techserveForMessage)}</strong>.` : ''}</p>
+            <p style="margin: 14px 0 0 0; font-size: 13px; color: #1a3a5c;">This request is <strong>fully approved</strong> and is now being processed by the implementation team.</p>
+            ${techserveListHtml ? `<div style="margin-top: 12px; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Follow up with TechServe</div><div style="font-size: 13px; margin-top: 4px;">${techserveListHtml}</div>` : ''}
           </div>
 
         </div>
@@ -7901,7 +7919,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
       message: `Request successfully routed to ${destination}`,
       sentTo: validEmails,
       pdfBlob: pdfBlob,
-      techserveEmails: techserveForMessage
+      techserveEmails: siteTechserve
     };
   } catch (e) {
     Logger.log('Error in apiPhase3_RouteApprovedRequest: ' + e.toString());

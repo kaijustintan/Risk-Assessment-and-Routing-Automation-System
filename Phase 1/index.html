@@ -2171,6 +2171,16 @@ function charLimit(max) {
   return `<span style="font-weight:400;color:var(--text3);font-size:10px;margin-left:6px;">≤${max}</span>`;
 }
 
+/*
+  Function Name: reqMark
+  LAYMAN: Renders the small red "*" that marks a field as required (same element used in PIA/Admin).
+  TECHNICAL: Returns an aria-hidden red asterisk span; the input keeps its own validation.
+  PARAMS: (none)  RETURNS: HTML string.
+*/
+function reqMark() {
+  return '<span aria-hidden="true" style="color:var(--danger-text)" title="Required">*</span>';
+}
+
 // --- Sanitization -----------------------------------
 /*
   Function Name: sanitizeText
@@ -3996,7 +4006,11 @@ function resumeDraft(sid) {
 function deleteDraftAndRefresh(sid) {
   showCustomConfirm('Are you sure you want to delete this draft?', () => {
     if (typeof google !== 'undefined') {
-      google.script.run.withSuccessHandler(() => proceedToForm()).apiDeleteDraft(sid);
+      showLoading('Disregarding draft…');
+      google.script.run
+        .withSuccessHandler(() => { hideLoading(); proceedToForm(); })
+        .withFailureHandler((err) => { hideLoading(); showCustomAlert('Could not disregard the draft: ' + ((err && err.message) ? err.message : err), 'danger'); })
+        .apiDeleteDraft(sid);
     }
   }, 'warn');
 }
@@ -4329,7 +4343,7 @@ function renderForm() {
     <div class="card">
       <div class="card-title">Profile & Access</div>
       <div class="field">
-        <label for="dcs-name">Full name ${infoTip('Your complete legal name as registered in the company directory.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
+        <label for="dcs-name">Full name ${reqMark()}${infoTip('Your complete legal name as registered in the company directory.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
         <div class="input-wrapper">
           <input id="dcs-name" class="${getFlagClass('dcs-name')}" value="${s.name}" placeholder="Juan Dela Cruz" autocomplete="name" maxlength="${CONFIG.MAX_NAME_LENGTH}" oninput="this.value=validatePersonName(this.value); state.dcs.name=sanitizeText(this.value,CONFIG.MAX_NAME_LENGTH); triggerAutoSave();">
           ${getFlagIconHtml('dcs-name')}
@@ -4337,7 +4351,7 @@ function renderForm() {
       </div>
       <div class="field-row">
         <div class="field">
-          <label for="dcs-location-select">Office Location / Site ${infoTip('Select your primary office location.')}</label>
+          <label for="dcs-location-select">Office Location / Site ${reqMark()}${infoTip('Select your primary office location.')}</label>
           <div class="input-wrapper">
             <div class="select-wrap">
               <select id="dcs-location-select" class="${getFlagClass('dcs-location-select')}">
@@ -4354,7 +4368,7 @@ function renderForm() {
           </div>
         </div>
         <div class="field">
-          <label for="dcs-dept">Department ${infoTip('Your department or business unit e.g. IT, HR, Finance.')}${charLimit(25)}</label>
+          <label for="dcs-dept">Department ${reqMark()}${infoTip('Your department or business unit e.g. IT, HR, Finance.')}${charLimit(25)}</label>
           <div class="input-wrapper">
             <input id="dcs-dept" class="${getFlagClass('dcs-dept')}" value="${s.dept}" placeholder="e.g. IT Department" maxlength="25" oninput="this.value=validatePersonName(this.value); state.dcs.dept=sanitizeText(this.value,25); triggerAutoSave();">
             ${getFlagIconHtml('dcs-dept')}
@@ -4363,7 +4377,7 @@ function renderForm() {
       </div>
       <div class="field-row">
         <div class="field">
-          <label for="dcs-access">Access Type ${infoTip('External: for third-party access. Internal: for employees within the organization.')}</label>
+          <label for="dcs-access">Access Type ${reqMark()}${infoTip('External: for third-party access. Internal: for employees within the organization.')}</label>
           <div class="input-wrapper">
             <div class="select-wrap">
               <select id="dcs-access" class="${getFlagClass('dcs-access')}">
@@ -4379,7 +4393,7 @@ function renderForm() {
           </div>
         </div>
         <div class="field">
-          <label for="dcs-ihelp">iHelp Reference ${infoTip('Your iHelp ticket number (numbers only). Required.')}${charLimit(10)}</label>
+          <label for="dcs-ihelp">iHelp Reference ${reqMark()}${infoTip('Your iHelp ticket number (numbers only).')}${charLimit(10)}</label>
           <div class="input-wrapper">
             <input id="dcs-ihelp" class="${getFlagClass('dcs-ihelp')}" value="${s.ihelp}" placeholder="Ticket number" inputmode="numeric" pattern="[0-9]*" oninput="this.value = this.value.replace(/[^0-9]/g, '');" maxlength="10">
             ${getFlagIconHtml('dcs-ihelp')}
@@ -4398,11 +4412,12 @@ function renderForm() {
             <svg class="select-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
           </div>
         </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px;">OJT automatically requires External access.</div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">Accountable Person/Entities ${infoTip('Add up to 5 individuals or entities who will be accountable for the data access and collection activities.')}</div>
+      <div class="card-title">Accountable Person/Entities ${reqMark()}${infoTip('Add up to 5 individuals or entities who will be accountable for the data access and collection activities.')}</div>
       ${getContainerFlagHtml('dcs-accountable')}
       <div id="accountable-container" style="margin-bottom: 12px;"></div>
       <button id="add-accountable-btn" class="btn btn-sm" type="button" onclick="addAccountableRow()">
@@ -4417,7 +4432,7 @@ function renderForm() {
 
       <div class="approver-section">
         <div class="approver-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-          Immediate Head ${infoTip('Your direct supervisor or manager who oversees your day-to-day work and will provide the first level of approval.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</div>
+          Immediate Head ${reqMark()}${infoTip('Your direct supervisor or manager who oversees your day-to-day work and will provide the first level of approval.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</div>
         <div class="field-row">
           <div class="field"><div class="input-wrapper"><input id="dcs-imm-head-name" class="${getFlagClass('dcs-imm-head-name')}" value="${s.immHeadName}" placeholder="Name" aria-label="Immediate Head Name" maxlength="${CONFIG.MAX_NAME_LENGTH}" oninput="this.value=validatePersonName(this.value); state.dcs.immHeadName=sanitizeText(this.value,CONFIG.MAX_NAME_LENGTH); triggerAutoSave();">${getFlagIconHtml('dcs-imm-head-name')}</div></div>
           <div class="field"><div class="input-wrapper"><input id="dcs-imm-head-email" class="${getFlagClass('dcs-imm-head-email')}" type="email" value="${s.immHeadEmail}" placeholder="email@company.com" aria-label="Immediate Head Email" maxlength="${CONFIG.MAX_EMAIL_LENGTH}">${getFlagIconHtml('dcs-imm-head-email')}</div></div>
@@ -4425,7 +4440,7 @@ function renderForm() {
       </div>
       <div class="approver-section">
         <div class="approver-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-          Department Head ${infoTip('The head of your department who oversees departmental resources and will provide the second level of approval.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</div>
+          Department Head ${reqMark()}${infoTip('The head of your department who oversees departmental resources and will provide the second level of approval.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</div>
         <div class="field-row">
           <div class="field"><div class="input-wrapper"><input id="dcs-dept-head-name" class="${getFlagClass('dcs-dept-head-name')}" value="${s.deptHeadName}" placeholder="Name" aria-label="Department Head Name" maxlength="${CONFIG.MAX_NAME_LENGTH}" oninput="this.value=validatePersonName(this.value); state.dcs.deptHeadName=sanitizeText(this.value,CONFIG.MAX_NAME_LENGTH); triggerAutoSave();">${getFlagIconHtml('dcs-dept-head-name')}</div></div>
           <div class="field"><div class="input-wrapper"><input id="dcs-dept-head-email" class="${getFlagClass('dcs-dept-head-email')}" type="email" value="${s.deptHeadEmail}" placeholder="email@company.com" aria-label="Department Head Email" maxlength="${CONFIG.MAX_EMAIL_LENGTH}">${getFlagIconHtml('dcs-dept-head-email')}</div></div>
@@ -4647,14 +4662,28 @@ function renderForm() {
     clears all agency fields), updates the next-button label, refreshes the upload label, and persists.
   */
   function applyInvolvement(val) {
+    const wasCU = state.dcs.isAgency || state.dcs.isOJT;
     state.dcs.isAgency = (val === 'agency');
     state.dcs.isOJT = (val === 'ojt');
+    const nowCU = state.dcs.isAgency || state.dcs.isOJT;
     if (val !== 'agency') {
       // OJT keeps the endorsement letter; None clears everything. Agency detail fields are dropped.
       const keepEndo = (val === 'ojt' && state.dcs.agency) ? (state.dcs.agency.endorsementLetter || '') : '';
       state.dcs.agency = { agencyRequestType: '', replacementFullName: '', replacementEmail: '', agencyName: '', agencyPersonnel: '', contractStartDate: '', endorsementLetter: keepEndo, networkDrive: '', immHeadRecoveryEmail: '', immHeadRecoveryNumber: '' };
     }
+    // OJT requires External access \u2014 force + lock the Access Type; re-enable it otherwise.
+    const accessEl = document.getElementById('dcs-access');
+    const dsaWrap = document.getElementById('dsa-wrapper');
+    if (val === 'ojt') {
+      state.dcs.access = 'External';
+      if (accessEl) { accessEl.value = 'External'; accessEl.disabled = true; }
+      if (dsaWrap) dsaWrap.style.display = 'block';
+    } else if (accessEl) {
+      accessEl.disabled = false;
+    }
     if (nextBtn) nextBtn.textContent = (val === 'agency') ? 'Agency Details \u2192' : 'Review Summary \u2192';
+    // The required main document changed category (CU <-> NDA/DPA) \u2014 clear any stale upload.
+    if (wasCU !== nowCU) clearUpload('dcs-main', 'main-upload-success', 'nda');
     updateMainUploadLabel();
     persistState();
   }
@@ -4715,13 +4744,28 @@ function renderForm() {
   const dsaWrapper = document.getElementById('dsa-wrapper');
   if (accessSel && dsaWrapper) {
     accessSel.addEventListener('change', function() {
-      dsaWrapper.style.display = this.value === 'External' ? 'block' : 'none';
+      const isExternal = this.value === 'External';
+      dsaWrapper.style.display = isExternal ? 'block' : 'none';
+      // DSA is External-only — drop it when switching to Internal.
+      if (!isExternal) clearUpload('dcs-dsa', 'dsa-success', 'dsa');
+      // For standard requests the main doc flips DPA <-> NDA on access change — clear the stale file.
+      const involve = document.getElementById('dcs-involvement')?.value || '';
+      if (involve !== 'agency' && involve !== 'ojt') clearUpload('dcs-main', 'main-upload-success', 'nda');
       updateMainUploadLabel();
     });
   }
 
   // Ensure correct initial state for label + endorsement wrapper after DOM is built
   updateMainUploadLabel();
+
+  // Enforce OJT → External lock on initial render too (e.g. a restored OJT draft).
+  if (state.dcs.isOJT) {
+    const acc0 = document.getElementById('dcs-access');
+    if (acc0) { acc0.value = 'External'; acc0.disabled = true; }
+    const dsa0 = document.getElementById('dsa-wrapper');
+    if (dsa0) dsa0.style.display = 'block';
+    state.dcs.access = 'External';
+  }
 
   // Restore previously uploaded file reference if coming back from summary
   if (state._savedFiles) {
@@ -4785,6 +4829,25 @@ function handleFileChange(input, successId) {
   } else {
     successEl.classList.add('hidden');
   }
+}
+
+/*
+  Function Name: clearUpload
+  LAYMAN: Clears a file picker + its "✓ selected" line when the required document changes
+          (e.g. Internal→External, or standard→agency), so no stale file lingers.
+  TECHNICAL: Resets the input value, hides the success element, and drops the saved File
+             reference so it isn't re-applied on the next render.
+  PARAMS:
+  - inputId — the <input type=file> id.  - successId — its success element id.
+  - savedKey — key in state._savedFiles to drop (e.g. 'nda','dsa').
+  RETURNS: Nothing.
+*/
+function clearUpload(inputId, successId, savedKey) {
+  const inp = document.getElementById(inputId);
+  if (inp) inp.value = '';
+  const succ = document.getElementById(successId);
+  if (succ) succ.classList.add('hidden');
+  if (savedKey && state._savedFiles) delete state._savedFiles[savedKey];
 }
 
 /*
@@ -5110,6 +5173,11 @@ function validateAgencyForm() {
       return false;
     }
   }
+  // Network Drive is required for agency requests (defines what the agency will access).
+  if (!ag.networkDrive || ag.networkDrive.trim() === '') {
+    showCustomAlert('Network Drive to Access is required for agency requests.', 'danger');
+    return false;
+  }
   // Reject whitespace-only in agency text fields
   const agencyTextFields = ['agencyName', 'agencyPersonnel', 'networkDrive'];
   for (const key of agencyTextFields) {
@@ -5265,7 +5333,7 @@ function renderAgency() {
     <div class="card">
       <div class="card-title">Agency Details</div>
       <div class="field">
-        <label for="dcs-agency-request-type">Agency Request Type ${infoTip('New: a brand-new agency engagement (no extra info needed). Replacement: this person replaces someone whose access must be removed — provide the replaced person details for DCOPS.')}</label>
+        <label for="dcs-agency-request-type">Agency Request Type ${reqMark()}${infoTip('New: a brand-new agency engagement (no extra info needed). Replacement: this person replaces someone whose access must be removed — provide the replaced person details for DCOPS.')}</label>
         <div class="input-wrapper">
           <div class="select-wrap">
             <select id="dcs-agency-request-type" class="${getFlagClass('dcs-agency-request-type')}" onchange="onAgencyRequestTypeChange(this.value)">
@@ -5280,14 +5348,14 @@ function renderAgency() {
       </div>
       <div class="field-row ${ag.agencyRequestType==='Replacement' ? '' : 'hidden'}" id="replacement-fields-wrapper">
         <div class="field">
-          <label for="dcs-agency-replacement-name">Replaced Person Full Name ${infoTip('Full name of the person being replaced — DCOPS uses this to identify the account to retire.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
+          <label for="dcs-agency-replacement-name">Replaced Person Full Name ${reqMark()}${infoTip('Full name of the person being replaced — DCOPS uses this to identify the account to retire.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
           <div class="input-wrapper">
             <input id="dcs-agency-replacement-name" class="${getFlagClass('dcs-agency-replacement-name')}" value="${s.replacementFullName || ''}" placeholder="Full Name" maxlength="${CONFIG.MAX_NAME_LENGTH}" oninput="this.value=validatePersonName(this.value); state.dcs.agency.replacementFullName=sanitizeText(this.value,CONFIG.MAX_NAME_LENGTH); triggerAutoSave();">
             ${getFlagIconHtml('dcs-agency-replacement-name')}
           </div>
         </div>
         <div class="field">
-          <label for="dcs-agency-replacement-email">Replaced Person Email ${infoTip('Email of the person being replaced — DCOPS uses this to identify the account to retire.')}${charLimit(CONFIG.MAX_EMAIL_LENGTH)}</label>
+          <label for="dcs-agency-replacement-email">Replaced Person Email ${reqMark()}${infoTip('Email of the person being replaced — DCOPS uses this to identify the account to retire.')}${charLimit(CONFIG.MAX_EMAIL_LENGTH)}</label>
           <div class="input-wrapper">
             <input id="dcs-agency-replacement-email" class="${getFlagClass('dcs-agency-replacement-email')}" type="email" value="${s.replacementEmail || ''}" placeholder="email@company.com" maxlength="${CONFIG.MAX_EMAIL_LENGTH}" oninput="state.dcs.agency.replacementEmail=sanitizeText(this.value,CONFIG.MAX_EMAIL_LENGTH); triggerAutoSave();">
             ${getFlagIconHtml('dcs-agency-replacement-email')}
@@ -5296,14 +5364,14 @@ function renderAgency() {
       </div>
       <div class="field-row">
         <div class="field">
-          <label for="dcs-agency-name">Agency Name ${infoTip('The registered legal name of the external agency or organization requesting access.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
+          <label for="dcs-agency-name">Agency Name ${reqMark()}${infoTip('The registered legal name of the external agency or organization requesting access.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
           <div class="input-wrapper">
             <input id="dcs-agency-name" class="${getFlagClass('dcs-agency-name')}" value="${s.agencyName || ''}" placeholder="e.g. AgencyCorp Ltd." maxlength="${CONFIG.MAX_NAME_LENGTH}" oninput="this.value=validatePersonName(this.value); state.dcs.agency.agencyName=sanitizeText(this.value,CONFIG.MAX_NAME_LENGTH); triggerAutoSave();">
             ${getFlagIconHtml('dcs-agency-name')}
           </div>
         </div>
         <div class="field">
-          <label for="dcs-agency-personnel">Agency Personnel ${infoTip('Full name of the primary contact person from the agency.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
+          <label for="dcs-agency-personnel">Agency Personnel ${reqMark()}${infoTip('Full name of the primary contact person from the agency.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
           <div class="input-wrapper">
             <input id="dcs-agency-personnel" class="${getFlagClass('dcs-agency-personnel')}" value="${s.agencyPersonnel || ''}" placeholder="Full Name" maxlength="${CONFIG.MAX_NAME_LENGTH}" oninput="this.value=validatePersonName(this.value); state.dcs.agency.agencyPersonnel=sanitizeText(this.value,CONFIG.MAX_NAME_LENGTH); triggerAutoSave();">
             ${getFlagIconHtml('dcs-agency-personnel')}
@@ -5322,7 +5390,7 @@ function renderAgency() {
     <div class="card">
       <div class="card-title">Access & Recovery</div>
       <div class="field">
-        <label for="dcs-agency-network-drive">Network Drive to Access ${infoTip('The network path or drive letter that the agency personnel needs access to e.g. \\\\server\\share\\folder')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
+        <label for="dcs-agency-network-drive">Network Drive to Access ${reqMark()}${infoTip('The network path or drive letter that the agency personnel needs access to e.g. \\\\server\\share\\folder')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
         <div class="input-wrapper">
           <input id="dcs-agency-network-drive" class="${getFlagClass('dcs-agency-network-drive')}" value="${s.networkDrive || ''}" placeholder="e.g. \\\\server\\share\\folder" maxlength="${CONFIG.MAX_NAME_LENGTH}">
           ${getFlagIconHtml('dcs-agency-network-drive')}
