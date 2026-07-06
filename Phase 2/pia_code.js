@@ -5267,10 +5267,22 @@ function notifyApplicant(sessionId, status, options) {
   // Final-approval emails carry the Certificate of Approval PDF, which the async queue can't hold —
   // send those synchronously with the attachment; every other status stays on the reliable queue.
   if (opts.certBlob) {
-    sendEmailWithRetry(appData.applicantEmail, subject, "Please view this email in an HTML-compatible client.", {
-      htmlBody: htmlBody,
-      attachments: [opts.certBlob]
-    });
+    var certSend;
+    try {
+      certSend = sendEmailWithRetry(appData.applicantEmail, subject, "Please view this email in an HTML-compatible client.", {
+        htmlBody: htmlBody,
+        attachments: [opts.certBlob]
+      });
+    } catch (sendErr) {
+      certSend = { success: false, error: String(sendErr) };
+    }
+    // L1: if the synchronous send (with attachment) ultimately fails, fall back to the reliable queue
+    // (without the attachment) so the applicant is still notified of full approval. The certificate
+    // itself already went to DCOPS/TechServe.
+    if (!certSend || !certSend.success) {
+      Logger.log('Final-approval email with cert failed for ' + sessionId + '; queueing fallback. ' + (certSend && certSend.error ? certSend.error : ''));
+      queueEmail(sessionId, appData.applicantEmail, subject, "Please view this email in an HTML-compatible client.", 'applicant', htmlBody);
+    }
   } else {
     queueEmail(sessionId, appData.applicantEmail, subject, "Please view this email in an HTML-compatible client.", 'applicant', htmlBody);
   }
@@ -6928,10 +6940,10 @@ function apiPhase3_GetInfoSecMembers() {
   Function: resolveTechserveForSite_
   LAYMAN (Tropang Ex): Kinukuha nito kung saang TechServe email(s) dapat mapunta ang request base sa
   Office/Site nito (hal. AGT → AGT TechServe, pwedeng higit sa isa). Kapag walang naka-set para sa site
-  na 'yun, babagsak ito sa fallback (blangkong-Site na TechServe rows), o kung wala rin, sa LAHAT ng
-  TechServe email — para walang request na 'di maabot ninuman.
+  na 'yun, babagsak ito sa fallback (blangkong-Site na TechServe rows); kung wala rin, mapupunta na
+  lang sa DCOPS (hindi sa lahat ng team) para 'di ma-leak ang PII sa maling site.
   TECHNICAL: Normalizes the request site (trim+uppercase) and looks it up in destEmails.techserveBySite.
-  Falls back to techserveFallback (blank-Site rows), then allTechserve. Returns an array of emails.
+  Falls back to techserveFallback (blank-Site rows); if none, returns [] so routing sends to DCOPS.
   PARAMS:
   - destEmails — the destinationEmails object from apiPhase3_GetInfoSecMembers.
   - siteRaw — the request's Office/Site value (dcsData.locations).
@@ -6943,13 +6955,15 @@ function resolveTechserveForSite_(destEmails, siteRaw) {
   if (siteKey && bySite[siteKey] && bySite[siteKey].length) {
     return bySite[siteKey].slice();
   }
-  const fallback = (destEmails && destEmails.techserveFallback && destEmails.techserveFallback.length)
-    ? destEmails.techserveFallback
-    : ((destEmails && destEmails.allTechserve) || []);
-  if (siteKey) {
-    Logger.log('WARN: No site-specific TechServe email for site "' + siteRaw + '"; using fallback: ' + fallback.join(','));
+  // Optional blank-Site rows act as an explicit catch-all default, if configured.
+  const fallback = (destEmails && destEmails.techserveFallback) || [];
+  if (fallback.length) {
+    if (siteKey) Logger.log('WARN: No site-specific TechServe for "' + siteRaw + '"; using blank-Site fallback rows.');
+    return fallback.slice();
   }
-  return fallback.slice();
+  // No site match and no fallback row -> return empty so routing sends to DCOPS instead of blasting
+  // every site's TechServe team with PII (L2).
+  return [];
 }
 
 /*
@@ -7532,7 +7546,16 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
       destinationEmails.push(ismInfo.data.destinationEmails.dcops);
     }
     if (normalizedDest === 'TECHSERVE' || normalizedDest === 'BOTH') {
-      siteTechserve.forEach(function(e) { destinationEmails.push(e); });
+      if (siteTechserve.length) {
+        siteTechserve.forEach(function(e) { destinationEmails.push(e); });
+      } else {
+        // L2: this site has no TechServe configured — route to DCOPS instead of every team's inbox.
+        Logger.log('WARN: No TechServe email for site "' + dcsData.locations + '" on ' + sessionId + '; routing to DCOPS instead.');
+        const dcopsEmail = ismInfo.data.destinationEmails.dcops;
+        if (dcopsEmail && destinationEmails.indexOf(dcopsEmail) === -1) {
+          destinationEmails.push(dcopsEmail);
+        }
+      }
     }
 
     const validEmails = destinationEmails.filter(e => e).join(',');
@@ -7747,7 +7770,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
           ${supportingDocsListHtml}
 
           <!-- Agency Information -->
-          ${dcsData.metadataAgency && typeof dcsData.metadataAgency === 'object' && Object.keys(dcsData.metadataAgency).length > 0 ? `
+          ${dcsData.metadataAgency && typeof dcsData.metadataAgency === 'object' && (dcsData.metadataAgency.agencyName || dcsData.metadataAgency.agencyRequestType) ? `
           <div style="margin-bottom: 30px;">
             <h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Agency Information</h2>
             <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
@@ -7771,25 +7794,30 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
                 <td style="padding: 6px 0; font-weight: 600; width: 30%; color: #6b7280;">Agency Name</td>
                 <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.agencyName)}</td>
               </tr>` : ''}
-              ${dcsData.metadataAgency.agencyHead ? `
+              ${dcsData.metadataAgency.agencyPersonnel ? `
               <tr>
-                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Agency Head</td>
-                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.agencyHead)}</td>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Agency Personnel</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.agencyPersonnel)}</td>
               </tr>` : ''}
-              ${dcsData.metadataAgency.agencyEmail ? `
+              ${dcsData.metadataAgency.contractStartDate ? `
               <tr>
-                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Agency Email</td>
-                <td style="padding: 6px 0; color: #1a3a5c;"><a href="mailto:${escapeHtml(dcsData.metadataAgency.agencyEmail)}" style="color: #185FA5; text-decoration: none;">${escapeHtml(dcsData.metadataAgency.agencyEmail)}</a></td>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Contract Start Date</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.contractStartDate)}</td>
               </tr>` : ''}
-              ${dcsData.metadataAgency.agencyPhone ? `
+              ${dcsData.metadataAgency.networkDrive ? `
               <tr>
-                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Agency Phone</td>
-                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.agencyPhone)}</td>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Network Drive</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.networkDrive)}</td>
               </tr>` : ''}
-              ${dcsData.metadataAgency.division ? `
+              ${dcsData.metadataAgency.immHeadRecoveryEmail ? `
               <tr>
-                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Division / Office</td>
-                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.division)}</td>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Immediate Head Recovery Email</td>
+                <td style="padding: 6px 0; color: #1a3a5c;"><a href="mailto:${escapeHtml(dcsData.metadataAgency.immHeadRecoveryEmail)}" style="color: #185FA5; text-decoration: none;">${escapeHtml(dcsData.metadataAgency.immHeadRecoveryEmail)}</a></td>
+              </tr>` : ''}
+              ${dcsData.metadataAgency.immHeadRecoveryNumber ? `
+              <tr>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Immediate Head Recovery No.</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.metadataAgency.immHeadRecoveryNumber)}</td>
               </tr>` : ''}
             </table>
           </div>

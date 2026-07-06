@@ -91,8 +91,6 @@
     - exportSelected()           export selected rows to a Google Sheet
 
   CATEGORY: CLOSE TICKET (DELETE)
-    - getRowByLogId / setupDeleteModal / showDeleteConfirm
-    - confirmDelete() / deleteSelected() / batchConfirmDelete()
 
   CATEGORY: EMAIL ROUTING — CERTIFICATE REROUTE
     - resetRoutingPage / clearRoutingForm
@@ -1502,9 +1500,6 @@
           <button class="btn btn-outline btn-sm" onclick="exportSelected()">
             <svg><use href="#ic-export"/></svg> Export Selected
           </button>
-          <button class="btn btn-danger btn-sm" onclick="deleteSelected()">
-            <svg><use href="#ic-trash"/></svg> Close Ticket
-          </button>
         </div>
       </div>
 
@@ -2204,48 +2199,6 @@
   </div>
 </div>
 
-<!-- Delete Confirm Modal -->
-<div class="modal-overlay" id="deleteModal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
-  <div class="modal modal-sm">
-    <div class="modal-header">
-      <h2 id="deleteModalTitle">
-        <div class="modal-title-icon red" aria-hidden="true"><svg><use href="#ic-trash"/></svg></div>
-        Close Ticket
-      </h2>
-      <button class="modal-close" onclick="closeModal('deleteModal')" aria-label="Close dialog">
-        <svg><use href="#ic-x"/></svg>
-      </button>
-    </div>
-    <div class="modal-body">
-      <p id="deleteMessage">Are you sure you want to close this ticket? This will permanently remove all related records.</p>
-      <div class="note-box warning" style="margin-top:12px;">
-        <svg><use href="#ic-alert"/></svg>
-        <span>This action cannot be undone. The ticket and all related records will be permanently removed.</span>
-      </div>
-
-      <!-- Email notification opt-in -->
-      <label id="deleteEmailSection" style="display:flex;align-items:flex-start;gap:10px;margin-top:14px;padding:12px 14px;background:var(--slate-50);border:1px solid var(--color-border);border-radius:var(--radius-sm);cursor:pointer;">
-        <input type="checkbox" id="deleteSendEmail" checked style="accent-color:var(--color-primary);margin-top:2px;">
-        <div style="flex:1;">
-          <div style="font-weight:600;font-size:13px;color:var(--color-text);">Notify requestor via email</div>
-          <div id="deleteEmailRecipient" style="font-size:12px;color:var(--color-text-2);margin-top:2px;">Email will be sent to the requestor</div>
-        </div>
-      </label>
-
-      <!-- ISM Comment -->
-      <div style="margin-top:10px;">
-        <label for="deleteIsmComment" style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--color-text-2);margin-bottom:4px;">ISM Comment (optional)</label>
-        <textarea id="deleteIsmComment" rows="2" placeholder="Add a note about why this ticket is being closed…" style="width:100%;padding:8px 12px;border:1.5px solid var(--color-border);border-radius:var(--radius-sm);font-size:13px;font-family:var(--font);background:var(--slate-50);color:var(--color-text);outline:none;resize:vertical;transition:border-color .18s;" onfocus="this.style.borderColor='var(--color-primary)'" onblur="this.style.borderColor=''"></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline btn-sm" onclick="closeModal('deleteModal')">Cancel</button>
-      <button class="btn btn-danger btn-sm" id="confirmDeleteBtn" onclick="confirmDelete()">
-        <svg><use href="#ic-trash"/></svg> Close Ticket
-      </button>
-    </div>
-  </div>
-</div>
 
 <!-- Settings Edit Modal -->
 <div class="modal-overlay" id="settingsEditModal" role="dialog" aria-modal="true" aria-labelledby="settingsEditModalTitle">
@@ -2582,7 +2535,6 @@ var filteredRows = [];
 var selectedIds = {};
 var sortKey = null;
 var sortAsc = true;
-var pendingDelete = null;
 var currentPage  = 1;
 var pageSize     = 10; // 5, 10, or 25
 // ════════════════════════════
@@ -3214,11 +3166,11 @@ function statCard(value, label, cls, icon) {
   LAYMAN: Draws the current page of dashboard rows — each row shows the requestor,
     control numbers (DCS ReqID + PIA SessionID), location/dept/access, three
     clickable status badges (open DCS / PIA modals), the date, and per-row actions
-    (audit trail, close ticket). Also syncs the select-all checkbox.
+    (audit trail). Also syncs the select-all checkbox.
   TECHNICAL: Slices filteredRows by currentPage/pageSize, builds each <tr> with
     escaped values, selection + flagged classes, badge classes from the get*Badge
     helpers, and inline onclick handlers (toggleRow, viewDcsDetail, viewPiaDetail,
-    viewAudit, showDeleteConfirm). Writes to #tableBody and recomputes #selectAll.
+    viewAudit). Writes to #tableBody and recomputes #selectAll.
   PARAMS: (none — reads filteredRows / selectedIds / pagination state)
   RETURNS: undefined.
 */
@@ -3267,7 +3219,6 @@ function renderTable() {
           '<button class="btn-icon" title="View Audit Trail" onclick="viewAudit(\'' + escAttr(row.reqId) + '\',\'' + escAttr(row.sessionId) + '\',\'' + escAttr(row.name) + '\')" aria-label="View audit trail for ' + escAttr(row.name) + '">' +
             '<svg><use href="#ic-clipboard"/></svg>' +
           '</button>' +
-          '<button class="btn-icon danger" title="Close Ticket" onclick="showDeleteConfirm(\'' + escAttr(row.reqId) + '\',\'' + escAttr(row.logId) + '\',\'' + escAttr(row.sessionId) + '\',\'' + escAttr(row.name) + '\')" aria-label="Close ticket for ' + escAttr(row.name) + '"><svg><use href="#ic-trash"/></svg></button>' +
         '</div>' +
       '</td>' +
     '</tr>';
@@ -4400,24 +4351,17 @@ function openModal(id) {
   document.getElementById(id).classList.add('active');
   document.body.style.overflow = 'hidden';
 }
-var _batchDeleteInProgress = false;
 
 /*
   Function: closeModal
-  LAYMAN: Closes a modal and restores page scroll once no modals remain open. Also
-    resets the delete modal's confirm handler if a batch flow was abandoned.
+  LAYMAN: Closes a modal and restores page scroll once no modals remain open.
   TECHNICAL: Removes 'active' from #id; restores body overflow when no .modal-overlay
-    is active. Special-cases the deleteModal: if a 'batch' delete was pending but not
-    in progress, clears pendingDelete and restores #confirmDeleteBtn.onclick.
+    is active.
   PARAMS: - id — modal element id.  RETURNS: undefined.
 */
 function closeModal(id) {
   document.getElementById(id).classList.remove('active');
   if (!document.querySelector('.modal-overlay.active')) document.body.style.overflow = '';
-  if (id === 'deleteModal' && !_batchDeleteInProgress && pendingDelete === 'batch') {
-    pendingDelete = null;
-    document.getElementById('confirmDeleteBtn').onclick = confirmDelete;
-  }
 }
 document.querySelectorAll('.modal-overlay').forEach(function(el) {
   el.addEventListener('click', function(e) {
@@ -4628,177 +4572,6 @@ function exportSelected() {
     .exportToSheet(selected);
 }
 
-// ════════════════════════════
-// DELETE
-// ════════════════════════════
-/*
-  Function: getRowByLogId
-  LAYMAN: Finds a loaded row by its LogID.
-  TECHNICAL: allRows.find on r.logId.
-  PARAMS: - logId — LogID.  RETURNS: the row object | undefined.
-*/
-function getRowByLogId(logId) {
-  return allRows.find(function(r){ return r.logId === logId; });
-}
-/*
-  Function: setupDeleteModal
-  LAYMAN: Prepares the "Close Ticket" confirmation modal — resets the notify-email
-    toggle + ISM comment, shows/hides the recipient line, and (for batch) sets the
-    multi-ticket message. Then opens the modal.
-  TECHNICAL: Resets #deleteSendEmail/#deleteIsmComment; toggles #deleteEmailSection
-    based on email; for isBatch writes a count message into #deleteMessage; opens
-    'deleteModal'. (Single-ticket message is set by the caller.)
-  PARAMS:
-    - email — recipient to notify ('' to hide the email section).
-    - reqId — DCS ReqID (unused here; kept for call-site symmetry).
-    - logId — LogID (unused here).
-    - isBatch — true for multi-ticket close.
-    - batchCount — number of tickets when batch.
-  RETURNS: undefined.
-*/
-function setupDeleteModal(email, reqId, logId, isBatch, batchCount) {
-  // Reset modal fields
-  document.getElementById('deleteSendEmail').checked = true;
-  document.getElementById('deleteIsmComment').value = '';
-  // Show/hide email section based on whether we have a valid email
-  var emailSection = document.getElementById('deleteEmailSection');
-  var emailRecipient = document.getElementById('deleteEmailRecipient');
-  if (email) {
-    emailSection.style.display = 'flex';
-    emailRecipient.innerHTML = 'Email will be sent to <strong>' + esc(email) + '</strong>';
-  } else {
-    emailSection.style.display = 'none';
-  }
-  if (isBatch) {
-    document.getElementById('deleteMessage').innerHTML =
-      'Close <strong>' + batchCount + '</strong> selected tickets?<br><br>' +
-      '<span style="font-size:12px;color:var(--color-text-2);">This will permanently close all selected records and remove their related data.</span>';
-  }
-  openModal('deleteModal');
-}
-/*
-  Function: showDeleteConfirm
-  LAYMAN: Opens the single-ticket close confirmation for a specific entry, recording
-    what to close and showing the requestor's email.
-  TECHNICAL: Looks up the row's applicantEmail, stores pendingDelete = {reqId, logId,
-    sessionId, email}, writes the confirm message, and calls setupDeleteModal(single).
-  PARAMS:
-    - reqId — DCS ReqID.   - logId — LogID.
-    - sessionId — PIA SessionID.   - name — display name.
-  RETURNS: undefined.
-*/
-function showDeleteConfirm(reqId, logId, sessionId, name) {
-  var row = getRowByLogId(logId);
-  var email = (row && row.applicantEmail) || '';
-  pendingDelete = {reqId:reqId, logId:logId, sessionId:sessionId, email:email};
-  document.getElementById('deleteMessage').innerHTML =
-    'Are you sure you want to close the ticket for <strong>' + esc(name) + '</strong>?<br><br>' +
-    '<span style="font-size:12px;color:var(--color-text-2);">ReqID: ' + esc(reqId) + '  •  LogID: ' + esc(logId) + '</span>';
-  setupDeleteModal(email, reqId, logId, false, 1);
-}
-/*
-  Function: confirmDelete
-  LAYMAN: Actually closes a single ticket after confirmation — optionally emailing
-    the requestor with an ISM comment — then refreshes the dashboard.
-  TECHNICAL: Delegates to batchConfirmDelete when pendingDelete === 'batch'. Else
-    reads the notify toggle + comment and calls deleteEntry(reqId, logId, sessionId,
-    sendEmail, comment); on success clears the selection and refreshData().
-  PARAMS: (none — reads pendingDelete)  RETURNS: undefined (async).
-*/
-function confirmDelete() {
-  if (!pendingDelete) return;
-  if (pendingDelete === 'batch') { batchConfirmDelete(); return; }
-  closeModal('deleteModal');
-  var sendEmail = document.getElementById('deleteSendEmail').checked;
-  var comment   = document.getElementById('deleteIsmComment').value.trim();
-  showToast('Closing ticket…', 'info');
-  google.script.run
-    .withSuccessHandler(function(result) {
-      if (result.success) {
-        var msg = 'Entry deleted.';
-        if (result.emailSent) msg += ' Requestor notified.';
-        showToast(msg, 'success');
-        delete selectedIds[pendingDelete.logId];
-      } else {
-        showToast('Delete failed: ' + result.error, 'error');
-      }
-      pendingDelete = null;
-      refreshData();
-    })
-    .withFailureHandler(function(err){ showToast('Delete error: ' + String(err), 'error'); pendingDelete = null; })
-    .deleteEntry(pendingDelete.reqId, pendingDelete.logId, pendingDelete.sessionId, sendEmail, comment);
-}
-/*
-  Function: deleteSelected
-  LAYMAN: Starts a batch close for all checked tickets — opens the confirmation with
-    a count and rewires the confirm button to the batch handler.
-  TECHNICAL: Guards empty selection; sets pendingDelete='batch', writes the count
-    message, calls setupDeleteModal(batch), and sets #confirmDeleteBtn.onclick to
-    batchConfirmDelete.
-  PARAMS: (none — reads selection)  RETURNS: undefined.
-*/
-function deleteSelected() {
-  var selected = getSelectedRows();
-  if (selected.length === 0) { showToast('Select rows to close first.', 'info'); return; }
-  pendingDelete = 'batch';
-  _batchDeleteInProgress = false;
-  document.getElementById('deleteMessage').innerHTML =
-    'Close <strong>' + selected.length + '</strong> selected tickets?<br><br>' +
-    '<span style="font-size:12px;color:var(--color-text-2);">This will permanently close all selected records and remove their related data.</span>';
-  // Show first requestor email as representative
-  var firstEmail = selected[0] && selected[0].applicantEmail ? selected[0].applicantEmail : '';
-  setupDeleteModal(firstEmail, '', '', true, selected.length);
-  document.getElementById('confirmDeleteBtn').onclick = batchConfirmDelete;
-}
-/*
-  Function: batchConfirmDelete
-  LAYMAN: Closes all selected tickets in one server call, optionally emailing each
-    requestor, reports how many succeeded/failed, and refreshes.
-  TECHNICAL: Builds an items[] payload (reqId/logId/sessionId/sendEmail/ismComment)
-    from getSelectedRows() and calls batchDeleteEntries(items). Manages the
-    _batchDeleteInProgress flag and restores #confirmDeleteBtn.onclick afterward;
-    clears succeeded items from selectedIds; refreshData() at the end.
-  PARAMS: (none — reads selection + delete-modal controls)  RETURNS: undefined (async).
-*/
-function batchConfirmDelete() {
-  closeModal('deleteModal');
-  _batchDeleteInProgress = true;
-  var sendEmail = document.getElementById('deleteSendEmail').checked;
-  var comment   = document.getElementById('deleteIsmComment').value.trim();
-  var selected = getSelectedRows();
-  if (selected.length === 0) { showToast('No rows selected.', 'info'); _batchDeleteInProgress = false; pendingDelete = null; document.getElementById('confirmDeleteBtn').onclick = confirmDelete; return; }
-  showToast('Closing ' + selected.length + ' tickets' + (sendEmail ? ' (with email notifications)' : '') + '…', 'info');
-  // Build the payload for server-side batch processing
-  var items = selected.map(function(r) {
-    return { reqId: r.reqId, logId: r.logId, sessionId: r.sessionId, sendEmail: sendEmail, ismComment: comment };
-  });
-  google.script.run
-    .withSuccessHandler(function(result) {
-      _batchDeleteInProgress = false;
-      pendingDelete = null;
-      document.getElementById('confirmDeleteBtn').onclick = confirmDelete;
-      if (result && result.success) {
-        var msg = 'Deleted ' + result.deleted + '/' + result.total + ' entries.';
-        if (result.emailsSent > 0) msg += ' Emails sent to ' + result.emailsSent + ' requestors.';
-        if (result.failed > 0) msg += ' ' + result.failed + ' failed.';
-        showToast(msg, result.failed > 0 ? 'warning' : 'success');
-        // Clear deleted items from selection
-        result.results.forEach(function(r) {
-          if (r.success) delete selectedIds[r.logId];
-        });
-      } else {
-        showToast('Batch delete failed: ' + (result ? result.error : 'Unknown error'), 'error');
-      }
-      refreshData();
-    })
-    .withFailureHandler(function(err) {
-      _batchDeleteInProgress = false;
-      pendingDelete = null;
-      document.getElementById('confirmDeleteBtn').onclick = confirmDelete;
-      showToast('Batch delete error: ' + String(err), 'error');
-    })
-    .batchDeleteEntries(items);
-}
 
 // ════════════════════════════
 // EMAIL ROUTING
