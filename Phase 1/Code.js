@@ -1319,7 +1319,7 @@ function submitDCS(payload, sessionId = '') {
   const form = payload.formData;
 
   // CRITICAL: Validate required fields on backend
-  const requiredFields = ['name', 'dept', 'access', 'immHeadEmail', 'immHeadName', 'deptHeadName', 'deptHeadEmail'];
+  const requiredFields = ['name', 'location', 'dept', 'access', 'ihelp', 'immHeadEmail', 'immHeadName', 'deptHeadName', 'deptHeadEmail'];
   for (const field of requiredFields) {
     if (!form[field] || String(form[field]).trim() === '') {
       return { success: false, error: `Missing required field: ${field}` };
@@ -1450,6 +1450,15 @@ function submitDCS(payload, sessionId = '') {
         if (!ad.agencyPersonnel || String(ad.agencyPersonnel).trim() === '') {
           return { success: false, error: 'Agency Personnel is required.' };
         }
+        // Replacement requests must identify the person being replaced (for DCOPS).
+        if (String(ad.agencyRequestType || '') === 'Replacement') {
+          if (!ad.replacementFullName || String(ad.replacementFullName).trim() === '') {
+            return { success: false, error: 'Full name of the person being replaced is required.' };
+          }
+          if (!ad.replacementEmail || String(ad.replacementEmail).trim() === '' || !isValidEmail(ad.replacementEmail)) {
+            return { success: false, error: 'A valid email of the person being replaced is required.' };
+          }
+        }
         if (ad.immHeadRecoveryEmail && !isValidEmail(ad.immHeadRecoveryEmail)) {
           return { success: false, error: 'Invalid Immediate Head Recovery Email.' };
         }
@@ -1474,6 +1483,9 @@ function submitDCS(payload, sessionId = '') {
       } else {
         // AGENCY: full detail record (unchanged shape, kept backward-compatible).
         agencyJson = JSON.stringify({
+          agencyRequestType: String(ad.agencyRequestType || '').trim(),
+          replacementFullName: String(ad.replacementFullName || '').trim(),
+          replacementEmail: String(ad.replacementEmail || '').trim(),
           agencyName: String(ad.agencyName || '').trim(),
           agencyPersonnel: String(ad.agencyPersonnel || '').trim(),
           contractStartDate: ad.contractStartDate || '',
