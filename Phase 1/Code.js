@@ -1510,6 +1510,12 @@ function submitDCS(payload, sessionId = '') {
   }
   const finalCombinedFileId = (payload.agencyData && uploadedIds.length > 0) ? JSON.stringify(uploadedIds) : combinedFileId;
 
+  // Defense-in-depth: a submission must carry at least one supporting document (newly uploaded or
+  // retained from a prior revision). The frontend enforces this; this is the server-side backstop.
+  if (!uploadedIds || uploadedIds.length === 0) {
+    return { success: false, error: 'At least one supporting document is required.' };
+  }
+
   // --- STEP 3: NOW ACQUIRE LOCK (only for critical DB write section) ---
   const lock = LockService.getScriptLock();
   lock.waitLock(LOCK_TIMEOUTS.SUBMISSION);

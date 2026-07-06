@@ -3498,7 +3498,7 @@ function renderSummary() {
           <div class="card-title">Application reference</div>
           <div class="summary-row"><div class="summary-label">Application ID</div><div class="summary-value" style="font-family:var(--font-mono);color:var(--navy-text)">${escapeHtmlMemo(state.sessionId || 'N/A')}</div></div>
           <div class="summary-row"><div class="summary-label">Application Status</div><div class="summary-value"><span class="status-badge ${getStatusBadgeClass(state.status)}">${escapeHtmlMemo(state.status)}</span></div></div>
-          <div class="summary-row"><div class="summary-label">Date Drafted</div><div class="summary-value">${new Date().toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'})}</div></div>
+          <div class="summary-row"><div class="summary-label">Date reviewed</div><div class="summary-value">${new Date().toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'})}</div></div>
         </div>
         ${dcsCardHtml}
         <div class="card">
@@ -3539,10 +3539,8 @@ function renderSummary() {
         </div>
         <div class="card">
           <div class="card-title">PIA 2 — PII collected</div>
-          <div class="summary-row">
-            <div class="summary-label">Collected Fields</div>
-            <div class="summary-value" style="text-align: right;">${piiYes}</div>
-          </div>
+          <div style="font-size: 11.5px; font-weight: 600; color: var(--navy); text-transform: uppercase; margin-bottom: 10px;">Collected Fields</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">${piiYes}</div>
         </div>
         <div class="card">
           <div class="card-title">PIA 3 — Stakeholders</div>

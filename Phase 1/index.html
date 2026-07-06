@@ -2538,7 +2538,7 @@ function getCombinedStatusBadge(dcsStatus, piaStatus) {
   HTML string for the collapsible summary card.
 */
 // Helper function for the detailed DCS Submission Summary card
-function getDetailedDcsSummaryCardHtml(s, reqId, ndaFile, dsaFile, remarks) {
+function getDetailedDcsSummaryCardHtml(s, reqId, ndaFile, dsaFile, endorsementFile, remarks) {
   return `
     <details open class="card" style="padding: 0; border: none; background: transparent;">
       <summary style="font-weight: 600; color: var(--text); cursor: pointer; padding: 1rem 1.25rem; border: 1px solid var(--border); border-radius: var(--radius-lg); list-style: none; display: flex; justify-content: space-between; align-items: center; background: var(--bg);">
@@ -2574,13 +2574,14 @@ function getDetailedDcsSummaryCardHtml(s, reqId, ndaFile, dsaFile, remarks) {
           ${summaryRow('Immediate Head Email', s.immHeadEmail)}
           ${summaryRow('Department Head Name', s.deptHeadName)}
           ${summaryRow('Department Head Email', s.deptHeadEmail)}
-          ${summaryRow('Division Head Name', s.divHeadName)}
-          ${summaryRow('Division Head Email', s.divHeadEmail)}
+          ${s.divHeadName ? summaryRow('Division Head Name', s.divHeadName) : ''}
+          ${s.divHeadEmail ? summaryRow('Division Head Email', s.divHeadEmail) : ''}
         </div>
         <div class="summary-section">
           <h3>Documents</h3>
-          ${summaryRowRaw('NDA/DPA File', ndaFile)}
+          ${summaryRowRaw('NDA/DPA/CU File', ndaFile)}
           ${summaryRowRaw('DSA File', dsaFile)}
+          ${endorsementFile ? summaryRowRaw('Endorsement Letter', endorsementFile) : ''}
         </div>
         <div class="summary-section">
           <h3>Remarks</h3>
@@ -3586,14 +3587,14 @@ function renderSidebarTracker(activeStep) {
   ];
 
   /*
-    Helper: hasUnfilledOptionalFields — true if any optional field (location, ihelp, div head
-    name/email, nda, dsa) is still blank, used to downgrade a "completed" Details step to pending.
+    Helper: hasUnfilledOptionalFields — true if an optional field (Division Head name/email) is still
+    blank, used to downgrade a "completed" Details step to pending. Files are NOT checked here (they're
+    validated at submit, and DSA is External-only — checking them here falsely flagged Internal requests).
   */
   // Check if optional fields are unfilled — if so, completed steps should show pending
   function hasUnfilledOptionalFields() {
     const d = state.dcs || {};
-    // Optional fields: divHeadName, divHeadEmail, nda, dsa (location + iHelp are now required)
-    return !d.divHeadName || !d.divHeadEmail || !d.nda || !d.dsa;
+    return !d.divHeadName || !d.divHeadEmail;
   }
 
   let desktopHtml = `<aside class="form-sidebar desktop-tracker"><div class="form-sidebar-title">Application Progress</div><div class="sidebar-steps">`;
@@ -5523,7 +5524,6 @@ function renderSummary() {
         ${summaryRow('Agency Personnel', ag.agencyPersonnel)}
         ${getContainerFlagHtml('dcs-agency-contract-start')}
         ${summaryRow('Contract Start Date', ag.contractStartDate)}
-        ${summaryRow('Agency Endorsement Letter', ag.endorsementLetter || 'Not attached')}
         ${getContainerFlagHtml('dcs-agency-network-drive')}
         ${summaryRow('Network Drive', ag.networkDrive)}
         ${getContainerFlagHtml('dcs-agency-recovery-email')}
@@ -5563,8 +5563,8 @@ function renderSummary() {
         ${summaryRow('Immediate Head Email', s.immHeadEmail)}
         ${summaryRow('Department Head Name', s.deptHeadName)}
         ${summaryRow('Department Head Email', s.deptHeadEmail)}
-        ${summaryRow('Division Head Name', s.divHeadName)}
-        ${summaryRow('Division Head Email', s.divHeadEmail)}
+        ${s.divHeadName ? summaryRow('Division Head Name', s.divHeadName) : ''}
+        ${s.divHeadEmail ? summaryRow('Division Head Email', s.divHeadEmail) : ''}
       </div>
 
       <div class="summary-section">
@@ -5597,7 +5597,16 @@ function renderSummary() {
           }
           return summaryRow('DSA', dsaName || 'Not attached');
         })()}
-        ${state.dcs.isOJT ? summaryRow('School Endorsement Letter', (state.dcs.agency && state.dcs.agency.endorsementLetter) || 'Not attached') : ''}
+        ${(state.dcs.isAgency || state.dcs.isOJT) ? (() => {
+          const endLabel = state.dcs.isOJT ? 'School Endorsement Letter' : 'Agency Endorsement Letter';
+          const endName = (state.dcs.agency && state.dcs.agency.endorsementLetter) || '';
+          if (state.isEditing && endName && !isFileFlaggedForRevision('dcs-agency-endorsement')) {
+            return summaryRow(endLabel, endName + ' (retained)');
+          } else if (state.isEditing && isFileFlaggedForRevision('dcs-agency-endorsement')) {
+            return summaryRow(endLabel, (endName || 'Not attached') + ' — ⚠ RE-UPLOAD REQUIRED');
+          }
+          return summaryRow(endLabel, endName || 'Not attached');
+        })() : ''}
       </div>
     </div>
 
@@ -5666,6 +5675,13 @@ async function submitRequest() {
     return;
   }
 
+  // Validate required files BEFORE the loading overlay so a validation failure doesn't flash a frozen UI.
+  if (!validateFileUploads()) {
+    state.isSubmitting = false;
+    if (btn) { btn.textContent = originalText; btn.disabled = false; }
+    return;
+  }
+
   try {
     showLoading('Uploading files and submitting request...');
 
@@ -5681,13 +5697,6 @@ async function submitRequest() {
       agencyData: null
     };
 
-    // Validate if all *currently required* files are selected
-    if (!validateFileUploads()) {
-      state.isSubmitting = false;
-      hideLoading();
-      if (btn) { btn.textContent = originalText; btn.disabled = false; }
-      return;
-    }
 
     // Read files and map them to the correct payload properties
     if (ndaInput?.files?.length) {
@@ -6170,6 +6179,8 @@ function renderRequestDetails(data) {
   };
   const ndaFile = fileLinkHtml(files.find(f => f.type === 'NDA' || f.type === 'CU' || f.type === 'DPA'));
   const dsaFile = fileLinkHtml(files.find(f => f.type === 'DSA'));
+  const endorsementObj = files.find(f => f.type === 'ENDORSEMENT');
+  const endorsementFile = endorsementObj ? fileLinkHtml(endorsementObj) : '';
 
   let actionButtonHtml = '';
   const hasPhase2Url = data.phase2Url && data.phase2Url.trim() !== '';
@@ -6257,7 +6268,6 @@ function renderRequestDetails(data) {
         ${summaryRow('Agency Personnel', ag.agencyPersonnel)}
         ${getContainerFlagHtml('dcs-agency-contract-start')}
         ${summaryRow('Contract Start Date', ag.contractStartDate)}
-        ${summaryRow('Agency Endorsement Letter', (ag.endorsementLetter && ag.endorsementLetter.name) ? ag.endorsementLetter.name : 'Not attached')}
         ${getContainerFlagHtml('dcs-agency-network-drive')}
         ${summaryRow('Network Drive', ag.networkDrive)}
         ${getContainerFlagHtml('dcs-agency-recovery-email')}
@@ -6269,7 +6279,7 @@ function renderRequestDetails(data) {
       `;
     })()}
 
-    ${getDetailedDcsSummaryCardHtml(s, data.reqId, ndaFile, dsaFile, data.remarks)}
+    ${getDetailedDcsSummaryCardHtml(s, data.reqId, ndaFile, dsaFile, endorsementFile, data.remarks)}
 
     ${renderApprovalTracker(data)}
 

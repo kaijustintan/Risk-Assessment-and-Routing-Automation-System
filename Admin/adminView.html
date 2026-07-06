@@ -792,7 +792,8 @@
     tbody tr { transition: background .12s ease; }
     tbody tr:nth-child(even) { background: var(--navy-tint); }
     tbody tr:hover { background: var(--indigo-50); }
-    tbody tr.selected { background: var(--navy-tint); }
+    tbody tr.selected { background: rgba(59,118,196,0.12) !important; }
+    tbody tr.selected td:first-child { border-left: 3px solid var(--color-primary); }
     tbody tr.flagged-row td:first-child { border-left: 3px solid var(--color-danger); }
     tbody tr:last-child td { border-bottom: none; }
 

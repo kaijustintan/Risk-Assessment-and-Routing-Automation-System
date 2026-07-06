@@ -4968,6 +4968,10 @@ function buildReminderEmail(sessionId, approverEmail, approverName, stepInfo) {
         '<strong>App ID:</strong> ' + escapeHtml(sessionId) + '<br>' +
         '<strong>Program:</strong> ' + escapeHtml(appData.pia1?.program || '—') + '<br>' +
         '<strong>Submitted by:</strong> ' + escapeHtml(appData.applicantEmail || '—') + '</div>' +
+        '<div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">' +
+        '<div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>' +
+        generateEmailDecisionsHTML(sessionId) +
+        '</div>' +
         '<div><a href="' + reviewUrl + '" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>' +
         '<p style="font-size:12px;color:#9ca3af;margin-top:16px;">You will receive a reminder daily until you take action on this application.</p>'
     });
@@ -5106,6 +5110,10 @@ function notifyApprover(sessionId, approverIndex) {
           <strong>App ID:</strong> ${escapeHtml(sessionId)}<br>
           <strong>Program:</strong> ${escapeHtml(appData.pia1?.program || '—')}<br>
           <strong>Submitted by:</strong> ${escapeHtml(appData.applicantEmail || '—')}
+        </div>
+        <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>
+          ${generateEmailDecisionsHTML(sessionId)}
         </div>
         <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
     });
@@ -7392,6 +7400,10 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
                 <strong>Division Head:</strong> ${escapeHtml(divHeadName)}<br>
                 <strong>Submitted by:</strong> ${escapeHtml(applicantEmail)}
               </div>
+              <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
+                <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>
+                ${generateEmailDecisionsHTML(sessionId)}
+              </div>
               <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
           });
           queueEmail(sessionId, divHeadEmail, subject, "Please view this email in an HTML-compatible client.", 'divhead', htmlBody);
@@ -7488,6 +7500,10 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
           <strong>Program:</strong> ${appData?.pia1?.program || '—'}<br>
           <strong>Department:</strong> ${appData?.pia1?.dept || '—'}<br>
           <strong>Submitted by:</strong> ${appData?.applicantEmail || '—'}
+        </div>
+        <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>
+          ${generateEmailDecisionsHTML(sessionId)}
         </div>
         <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
     });
