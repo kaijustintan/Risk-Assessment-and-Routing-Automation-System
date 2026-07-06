@@ -100,10 +100,13 @@ The approval **reminder engine is in PIA, not Admin.** `sendDailyReminders()` /
 > [§3.1](part-3-admin.md#31--end-user-guide-) / [Part 0 §0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls).
 
 ### InfoSec / routing config
-The two ISM reviewers and the DCOPS/TechServe routing emails come from the
-`InfoSec_Email_Config` sheet (rows with `IsActive = YES`). The ISM workflow requires **exactly
-2 active InfoSec members.** `PRIVACY_OFFICER_EMAIL` is the head fallback when a PIA1 head email
-is invalid.
+The two ISM reviewers and the DCOPS/TechServe routing emails come from the `InfoSec_Email_Config`
+sheet (rows with `IsActive = YES`). The ISM workflow requires **exactly 2 active InfoSec members.**
+**TechServe is per Office/Site:** one row per (site, email) tagged with the `Site` column
+(AGT/GDP/EGP/TWS) — a site may have several recipients; `resolveTechserveForSite_` matches the
+request's site and falls back to **DCOPS-only** (with a logged warning) if a site has no TechServe
+row, so a request is never blasted to the wrong team. **DCOPS stays a single address.**
+`PRIVACY_OFFICER_EMAIL` is the head fallback when a PIA1 head email is invalid.
 
 ### Recovery / utility functions (run from the GAS editor)
 - `apiPhase3_RetryISMWorkflow(sessionId)` — for an app stuck in "Approved (ISM Pending)".
@@ -151,8 +154,12 @@ Drafts via debounced `apiSaveDraft()`. The DCS-link screen (`renderDCSCheck`) ca
 `initializeApprovalWorkflow` → `notifyApprover` (HMAC link) →
 `processApprovalDecision` (next approver or done) → ISM init + `apiPhase3_NotifyISMember` →
 `apiPhase3_ProcessISMDecision` (Approve/Return/Deny/Escalate) → on full approval,
-`apiPhase3_RouteApprovedRequest` generates the Certificate PDF and emails the destination
-team; `notifyApplicant` updates the applicant throughout.
+`apiPhase3_RouteApprovedRequest` generates the Certificate PDF (now including each approver's
+**comments**) and emails the site's TechServe / DCOPS team; `notifyApplicant` updates the applicant
+throughout and, on the **FULLY APPROVED** email, **attaches the certificate** plus a "being
+processed — contact TechServe" block (named per-site contacts). **All four approver notification
+emails now carry a "Review Status" block** (`generateEmailDecisionsHTML`) so the current approver
+sees who decided before them.
 
 ### Key design notes
 Single `Code.gs` file (GAS has no ES modules); serialized JSON columns for PIA data (flexible

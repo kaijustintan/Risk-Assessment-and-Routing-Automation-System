@@ -2,8 +2,8 @@
 
 > The ISM dashboard — oversight, analytics, certificate routing, email failover, settings.
 > Shared concepts live in **[Part 0 — Common Reference](part-0-common.md)**; this file covers
-> only Admin specifics. **Access is restricted to INFOSEC-001 / INFOSEC-002**
-> ([§0.6](part-0-common.md#06--security-model)).
+> only Admin specifics. **Access = active ISM (InfoSec-role) personnel + accounts in
+> `Admin_Notification_Config`** ([§0.6](part-0-common.md#06--security-model)).
 >
 > Source files: `Admin/adminView.html` (frontend), `Admin/admin_code.js` (backend),
 > `Admin/*_appsscript.json` (manifest).
@@ -14,11 +14,11 @@
 
 ### Accessing the system
 Open the Admin web-app URL signed in with an authorized account. Two-step gate:
-**Layer 1** = corporate domain check; **Layer 2** = `checkAccess_` allows **only**
-`INFOSEC-001`/`INFOSEC-002` (matched against `InfoSec_Email_Config`). Anyone else sees
-"Access Denied." *(The old manual's "INFOSEC member **or** domain match" fallback was removed
-during this session's hardening — it is now a strict INFOSEC allowlist;
-[§0.6](part-0-common.md#06--security-model).)*
+**Layer 1** = corporate domain check; **Layer 2** = `checkAccess_` allows accounts that are either
+an **active InfoSec-role** member in `InfoSec_Email_Config` (matched by **Role**, not Member_ID) or
+listed by email in the **`Admin_Notification_Config`** tab. Anyone else sees "Access Denied."
+*(Earlier this was a hardcoded `INFOSEC-001/002` allowlist, which silently locked everyone out when
+those IDs were renamed to `INFOSEC-ALL-1/2` — see [§0.6](part-0-common.md#06--security-model).)*
 
 ### The interface
 - **Sidebar:** Dashboard · Analytics · Certificate Routing · Email Failover · Settings (with a
@@ -139,13 +139,15 @@ link under **Settings → System Links**, edit `Admin/adminView.html`:
   `doPost()` (`action=submitDCS` — currently a domain-validating **stub**, not the real DCS
   submission, which lives in Phase 1).
 - **Authorization:** `isAuthorizedDomain()` (Layer 1 domain suffix, fail-secure),
-  `checkAccess_()` (Layer 2 — **strict INFOSEC-001/002 allowlist**). 17 `checkAccess_` guards
-  were added across API entry points this session ([§0.6](part-0-common.md#06--security-model)).
+  `checkAccess_()` (Layer 2 — **active InfoSec-role members + `Admin_Notification_Config` entries**,
+  matched by Role/email, not hardcoded IDs). ~17 `checkAccess_` guards protect the API entry points
+  ([§0.6](part-0-common.md#06--security-model)).
 - **Data fetching:** `getAdminData()` reads 5 sheets, builds lookup maps (by ReqID and
   SessionID), joins rows, serializes all values to strings (avoids V8 serialization crashes),
   capped at `MAX_ROWS = 500`.
 - **Audit:** `getAuditLogs(reqId, sessionId)`.
-- **Delete:** `deleteEntry(reqId, logId, sessionId)` — cascading delete + `Risk_Audit` log.
+- **Delete:** *removed.* The ticket delete/close feature (hard cascading delete across 6 sheets +
+  audit purge) was pulled — records are now immutable from the Admin app.
 - **Export:** `exportToSheet(rows)` — new Sheet in the source folder.
 - **Config:** `getConfigData()` / `saveConfigData()`.
 - **Certificate routing:** `apiAdmin_*` functions (approved-app listing, cert HTML/PDF, email).
@@ -157,7 +159,7 @@ link under **Settings → System Links**, edit `Admin/adminView.html`:
 ### Frontend (`adminView.html`)
 Single HTML file (markup + CSS + inline SVG icons + JS), navy DM-Sans design system,
 responsive with sidebar collapse. Key fns: `loadData()`, `renderTable()`, `filterRows()`,
-`sortTable()`, `openDetailModal()`, `showAuditLogs()`, `deleteEntry()`, `deleteSelected()`,
+`sortTable()`, `openDetailModal()`, `showAuditLogs()`,
 `exportSelected()`, `showAnalytics()`, `loadApprovedApplications()`, `checkRoutingStatus()`,
 `loadConfigData()`, `saveConfigData()`.
 
@@ -181,11 +183,10 @@ limits; export placed in the source folder.
 ### For end users (ISM admins)
 | Problem | Solution |
 |---------|----------|
-| "Access Denied" | Must be `INFOSEC-001`/`INFOSEC-002` with a matching `Member_Email` in `InfoSec_Email_Config`. |
+| "Access Denied" | You must be an active `InfoSec`-role member in `InfoSec_Email_Config` **or** listed (by email) in `Admin_Notification_Config`. |
 | Blank page / spinning loader | Refresh; if it persists the spreadsheet may be inaccessible — contact the admin. |
 | "No data available" | Spreadsheet may be empty or still loading; refresh. |
 | Search returns nothing | Broaden the term; clear active filters. |
-| Can't delete an entry (batch) | Batch delete only removes PIA-status "Complete" rows. |
 | "Export failed" | Could not create the new Sheet — check Drive permissions. |
 | Stale data after refresh | Hard refresh (Ctrl/Cmd+Shift+R) — cache may be stale. |
 | A downloadable won't open (DCS), or a Settings link field looks blank | The stored link value likely has a **leading/trailing space**. Open the Settings field (or the `System_Configuration` cell) and delete any whitespace around the URL, then Save. |
@@ -199,7 +200,8 @@ limits; export placed in the source folder.
 | "Sheet not found" | Run `debugSheets()`; fix `SHEET_NAMES` or `SHEET_PREFIX`. |
 | `SPREADSHEET_ID` not set | Set it in Script Properties. |
 | Domain blocks all users | Verify `DOMAIN`/`ALLOWED_DOMAIN`; `?setup=<domain>` reconfigures both. |
-| INFOSEC member still denied | Verify their email matches `Member_Email` and `Member_ID` is INFOSEC-001/002. |
+| ISM member still denied | Verify their `Member_Email` matches, `Role` is `InfoSec`, and `IsActive` isn't `NO`. For a non-ISM admin, add them (by email) to `Admin_Notification_Config`. |
+| App down for everyone (perm error) | The app was likely **deployed by a non-owner** — redeploy from the owner account (`ismaiapps`), [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls). |
 | Stats all zero | Run `getAdminDataDebug()` to verify each sheet is readable. |
 
 ---

@@ -25,10 +25,12 @@ see [§0.5](part-0-common.md#05--known-gotchas--debugging)):
    download any required templates from the **7 available forms** (see the list in
    [§1.2](#12--maintenance-)). Tick the agreement box and **Proceed to Form**. If you have
    saved drafts, you'll be prompted to resume or start fresh.
-2. **Step 2 — Details:** Full Name, Office Location, Department, **Access Type**
-   (Internal / External); optional iHelp Reference (numbers only); a **"This request involves
-   a(n)"** dropdown — **None / Agency / OJT**; add up to 5 **Accountable Persons**; enter
-   approver emails (Immediate Head, Department Head, optional Division Head).
+2. **Step 2 — Details:** Full Name, **Office/Site** (required — one of **AGT / GDP / EGP / TWS**),
+   Department, **Access Type** (Internal / External), **iHelp Reference** (required, numbers only);
+   a **"This request involves a(n)"** dropdown — **None / Agency / OJT**. Choosing **OJT**
+   auto-sets Access Type to **External** and locks it. Add up to 5 **Accountable Persons**; enter
+   approver emails (Immediate Head, Department Head, optional Division Head). *(Required fields are
+   marked with a red asterisk.)*
 3. **Upload documents** — the required upload changes with your selections:
    - **Internal** → Data Protection Agreement (DPA)
    - **External** → NDA + DSA
@@ -36,9 +38,10 @@ see [§0.5](part-0-common.md#05--known-gotchas--debugging)):
    - **OJT** → Confidentiality Undertaking + **School** Endorsement Letter
    - Accepted: PDF/DOC/DOCX, ≤10 MB each. *(The endorsement-letter label changes to "School"
      or "Agency" live, based on the dropdown.)*
-4. **Agency Details** (only when the dropdown = **Agency**): agency name, personnel, contract
-   start date, network-drive path, recovery contact. *(OJT skips this screen — straight to the
-   summary.)*
+4. **Agency Details** (only when the dropdown = **Agency**): **Request Type — New or Replacement**
+   (a *Replacement* also asks for the replaced person's full name + email, for DCOPS); agency name,
+   personnel, contract start date, **Network Drive to access (required)**, and optional recovery
+   contact. *(OJT skips this screen — straight to the summary.)*
 5. **Step 3 — Review:** check the summary cards; **Edit Details** to fix anything; **Submit
    Request**.
 6. **Success:** confirmation with your **Application ID** (e.g. `DCS-000042`) and, if

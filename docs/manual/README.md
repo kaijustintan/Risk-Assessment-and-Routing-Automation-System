@@ -3,7 +3,7 @@
 **System:** RARS (Risk Assessment & Routing System) — Megaworld
 **Architecture:** three independent Google Apps Script web apps (DCS · PIA · Admin) sharing
 one Google Spreadsheet
-**Last updated:** June 2026
+**Last updated:** July 2026
 
 ---
 

@@ -25,7 +25,7 @@ stored deployment URLs (see §0.4).
 |-------|-----|--------------|---------------|
 | **Phase 1** | **DCS** (Data Collection System) | The request form. Apply, attach NDA/DPA/DSA, track status. | `Phase 1/` |
 | **Phase 2** | **PIA** (Privacy Impact Assessment) | The privacy questionnaire after DCS clears; runs the whole approval ladder. | `Phase 2/` |
-| **Phase 3** | **Admin** | ISM control tower — dashboard, analytics, certificate routing, settings, email failover. Restricted to INFOSEC-001/002. | `Admin/` |
+| **Phase 3** | **Admin** | ISM control tower — dashboard, analytics, certificate routing, settings, email failover. Restricted to ISM personnel + accounts in `Admin_Notification_Config`. | `Admin/` |
 
 **The end-to-end flow (one product, three apps):**
 
@@ -83,7 +83,8 @@ URL.** A change in one app silently breaks another that reads the same sheet.
 | `ISM_Approval_Workflow` | PIA | Stage B InfoSec decisions | ISM_Approval_ID, SessionID, CurrentStep, ISM_Member_Name, ISM_Member_Email, Decision, Comments, DecisionDate, Status, Requires_DivHead, Routing_Destination |
 | `DivisionHead_Approval_Workflow` | PIA | Stage D escalation decisions | Escalation_ID, SessionID, DivHead_Email, Decision, Comments, DecisionDate, Status |
 | `Risk_Audit` | all | Audit trail / anomaly flags | LogID, SessionID, Action, UserEmail, Timestamp, (internal flags) |
-| `InfoSec_Email_Config` | Admin | ISM members + DCOPS/TechServe routing emails | Member_ID, Member_Name, Member_Email, Role, IsActive, JobPos |
+| `InfoSec_Email_Config` | Admin | ISM members + DCOPS/TechServe routing emails (TechServe is **per-site**) | Member_ID, Member_Name, Member_Email, Role, IsActive, JobPos, **Site** |
+| `Admin_Notification_Config` | Admin | Extra accounts granted Admin access, beyond ISM personnel | Config_ID + an email column (matched case-insensitively) |
 | `System_Configuration` | Admin/DCS | Key-value settings (template links, etc.) | Configuration_Key, Value, Description |
 | `Drafts` | DCS + PIA (shared) | Auto-saved form state, 7-day TTL | DraftID, UserEmail, SessionID, Type, StateJSON, SavedAt/SavedTimestamp, ExpiresAt |
 
@@ -120,10 +121,12 @@ Final: all ISM approve → 'Approved by ISM' → applicant notified, DCS marked 
 ```
 
 **Who fills each role (hybrid by design):** fixed org-wide roles (the two InfoSec reviewers,
-DCOPS/TechServe) are **admin-configured** in `InfoSec_Email_Config`; per-applicant roles
-(Immediate / Dept / Division Head) are **filled by the applicant in PIA1** because they are
-that person's own reporting line. Integrity is *mitigated* (not prevented) by risk flagging
-(e.g. drafter email == head email gets flagged).
+DCOPS/TechServe) are **admin-configured** in `InfoSec_Email_Config`. **TechServe is resolved per
+Office/Site** — one row per (site, email) via the `Site` column, so a site may have several
+recipients; the request's Office/Site (AGT/GDP/EGP/TWS) selects the row(s), while **DCOPS stays a
+single address**. Per-applicant roles (Immediate / Dept / Division Head) are **filled by the
+applicant in PIA1** because they are that person's own reporting line. Integrity is *mitigated*
+(not prevented) by risk flagging (e.g. drafter email == head email gets flagged).
 
 ### Escalation = "up to Division Head, then back down" (not skip-to-final)
 When an ISM member picks **EscalateToDivisionHead**: that ISM step pauses, the Division Head
@@ -187,6 +190,14 @@ number. Nothing auto-updates.
 
 Path: `Deploy → Manage deployments → ✏️ Edit the one deployment → Version → "New version" → Deploy`.
 
+- 🚩 **Always deploy as the owner account (`ismaiapps@megaworldcorp.com`).** The web apps run with
+  `executeAs = USER_DEPLOYING` (see §0.6), so the backend accesses the shared spreadsheet as
+  *whoever clicked Deploy*. If a **non-owner** deploys, the live app runs as that person — who
+  lacks access to the DB — and **every** `SpreadsheetApp.openById(DB_ID)` call throws *"You do not
+  have permission to access the requested document"* for other users (blank T&Cs, "error loading
+  requests", dead Proceed button). Fix: re-deploy from the owner account. *(This actually happened
+  once — a stray deploy from a non-owner account took the whole app down mid-day.)*
+
 ### The Script-Property URL map (set ONCE if you follow the golden rule)
 Each value = that app's live `/exec` URL. ⚠️ `DCS_WEB_APP_URL` exists in **both** DCS and PIA
 projects — the **PIA** copy is the one the email code reads.
@@ -248,11 +259,12 @@ calls). Backend → GAS editor **Executions** + `Logger.log` / Stackdriver. Audi
   `Code.js:268`, Admin `admin_code.js:145`) / `ENABLE_DOMAIN_CHECK = true` (PIA
   `pia_code.js:185`). *(The old PIA manual said this defaulted to `false` — that is no longer
   true.)*
-- **Admin is INFOSEC-only:** Admin's `checkAccess_` allows **only** accounts whose
-  `InfoSec_Email_Config` row has `Member_ID` = `INFOSEC-001` or `INFOSEC-002` **and** a
-  matching email. *(The old Admin manual described "Layer 2 = INFOSEC member **or** domain
-  match"; the domain-match fallback was removed during this session's hardening — it is now a
-  strict INFOSEC allowlist.)*
+- **Admin access (role-based + config sheet):** Admin's `checkAccess_` allows accounts that are
+  either (a) an **active InfoSec-role** member in `InfoSec_Email_Config` (matched by **Role**, not
+  a hardcoded `Member_ID`, so it survives ID renames) **or** (b) listed by email in the
+  **`Admin_Notification_Config`** tab. Fail-closed on any error. *(Earlier versions hardcoded
+  `INFOSEC-001`/`INFOSEC-002`; that silently locked everyone out when the IDs were renamed to
+  `INFOSEC-ALL-1/2`, and was replaced by this role-based + config-sheet model.)*
 - **Ownership:** only the owner of a PIA application can view/revise it; approvers can view
   only while reviewing.
 
@@ -299,8 +311,8 @@ calls). Backend → GAS editor **Executions** + `Logger.log` / Stackdriver. Audi
 | **Escalate** | ISM kicks the decision up to the Division Head, then comes back down. |
 | **Stored status** | One of `PENDING`, `READY_FOR_PIA`, `COMPLETE`, `REJECTED`, `RETURNED` (in `Data_Collection.Status`). |
 | **Computed badge** | The richer label shown in the UI, derived from the workflow sheets — not a stored value. |
-| **ISM / InfoSec** | The two-person information-security review team (`INFOSEC-001`, `INFOSEC-002`). |
-| **DCOPS / TechServe** | Implementation teams that receive the final certificate, per the routing decision. |
+| **ISM / InfoSec** | The two-person information-security review team (the active InfoSec-role rows in `InfoSec_Email_Config`; currently `INFOSEC-ALL-1` / `INFOSEC-ALL-2`). |
+| **DCOPS / TechServe** | Implementation teams that receive the final certificate. **DCOPS** is one address; **TechServe** is resolved **per Office/Site** (the request's site → that site's TechServe row(s)). |
 
 ### Status reference
 

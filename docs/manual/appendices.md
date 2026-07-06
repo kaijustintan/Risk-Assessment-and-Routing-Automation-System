@@ -30,6 +30,30 @@
 - **Bug fix:** blank DCS page from GAS template-literal serve corruption — fixed via string
   concatenation ([§0.5](part-0-common.md#05--known-gotchas--debugging)).
 
+### July 2026 session — post-demo feedback (Rounds 1–3) + full hardening audit
+- **DCS form:** iHelp Reference and **Office/Site** are now **required**; Office/Site fixed to
+  **AGT / GDP / EGP / TWS** (removed CIP/Eastgate + the "Others" free-text). Agency requests ask
+  **New vs Replacement** (Replacement captures the replaced person for DCOPS); **OJT forces
+  External** access; **Network Drive required** for agency; red-asterisk required-field indicators;
+  the summary + details Documents section now lists **every** submitted file (main doc, DSA,
+  endorsement) ([Part 1](part-1-dcs.md)).
+- **PIA per-site TechServe** — `InfoSec_Email_Config` gains a **`Site`** column; TechServe is one
+  row per (site, email), resolved by the request's Office/Site with a DCOPS-only fallback
+  ([§0.2](part-0-common.md#02--architecture--data-model), [Part 2](part-2-pia.md)).
+- **PIA certificate + emails** — the certificate now shows approver **comments** and is **attached
+  to the applicant's FULLY-APPROVED email** (with a named per-site TechServe contact block); all
+  four **approver emails carry a Review Status** block ([Part 2](part-2-pia.md)).
+- **Admin access rewired** — `checkAccess_` is now **role-based** (active `InfoSec` role) **+ the
+  `Admin_Notification_Config` tab**, replacing the hardcoded `INFOSEC-001/002` allowlist that broke
+  when IDs were renamed to `INFOSEC-ALL-1/2` ([§0.6](part-0-common.md#06--security-model),
+  [Part 3](part-3-admin.md)).
+- **Admin delete feature removed** — the hard cascading ticket-delete (+ audit purge) was pulled;
+  records are now immutable from Admin. Also fixed invisible row-selection highlighting.
+- **Ops lesson:** a non-owner deploy took the whole system down mid-day (execute-as identity) —
+  always deploy as the owner `ismaiapps` ([§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls)).
+- **Loophole/hardening pass:** queue-fallback for the final applicant email, safe TechServe
+  fallback (no PII to the wrong team), and a document-required backend check.
+
 ### Recent commits (newest first)
 | Commit | Summary |
 |--------|---------|
