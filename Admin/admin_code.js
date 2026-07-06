@@ -9,8 +9,8 @@
     shared Google Spreadsheet, joins the DCS form data with the PIA assessment and
     the approval decisions, and hands a clean dashboard to the admin page. It also
     lets ISM admins resend stuck emails, re-route a finished request's Certificate
-    of Approval to DCOPS/TechServe, edit system settings, read audit logs, and
-    delete entries. Only INFOSEC-001 / INFOSEC-002 accounts get in.
+    of Approval to DCOPS/TechServe, edit system settings, and read audit logs.
+    Access is limited to InfoSec personnel and admins in Admin_Notification_Config.
 
   TECHNICAL: Google Apps Script web-app backend (doGet/doPost) plus a JSON REST API
     and google.script.run handlers. Data layer is the shared Spreadsheet read through
@@ -18,7 +18,7 @@
     arrays. Email sending goes through MailApp wrapped in sendEmailWithRetry_ (5-try
     backoff) and rendered with the navy buildAdminEmailHtml_ / buildCertificateHtml_
     templates. Access is gated by two layers: isAuthorizedDomain() (domain) then
-    checkAccess_() (INFOSEC member ID). The Risk_Audit sheet doubles as both the audit
+    checkAccess_() (InfoSec role + Admin_Notification_Config). The Risk_Audit sheet doubles as both the audit
     log and the email queue. Constraints: returns must be plain-string POJOs (GAS V8
     drops non-serializable values / returns null on uncaught throw), so almost every
     function is wrapped in try/catch and stringifies sheet cells defensively.
@@ -36,7 +36,7 @@
     - handleAdminApi_(request)            authenticate + switch() the JSON REST actions
 
   CATEGORY: ACCESS CONTROL
-    - checkAccess_(email)                 allow only INFOSEC-001 / INFOSEC-002
+    - checkAccess_(email)                 allow InfoSec-role members + Admin_Notification_Config
     - isAuthorizedDomain(userEmail)       domain-suffix gate (fail-secure)
     - submitDCS(payload)                  re-validates domain (defense-in-depth stub)
 
@@ -242,7 +242,7 @@ function doGet(e) {
     var header = '<span class="step-badge" style="background:var(--danger); color:var(--danger-text); border-color:rgba(220,38,38,0.2);">Access Denied</span><h1>Restricted</h1>';
     var content = '' +
       '<div class="alert alert-danger">' + HtmlService.createHtmlOutput(accessResult.reason).getContent() + '</div>' +
-      '<p style="color: var(--text2); line-height: 1.6; font-size: 14px;">You are not authorized to access this system. Only authorized ISM administrators (INFOSEC-001 / INFOSEC-002) can proceed.</p>' +
+      '<p style="color: var(--text2); line-height: 1.6; font-size: 14px;">You are not authorized to access this system. Only authorized ISM administrators and configured admins can proceed.</p>' +
       '<p class="email-line">Current account: <strong>' + HtmlService.createHtmlOutput(userEmail).getContent() + '</strong></p>';
     return HtmlService.createHtmlOutput(getStyledHtmlWrapper(header, content))
     .setTitle('Access Denied')
@@ -328,21 +328,23 @@ function doPost(e) {
 
 /*
   Function: checkAccess_
-  LAYMAN:    Layer-2 gate: confirms the caller is one of the two authorized ISM
-             admins (INFOSEC-001 or INFOSEC-002) by matching their email against the
-             InfoSec_Email_Config sheet. The domain check already happened before
-             this runs.
-  TECHNICAL: Requires SPREADSHEET_ID set. Reads InfoSec_Email_Config and allows only
-             rows whose Member_ID is INFOSEC-001/002 AND Member_Email matches the
-             caller (case-insensitive). Fail-closed: any error or no match denies.
+  LAYMAN:    Layer-2 gate: confirms the caller is an authorized Admin — either an active
+             InfoSec-role member (from InfoSec_Email_Config) OR anyone listed in the
+             Admin_Notification_Config tab (e.g. ADMIN-001). The domain check already
+             happened before this runs.
+  TECHNICAL: Requires SPREADSHEET_ID. Matches the caller's email against (a) active rows in
+             InfoSec_Email_Config whose Role is "InfoSec" — matched by ROLE, NOT Member_ID,
+             so ID renames never lock admins out — and (b) the email column of
+             Admin_Notification_Config. Respects an optional active/enabled flag. Fail-closed.
   PARAMS:    - email — the active user's email.
   RETURNS:   {allowed:true} or {allowed:false, reason:string}.
   EXAMPLE:   checkAccess_('ism@companycorp.com') -> {allowed:true}
 
   STEPS
     Step 1 — Require SPREADSHEET_ID, else deny.
-    Step 2 — Scan InfoSec_Email_Config for an INFOSEC-001/002 row matching the email.
-    Step 3 — No match -> deny.
+    Step 2 — Allow active InfoSec-role members of InfoSec_Email_Config matching the email.
+    Step 3 — Allow any Admin_Notification_Config entry matching the email.
+    Step 4 — No match -> deny.
 */
 // ─── Access Control ────────────────────────────────────────────────────────────
 function checkAccess_(email) {
@@ -351,29 +353,64 @@ function checkAccess_(email) {
   if (!ssId) {
     return { allowed: false, reason: 'SPREADSHEET_ID not configured.' };
   }
-  
-  // 2. Check InfoSec_Email_Config — ONLY INFOSEC-001 or INFOSEC-002 are allowed.
-  //    The domain check (Layer 1) already happened in isAuthorizedDomain() before
-  //    this function is called, so we only gate on specific member IDs here.
+
+  var caller = String(email || '').trim().toLowerCase();
+  if (!caller) {
+    return { allowed: false, reason: 'No signed-in account detected.' };
+  }
+
+  // Treat a row as active unless an active/enabled column explicitly says NO/FALSE/0.
+  function rowIsActive_(row) {
+    for (var k in row) {
+      if (/active|enabled/i.test(k)) {
+        var v = String(row[k] == null ? '' : row[k]).trim().toUpperCase();
+        if (v === '') continue;
+        return !(v === 'NO' || v === 'FALSE' || v === '0');
+      }
+    }
+    return true;
+  }
+
+  // Step 2 — InfoSec personnel: any ACTIVE InfoSec-role member in InfoSec_Email_Config.
+  //   Matched by Role (not Member_ID) so future ID renames never lock admins out.
   try {
     var configSheet = getSheet_('InfoSec_Email_Config');
     if (configSheet) {
       var rows = sheetToObjects_(configSheet);
       for (var i = 0; i < rows.length; i++) {
         var r = rows[i];
-        var memberId = String(r.Member_ID || '').trim();
+        var role = String(r.Role || '').trim().toLowerCase();
         var memberEmail = String(r.Member_Email || '').trim().toLowerCase();
-        if ((memberId === 'INFOSEC-001' || memberId === 'INFOSEC-002') && memberEmail === email.toLowerCase()) {
+        if (role === 'infosec' && memberEmail === caller && rowIsActive_(r)) {
           return { allowed: true };
         }
       }
     }
   } catch (e) {
-    // InfoSec_Email_Config sheet not found — skip
+    // InfoSec_Email_Config missing — fall through to Admin_Notification_Config
   }
 
-  // 3. Not an authorized INFOSEC member — deny
-  return { allowed: false, reason: 'Access restricted to authorized ISM administrators (INFOSEC-001 / INFOSEC-002).' };
+  // Step 3 — Configured admins: anyone listed in the Admin_Notification_Config tab.
+  //   Match the caller against that sheet's email column (any header containing "email").
+  try {
+    var adminSheet = getSheet_('Admin_Notification_Config');
+    if (adminSheet) {
+      var adminRows = sheetToObjects_(adminSheet);
+      for (var a = 0; a < adminRows.length; a++) {
+        var ar = adminRows[a];
+        for (var key in ar) {
+          if (/email/i.test(key) && String(ar[key] || '').trim().toLowerCase() === caller && rowIsActive_(ar)) {
+            return { allowed: true };
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // Admin_Notification_Config tab not present — skip
+  }
+
+  // Step 4 — Not an authorized admin — deny
+  return { allowed: false, reason: 'Access restricted to authorized ISM administrators and configured admins.' };
 }
 
 /*
