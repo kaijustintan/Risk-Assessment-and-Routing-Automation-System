@@ -728,6 +728,19 @@
     .field input[type="file"]::file-selector-button:hover {
       background: var(--bg3);
     }
+    /* Round-4 fix: the blanket .field input rule above strips appearance from checkboxes too,
+       leaving a blank square with no visible checkmark. Restore native checkbox rendering. */
+    .field input[type="checkbox"] {
+      -webkit-appearance: checkbox;
+      appearance: auto;
+      width: auto;
+      min-height: 0;
+      height: auto;
+      padding: 0;
+      accent-color: var(--navy-bright);
+      box-shadow: none;
+      cursor: pointer;
+    }
 
     .select-wrap {
       position: relative;
@@ -3982,13 +3995,21 @@ function resumeDraft(sid) {
           // Check if restored draft had files that need re-upload
           // Also check the saved _hadFiles flag (otherwise empty filenames from Fix 1 would be missed)
           const d = state.dcs;
-          const hasFiles = !!(d.nda || d.dsa || (d.agency && d.agency.endorsementLetter) || d._hadFiles);
+          // Round-4 fix: supplementary docs get the same honest treatment as the required files.
+          // Files are never stored in drafts, so a resumed draft's supplementaryNames are stale;
+          // showing them as "selected" made users submit without re-attaching (files silently lost).
+          const suppCount = Array.isArray(d.supplementaryNames) ? d.supplementaryNames.length : 0;
+          const hasFiles = !!(d.nda || d.dsa || (d.agency && d.agency.endorsementLetter) || suppCount > 0 || d._hadFiles);
           state.dcs._hadFiles = hasFiles;
           // Clear stored filenames so they don't appear as already uploaded
           if (hasFiles) {
             state.dcs.nda = '';
             state.dcs.dsa = '';
             if (state.dcs.agency) state.dcs.agency.endorsementLetter = '';
+            // Carry the count across repeated resumes (names are already cleared on the 2nd resume,
+            // but the saved _suppReuploadCount still marks the pending re-attach).
+            state.dcs._suppReuploadCount = suppCount || d._suppReuploadCount || 0;
+            state.dcs.supplementaryNames = [];
           }
           persistState();
           show('form');
@@ -4658,6 +4679,9 @@ function renderForm() {
           </div>
         </label>
         <div id="supplementary-success" class="upload-success ${(state.dcs.supplementaryNames && state.dcs.supplementaryNames.length) ? '' : 'hidden'}">${(state.dcs.supplementaryNames && state.dcs.supplementaryNames.length) ? ('&#10003; ' + state.dcs.supplementaryNames.length + ' file' + (state.dcs.supplementaryNames.length > 1 ? 's' : '') + ' selected: ' + state.dcs.supplementaryNames.map(function(n){return escapeHtml(n);}).join(', ')) : ''}</div>
+        ${(state.dcs._suppReuploadCount && !(state.dcs.supplementaryNames && state.dcs.supplementaryNames.length)) ? `
+        <div id="supplementary-reupload-notice" class="upload-success" style="background:#fff8e1;border:1px solid #fcd34d;color:#b46d14;">&#9888; ${state.dcs._suppReuploadCount} supporting file${state.dcs._suppReuploadCount > 1 ? 's were' : ' was'} attached to this draft. Please re-attach ${state.dcs._suppReuploadCount > 1 ? 'them' : 'it'} (drafts do not store the files themselves).</div>
+        ` : ''}
       </div>
     </div>
 
@@ -4879,6 +4903,12 @@ function handleSupplementaryChange(input) {
   const successEl = document.getElementById('supplementary-success');
   const names = (input.files && input.files.length) ? Array.from(input.files).map(f => f.name) : [];
   state.dcs.supplementaryNames = names;
+  // Round-4 fix: once the user re-attaches after a draft resume, the "please re-attach" state is over.
+  if (names.length > 0 && state.dcs._suppReuploadCount) {
+    state.dcs._suppReuploadCount = 0;
+    const notice = document.getElementById('supplementary-reupload-notice');
+    if (notice) notice.remove();
+  }
   if (!successEl) return;
   if (names.length > 0) {
     successEl.innerHTML = '&#10003; ' + names.length + ' file' + (names.length > 1 ? 's' : '') + ' selected: ' + names.map(escapeHtml).join(', ');
@@ -5304,6 +5334,16 @@ function syncAgencyState() {
     immHeadRecoveryNumber: 12
   };
   Object.entries(map).forEach(([k, id]) => {
+    // Round-4 fix: when "No email available (N/A)" is ticked, the email input is disabled and
+    // emptied, so reading it here would overwrite the stored 'N/A' with '' and validation would
+    // then wrongly demand an email. Keep the sentinel instead.
+    if (k === 'replacementEmail') {
+      const naCb = document.getElementById('dcs-agency-replacement-email-na');
+      if (naCb && naCb.checked) {
+        state.dcs.agency.replacementEmail = 'N/A';
+        return;
+      }
+    }
     const el = document.getElementById(id);
     if (el) state.dcs.agency[k] = sanitizeText((el.value || '').trim(), AGENCY_MAX_LENGTHS[k] || CONFIG.MAX_NAME_LENGTH);
   });
@@ -5766,6 +5806,22 @@ async function submitRequest() {
   if (!validateFileUploads()) {
     state.isSubmitting = false;
     if (btn) { btn.textContent = originalText; btn.disabled = false; }
+    return;
+  }
+
+  // Round-4 guard: the resumed draft had supporting documents that were never re-attached.
+  // They are optional, so confirm (not block) before submitting without them.
+  const suppGuardInput = document.getElementById('dcs-supplementary');
+  if (state.dcs._suppReuploadCount > 0 && !(suppGuardInput?.files?.length)) {
+    state.isSubmitting = false;
+    if (btn) { btn.textContent = originalText; btn.disabled = false; }
+    showCustomConfirm(
+      'Your draft originally had ' + state.dcs._suppReuploadCount + ' supporting document(s) that were not re-attached. Submit without them?',
+      function () {
+        state.dcs._suppReuploadCount = 0;
+        submitRequest();
+      }
+    );
     return;
   }
 
