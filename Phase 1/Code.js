@@ -1218,19 +1218,73 @@ function uploadProxy(base64File, originalFileName, fileType, mimeType, reqId) {
 
 
 /*
-  Function: trashOldDriveFiles_
-  LAYMAN:    Sends old versions of uploaded documents to the trash when a request is revised, so the
-             vault doesn't pile up duplicate copies. Files that are already gone are quietly ignored.
-  TECHNICAL: Iterates a list of { type, id, name } and calls DriveApp.getFileById(id).setTrashed(true),
-             swallowing per-file errors (already trashed / inaccessible).
+  Function: archiveOldDriveFiles_
+  LAYMAN (Tropang Ex):
+  Pag nagpalit ng dokumento si requestor sa isang revision, huwag na nating itapon sa Trash yung luma
+  (namamatay ang link in ~30 days). Sa halip, ilipat natin sa isang "Archive" na subfolder sa loob ng
+  admin vault — buhay pa rin yung file at gumagana pa yung link kahit na-supersede na.
+
+  TECHNICAL:
+  Resolves (or creates once) an "Archive" subfolder under ADMIN_FOLDER_ID and moveTo()'s each listed
+  file into it. Fail-safe: if the Archive folder cannot be resolved, returns WITHOUT trashing — the
+  file simply stays where it is (still referenced and resolvable). Per-file errors are swallowed.
+
   PARAMS:
-    - fileList — array of { type, id, name } objects identifying files to trash.
-  RETURNS:   undefined (side effect: trashes the listed Drive files).
+    - fileList — array of { type, id, name, ... } identifying the Drive files to archive.
+  RETURNS:   undefined (side effect: moves the listed Drive files into the Archive subfolder).
 */
-function trashOldDriveFiles_(fileList) {
-  fileList.forEach(function(f) {
-    try { DriveApp.getFileById(f.id).setTrashed(true); } catch (e) { /* already gone or inaccessible */ }
+function archiveOldDriveFiles_(fileList) {
+  if (!fileList || fileList.length === 0) return;
+  let archiveFolder = null;
+  try {
+    const parent = DriveApp.getFolderById(getProp_('ADMIN_FOLDER_ID'));
+    const existing = parent.getFoldersByName('Archive');
+    archiveFolder = existing.hasNext() ? existing.next() : parent.createFolder('Archive');
+  } catch (e) {
+    Logger.log('archiveOldDriveFiles_: could not resolve Archive folder, leaving files in place: ' + e.toString());
+    return; // fail-safe: never trash — a mis-resolved folder must not destroy the file
+  }
+  fileList.forEach(function (f) {
+    try { DriveApp.getFileById(f.id).moveTo(archiveFolder); }
+    catch (e) { /* file already gone or inaccessible; skip */ }
   });
+}
+
+/*
+  Function: archiveAndRecordSuperseded_
+  LAYMAN (Tropang Ex):
+  Katulong ng revision flow. Kinukuha yung mga lumang file ng type na papalitan, inaarchive yung Drive
+  file nila, tinatala sila sa isang "superseded" na listahan (para makita sa trail kung ano ang
+  pinalitan), tapos ibinabalik yung natitirang kasalukuyang files. Kaya ang FILE_ID cell = current set
+  pa rin — walang halong luma, hindi nasisira yung existing render logic.
+
+  TECHNICAL:
+  Splits fileArr by predicate. Matches → archived + pushed to `sink` as
+  { type, id, name, supersededAt, supersededRound }. Non-matches → returned as the surviving current
+  list. Mirrors the old "filter out same-type" behaviour exactly (FILE_ID stays current-only), but
+  archives instead of trashing and records the trail.
+
+  PARAMS:
+    - fileArr   — the working current-file array.
+    - predicate — fn(file) → true for the type(s) being replaced.
+    - sink      — array to push superseded records into (later stored in metadata.supersededFiles).
+    - stamp     — ISO timestamp for supersededAt.
+    - round     — the revision round doing the replacing (supersededRound).
+  RETURNS:   the surviving current-file array (input minus the replaced entries).
+*/
+function archiveAndRecordSuperseded_(fileArr, predicate, sink, stamp, round) {
+  const kept = [];
+  const toArchive = [];
+  (fileArr || []).forEach(function (f) {
+    if (f && predicate(f)) {
+      toArchive.push(f);
+      sink.push({ type: f.type, id: f.id, name: f.name, supersededAt: stamp, supersededRound: round });
+    } else {
+      kept.push(f);
+    }
+  });
+  archiveOldDriveFiles_(toArchive);
+  return kept;
 }
 
 // ============================================================
@@ -1404,25 +1458,28 @@ function submitDCS(payload, sessionId = '') {
     try { uploadedIds = JSON.parse(oldFileIdStr); } catch(e) {}
   }
 
+  // Commit 4: version trail — archive (not trash) replaced files and record them so the old→new
+  // history stays viewable. FILE_ID keeps holding the CURRENT set only (existing renders unaffected).
+  const newlySuperseded = [];
+  const supersedeStamp = new Date().toISOString();
+  const supersedeRound = (isRevision ? ((oldMetadata.revisionCount || 0) + 1) : 0) + 1;
+
   try {
     // Determine NDA/CU type based on agency data presence
     const ndaType = payload.agencyData ? 'CU' : 'NDA';
     if (payload.ndaFile && payload.ndaFile.base64) {
       const id = uploadProxy(payload.ndaFile.base64, payload.ndaFile.fileName, ndaType, payload.ndaFile.mimeType, reqId);
-      trashOldDriveFiles_(uploadedIds.filter(function(f) { return f.type === 'NDA' || f.type === 'CU'; }));
-      uploadedIds = uploadedIds.filter(f => f.type !== 'NDA' && f.type !== 'CU');
+      uploadedIds = archiveAndRecordSuperseded_(uploadedIds, function(f) { return f.type === 'NDA' || f.type === 'CU'; }, newlySuperseded, supersedeStamp, supersedeRound);
       uploadedIds.push({ type: ndaType, id: id, name: payload.ndaFile.fileName });
     }
     if (payload.dpaFile && payload.dpaFile.base64) {
       const id = uploadProxy(payload.dpaFile.base64, payload.dpaFile.fileName, 'DPA', payload.dpaFile.mimeType, reqId);
-      trashOldDriveFiles_(uploadedIds.filter(function(f) { return f.type === 'DPA'; }));
-      uploadedIds = uploadedIds.filter(f => f.type !== 'DPA');
+      uploadedIds = archiveAndRecordSuperseded_(uploadedIds, function(f) { return f.type === 'DPA'; }, newlySuperseded, supersedeStamp, supersedeRound);
       uploadedIds.push({ type: 'DPA', id: id, name: payload.dpaFile.fileName });
     }
     if (payload.dsaFile && payload.dsaFile.base64) {
       const id = uploadProxy(payload.dsaFile.base64, payload.dsaFile.fileName, 'DSA', payload.dsaFile.mimeType, reqId);
-      trashOldDriveFiles_(uploadedIds.filter(function(f) { return f.type === 'DSA'; }));
-      uploadedIds = uploadedIds.filter(f => f.type !== 'DSA');
+      uploadedIds = archiveAndRecordSuperseded_(uploadedIds, function(f) { return f.type === 'DSA'; }, newlySuperseded, supersedeStamp, supersedeRound);
       uploadedIds.push({ type: 'DSA', id: id, name: payload.dsaFile.fileName });
     }
   } catch (err) {
@@ -1464,8 +1521,9 @@ function submitDCS(payload, sessionId = '') {
           if (!ad.replacementFullName || String(ad.replacementFullName).trim() === '') {
             return { success: false, error: 'Full name of the person being replaced is required.' };
           }
-          if (!ad.replacementEmail || String(ad.replacementEmail).trim() === '' || !isValidEmail(ad.replacementEmail)) {
-            return { success: false, error: 'A valid email of the person being replaced is required.' };
+          if (!ad.replacementEmail || String(ad.replacementEmail).trim() === '' ||
+              (String(ad.replacementEmail).trim() !== 'N/A' && !isValidEmail(ad.replacementEmail))) {
+            return { success: false, error: 'A valid email of the person being replaced is required (or "N/A" if none).' };
           }
         }
         if (ad.immHeadRecoveryEmail && !isValidEmail(ad.immHeadRecoveryEmail)) {
@@ -1477,8 +1535,7 @@ function submitDCS(payload, sessionId = '') {
       let endorsementFile = null;
       if (ad.endorsementLetterFile && ad.endorsementLetterFile.base64) {
         const eId = uploadProxy(ad.endorsementLetterFile.base64, ad.endorsementLetterFile.fileName, 'ENDORSEMENT', ad.endorsementLetterFile.mimeType, reqId);
-        trashOldDriveFiles_(uploadedIds.filter(f => f.type === 'ENDORSEMENT'));
-        uploadedIds = uploadedIds.filter(f => f.type !== 'ENDORSEMENT');
+        uploadedIds = archiveAndRecordSuperseded_(uploadedIds, function(f) { return f.type === 'ENDORSEMENT'; }, newlySuperseded, supersedeStamp, supersedeRound);
         uploadedIds.push({ type: 'ENDORSEMENT', id: eId, name: ad.endorsementLetterFile.fileName });
         endorsementFile = { id: eId, name: ad.endorsementLetterFile.fileName };
       }
@@ -1615,6 +1672,9 @@ function submitDCS(payload, sessionId = '') {
       metadata.revisionCount = 0;
       metadata.isEditing = false;
     }
+
+    // Commit 4: carry forward the superseded-document trail and append this round's replacements.
+    metadata.supersededFiles = (Array.isArray(oldMetadata.supersededFiles) ? oldMetadata.supersededFiles : []).concat(newlySuperseded);
 
     // ✅ STEP 4: Write to database (agencyJson and finalCombinedFileId already prepared BEFORE lock)
     if (isRevision && existingRow > 0) {

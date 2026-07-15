@@ -676,6 +676,43 @@ function getAndShareDCSFiles(dcsReqId) {
 }
 
 /*
+  Function: getDCSSupersededFiles
+  LAYMAN:    Reads the DCS request's list of REPLACED documents (the ones a requestor overwrote on a
+             revision). These stay viewable because they're archived, not trashed — so the certificate
+             can show the full old→new document trail.
+  TECHNICAL: Parses Data_Collection.Metadata_JSON for the linked reqId and returns its supersededFiles
+             array, mapped to { type, name, id, url, supersededRound, supersededAt }. [] on any miss.
+  PARAMS:    - dcsReqId — the linked DCS request id.
+  RETURNS:   Array of superseded-document descriptors (possibly empty).
+*/
+function getDCSSupersededFiles(dcsReqId) {
+  if (!dcsReqId) return [];
+  try {
+    const dcsSheet = getDatabaseSheet(DB_SHEET_NAMES.DATA_COLLECTION, false);
+    if (!dcsSheet) return [];
+    const vals = dcsSheet.getDataRange().getValues();
+    for (let i = 1; i < vals.length; i++) {
+      if (String(vals[i][DCS_COLS.REQ_ID - 1] || '').trim() === String(dcsReqId).trim()) {
+        let meta = {};
+        try { meta = JSON.parse(vals[i][DCS_COLS.METADATA_JSON - 1] || '{}'); } catch (e) {}
+        const list = Array.isArray(meta.supersededFiles) ? meta.supersededFiles : [];
+        return list.map(function (f) {
+          return {
+            type: f.type || '',
+            name: f.name || 'Document',
+            id: f.id || '',
+            url: f.id ? ('https://drive.google.com/file/d/' + f.id + '/view') : '#',
+            supersededRound: f.supersededRound || '',
+            supersededAt: f.supersededAt || ''
+          };
+        });
+      }
+    }
+  } catch (e) { Logger.log('getDCSSupersededFiles failed: ' + e.toString()); }
+  return [];
+}
+
+/*
   Function: getStyledHtmlWrapper
   LAYMAN:    Wraps a header + content into a complete, styled HTML page — used for the
              "access denied", approve/deny result, and other standalone pages the app serves.
@@ -1902,6 +1939,7 @@ function handleEmailAction(params) {
             email: data[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1],
             status: data[i][ISM_WORKFLOW_COLS.STATUS - 1],
             routing: data[i][ISM_WORKFLOW_COLS.ROUTING_DESTINATION - 1],
+            comments: data[i][ISM_WORKFLOW_COLS.COMMENTS - 1],
             decisionDate: data[i][ISM_WORKFLOW_COLS.DECISION_DATE - 1]
           });
           context.totalSteps++;
@@ -1991,7 +2029,15 @@ function handleEmailAction(params) {
         } else {
           routingBadge = `<span class="status-badge" style="background:var(--bg3); color:var(--text2); border:1px solid var(--border);">${escapeHtml(step1.routing)}</span>`;
         }
-        person1RoutingChoice = `<div style="font-size:12.5px; color:var(--text2); margin-bottom:12px; padding: 10px 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); display: flex; align-items: center; gap: 8px;"><span><strong>${escapeHtml(step1.name)}</strong> recommended routing to:</span> ${routingBadge}</div>`;
+        const step1Comment = step1.comments ? String(step1.comments).replace(/<[^>]*>/g, '').trim() : '';
+        const step1StatusLabel = (step1.status === 'Approved') ? 'Approved'
+          : (step1.status === 'EscalatedToDivisionHead') ? 'Escalated to Division Head'
+          : escapeHtml(String(step1.status || 'Reviewed'));
+        person1RoutingChoice = `<div style="margin-bottom:12px; padding: 12px 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);">
+          <div style="font-size:10px; font-weight:800; color:var(--text3); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px;">Prior InfoSec Review (Step 1)</div>
+          <div style="font-size:13px; color:var(--text2); display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span><strong>${escapeHtml(step1.name)}</strong>: ${step1StatusLabel}</span><span style="font-size:12px;">routed to</span>${routingBadge}</div>
+          ${step1Comment ? `<div style="font-size:12.5px; color:var(--text2); margin-top:8px; padding-left:10px; border-left:2px solid var(--border2);">"${escapeHtml(step1Comment)}"</div>` : ''}
+        </div>`;
       }
     }
 
@@ -5531,7 +5577,7 @@ function generateEmailDecisionsHTML(sessionId) {
   let hasRecords = false;
   let html = `<div style="font-family: sans-serif;">`;
   
-  const processDecisions = (sheetName, idCol, nameCol, statusCol, commentCol, dateCol, defaultName, roleType, stepCol) => {
+  const processDecisions = (sheetName, idCol, nameCol, statusCol, commentCol, dateCol, defaultName, roleType, stepCol, routingCol = null) => {
     const sheet = getDatabaseSheet(sheetName, false);
     if (!sheet) return;
     const data = sheet.getDataRange().getValues();
@@ -5552,7 +5598,15 @@ function generateEmailDecisionsHTML(sessionId) {
         else if (roleType === 'ism') { roleLabel = 'InfoSec Reviewer'; }
         const comment = data[i][commentCol - 1];
         const decisionDateRaw = dateCol ? data[i][dateCol - 1] : '';
-        
+        // Commit 7: show the ISM routing recommendation (DCOPS/TechServe/Both) inline
+        let routingLabel = '';
+        if (routingCol) {
+          const rawRouting = String(data[i][routingCol - 1] || '').trim().toUpperCase();
+          if (rawRouting === 'DCOPS') routingLabel = 'DCOPS';
+          else if (rawRouting === 'TECHSERVE') routingLabel = 'TechServe';
+          else if (rawRouting === 'BOTH') routingLabel = 'DCOPS + TechServe';
+        }
+
         // Format timestamp if available
         let decisionDateStr = '';
         if (decisionDateRaw) {
@@ -5582,6 +5636,7 @@ function generateEmailDecisionsHTML(sessionId) {
           <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #f0f0f0;">
             <div style="font-size: 13px; color: #333;"><strong>${approverName}</strong> <span style="color:#6b7280; font-weight:500;">— ${escapeHtml(roleLabel)}</span>: <span style="color: ${color}; font-weight: 600;">${statusLabel}</span></div>
             ${decisionDateStr ? `<div style="font-size: 11px; color: #999; margin-top: 2px;">${escapeHtml(decisionDateStr)}</div>` : ''}
+            ${routingLabel ? `<div style="font-size: 12px; color: #6b7280; margin-top: 3px;">Routing: <strong>${escapeHtml(routingLabel)}</strong></div>` : ''}
             ${comment ? `<div style="font-size: 13px; color: #666; margin-top: 4px;">"${escapedComment}"</div>` : ''}
           </div>
         `;
@@ -5592,7 +5647,7 @@ function generateEmailDecisionsHTML(sessionId) {
   // Process all approval stages to show comprehensive latest decisions
   processDecisions(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS.SESSION_ID, APPROVAL_COLS.APPROVER_NAME, APPROVAL_COLS.STATUS, APPROVAL_COLS.COMMENTS, APPROVAL_COLS.DECISION_DATE, 'Approver', 'head', APPROVAL_COLS.CURRENT_STEP);
   processDecisions(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, null, DIV_HEAD_CONFIG_COLS.STATUS, DIV_HEAD_CONFIG_COLS.COMMENTS, DIV_HEAD_CONFIG_COLS.DECISION_DATE, 'Division Head', 'divhead', null);
-  processDecisions(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_NAME, ISM_WORKFLOW_COLS.STATUS, ISM_WORKFLOW_COLS.COMMENTS, ISM_WORKFLOW_COLS.DECISION_DATE, 'ISM Member', 'ism', null);
+  processDecisions(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_NAME, ISM_WORKFLOW_COLS.STATUS, ISM_WORKFLOW_COLS.COMMENTS, ISM_WORKFLOW_COLS.DECISION_DATE, 'ISM Member', 'ism', null, ISM_WORKFLOW_COLS.ROUTING_DESTINATION);
 
   html += `</div>`;
   return hasRecords ? html : `<div style="font-size: 13px; color: #666; font-style: italic;">No decisions recorded yet.</div>`;
@@ -7926,17 +7981,19 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
     // #19: list the uploaded supporting documents on the certificate.
     let supportingDocsListHtml = '';
     try {
+      const docLabelFor = function (f) {
+        const n = (f.name || '').toUpperCase();
+        if (f.type === 'CU' || n.includes('-CU') || n.includes('CONFIDENTIALITY')) return 'Confidentiality Undertaking';
+        if (f.type === 'NDA' || n.includes('-NDA') || n.includes('NON-DISCLOSURE')) return 'Non-Disclosure Agreement';
+        if (f.type === 'DPA' || n.includes('-DPA') || n.includes('DATA PROTECTION')) return 'Data Protection Agreement';
+        if (f.type === 'DSA' || n.includes('-DSA')) return 'Data Sharing Agreement';
+        if (f.type === 'ENDORSEMENT' || n.includes('ENDORSEMENT')) return 'Endorsement Letter';
+        if (f.type === 'SUPPLEMENTARY') return 'Additional Supporting Document';
+        return 'Supporting Document';
+      };
+
       const certDocs = getAndShareDCSFiles(appData.linkedReqId);
       if (certDocs && certDocs.length > 0) {
-        const docLabelFor = function (f) {
-          const n = (f.name || '').toUpperCase();
-          if (f.type === 'CU' || n.includes('-CU') || n.includes('CONFIDENTIALITY')) return 'Confidentiality Undertaking';
-          if (f.type === 'NDA' || n.includes('-NDA') || n.includes('NON-DISCLOSURE')) return 'Non-Disclosure Agreement';
-          if (f.type === 'DPA' || n.includes('-DPA') || n.includes('DATA PROTECTION')) return 'Data Protection Agreement';
-          if (f.type === 'DSA' || n.includes('-DSA')) return 'Data Sharing Agreement';
-          if (f.type === 'ENDORSEMENT' || n.includes('ENDORSEMENT')) return 'Endorsement Letter';
-          return 'Supporting Document';
-        };
         const docRows = certDocs.map(function (f) {
           return `<tr><td style="padding:6px 0;font-weight:600;width:30%;color:#6b7280;">${escapeHtml(docLabelFor(f))}</td><td style="padding:6px 0;color:#1a3a5c;"><a href="${escapeHtml(f.url || '#')}" style="color:#185FA5;text-decoration:none;">${escapeHtml(f.name || 'Document')}</a></td></tr>`;
         }).join('');
@@ -7944,6 +8001,20 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
           <div style="margin-bottom: 30px;">
             <h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Supporting Documents</h2>
             <table style="width: 100%; border-collapse: collapse; font-size: 13px;">${docRows}</table>
+          </div>`;
+      }
+
+      // Commit 4: superseded (replaced) documents — kept viewable via the Archive folder, not trashed
+      const supersededDocs = getDCSSupersededFiles(appData.linkedReqId);
+      if (supersededDocs && supersededDocs.length > 0) {
+        const supRows = supersededDocs.map(function (f) {
+          const roundLabel = f.supersededRound ? ` <span style="color:#9ca3af;">(replaced in round ${escapeHtml(String(f.supersededRound))})</span>` : '';
+          return `<tr><td style="padding:5px 0;font-weight:600;width:30%;color:#9ca3af;">${escapeHtml(docLabelFor(f))}</td><td style="padding:5px 0;color:#9ca3af;"><a href="${escapeHtml(f.url || '#')}" style="color:#9ca3af;text-decoration:underline;">${escapeHtml(f.name || 'Document')}</a>${roundLabel}</td></tr>`;
+        }).join('');
+        supportingDocsListHtml += `
+          <div style="margin-bottom: 30px;">
+            <h2 style="color: #6b7280; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px;">Superseded Documents (previous versions)</h2>
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">${supRows}</table>
           </div>`;
       }
     } catch (e) { Logger.log('Cert supporting-docs build failed: ' + e.toString()); }
@@ -8028,7 +8099,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
               ${(dcsData.metadataAgency.agencyRequestType === 'Replacement' && dcsData.metadataAgency.replacementEmail) ? `
               <tr>
                 <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Replaced Person Email</td>
-                <td style="padding: 6px 0; color: #1a3a5c;"><a href="mailto:${escapeHtml(dcsData.metadataAgency.replacementEmail)}" style="color: #185FA5; text-decoration: none;">${escapeHtml(dcsData.metadataAgency.replacementEmail)}</a></td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${String(dcsData.metadataAgency.replacementEmail).trim() === 'N/A' ? 'N/A' : `<a href="mailto:${escapeHtml(dcsData.metadataAgency.replacementEmail)}" style="color: #185FA5; text-decoration: none;">${escapeHtml(dcsData.metadataAgency.replacementEmail)}</a>`}</td>
               </tr>` : ''}
               ${dcsData.metadataAgency.agencyName ? `
               <tr>

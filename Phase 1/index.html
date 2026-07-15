@@ -5166,10 +5166,10 @@ function validateAgencyForm() {
       return false;
     }
     if (!ag.replacementEmail || ag.replacementEmail.trim() === '') {
-      showCustomAlert('Email of the person being replaced is required.', 'danger');
+      showCustomAlert('Email of the person being replaced is required (or tick "No email available").', 'danger');
       return false;
     }
-    if (!isValidEmail(ag.replacementEmail)) {
+    if (ag.replacementEmail.trim() !== 'N/A' && !isValidEmail(ag.replacementEmail)) {
       showCustomAlert('Replaced person email must be a valid email address.', 'danger');
       return false;
     }
@@ -5299,8 +5299,32 @@ function onAgencyRequestTypeChange(val) {
       state.dcs.agency.replacementFullName = '';
       state.dcs.agency.replacementEmail = '';
       const n = document.getElementById('dcs-agency-replacement-name'); if (n) n.value = '';
-      const e = document.getElementById('dcs-agency-replacement-email'); if (e) e.value = '';
+      const e = document.getElementById('dcs-agency-replacement-email'); if (e) { e.value = ''; e.disabled = false; }
+      const naCb = document.getElementById('dcs-agency-replacement-email-na'); if (naCb) naCb.checked = false;
     }
+  }
+  triggerAutoSave();
+}
+
+/*
+  Function Name: toggleReplacementEmailNA
+  LAYMAN (Tropang Ex): Pag walang email yung taong papalitan, tik-an lang yung "No email available"
+    checkbox — magiging "N/A" na ang laman, madi-disable ang input, at tatanggapin na ng form kahit
+    walang email. Alisin ang tik para bumalik ang normal na email input.
+  TECHNICAL: On check → sets state.dcs.agency.replacementEmail = 'N/A', clears + disables the input.
+    On uncheck → resets to '' and re-enables + focuses. Autosaves either way.
+  PARAMS: - cb — the checkbox element.
+  RETURNS: undefined.
+*/
+function toggleReplacementEmailNA(cb) {
+  if (!state.dcs.agency) state.dcs.agency = {};
+  const input = document.getElementById('dcs-agency-replacement-email');
+  if (cb.checked) {
+    state.dcs.agency.replacementEmail = 'N/A';
+    if (input) { input.value = ''; input.disabled = true; }
+  } else {
+    state.dcs.agency.replacementEmail = '';
+    if (input) { input.disabled = false; input.focus(); }
   }
   triggerAutoSave();
 }
@@ -5356,11 +5380,15 @@ function renderAgency() {
           </div>
         </div>
         <div class="field">
-          <label for="dcs-agency-replacement-email">Replaced Person Email ${reqMark()}${infoTip('Email of the person being replaced — DCOPS uses this to identify the account to retire.')}${charLimit(CONFIG.MAX_EMAIL_LENGTH)}</label>
+          <label for="dcs-agency-replacement-email">Replaced Person Email ${reqMark()}${infoTip('Email of the person being replaced — DCOPS uses this to identify the account to retire. Tick "No email available" if there is none.')}${charLimit(CONFIG.MAX_EMAIL_LENGTH)}</label>
           <div class="input-wrapper">
-            <input id="dcs-agency-replacement-email" class="${getFlagClass('dcs-agency-replacement-email')}" type="email" value="${s.replacementEmail || ''}" placeholder="email@company.com" maxlength="${CONFIG.MAX_EMAIL_LENGTH}" oninput="state.dcs.agency.replacementEmail=sanitizeText(this.value,CONFIG.MAX_EMAIL_LENGTH); triggerAutoSave();">
+            <input id="dcs-agency-replacement-email" class="${getFlagClass('dcs-agency-replacement-email')}" type="email" value="${s.replacementEmail === 'N/A' ? '' : (s.replacementEmail || '')}" placeholder="email@company.com" maxlength="${CONFIG.MAX_EMAIL_LENGTH}" ${s.replacementEmail === 'N/A' ? 'disabled' : ''} oninput="state.dcs.agency.replacementEmail=sanitizeText(this.value,CONFIG.MAX_EMAIL_LENGTH); triggerAutoSave();">
             ${getFlagIconHtml('dcs-agency-replacement-email')}
           </div>
+          <label style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12px; color:var(--text2); font-weight:400; cursor:pointer;">
+            <input type="checkbox" id="dcs-agency-replacement-email-na" ${s.replacementEmail === 'N/A' ? 'checked' : ''} onchange="toggleReplacementEmailNA(this)" style="width:auto; margin:0;">
+            No email available (N/A)
+          </label>
         </div>
       </div>
       <div class="field-row">
