@@ -242,7 +242,8 @@ const DB_SHEET_NAMES = {
   DIV_HEAD_CONFIG: 'DivisionHead_Approval_Workflow',
   INFOSEC_CONFIG: 'InfoSec_Email_Config',
   EMAIL_QUEUE: 'Email_Queue',
-  ADMIN_NOTIFICATION: 'Admin_Notification_Config'
+  ADMIN_NOTIFICATION: 'Admin_Notification_Config',
+  REVISION_HISTORY: 'Revision_History'
 };
 
 const DB_SPREADSHEET_ID_PROP = 'PIA_DB_SPREADSHEET_ID';
@@ -1114,6 +1115,26 @@ const DIV_HEAD_CONFIG_COLS = {
   REMINDER_DATE: 8,
   EMAIL_STATUS: 9,
   EMAIL_ERROR: 10
+};
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// REVISION HISTORY SHEET COLUMNS (durable return-cycle logbook)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const REVISION_HISTORY_COLS = {
+  HISTORY_ID: 1,
+  SESSION_ID: 2,
+  ROUND_NUMBER: 3,
+  STAGE: 4,
+  APPROVER_NAME: 5,
+  APPROVER_EMAIL: 6,
+  ROLE: 7,
+  DECISION: 8,
+  STATUS: 9,
+  COMMENTS: 10,
+  FLAGGED_FIELDS: 11,
+  ROUTING: 12,
+  DECISION_DATE: 13,
+  SNAPSHOT_AT: 14
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2886,6 +2907,169 @@ function getDatabaseSheet(sheetName, createIfMissing) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🗂️ REVISION HISTORY STORE (survives the resubmit wipe)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/*
+  Function: getRevisionHistorySheet_
+  LAYMAN:    Grabs (or lazily creates) the "Revision_History" logbook tab and makes sure it has its
+             header row. Since the production DB is already initialized, initializeDatabase never
+             re-runs — so this tab is born on the first snapshot write instead.
+  TECHNICAL: getDatabaseSheet(name, true) inserts the bare sheet if missing; if the sheet is empty
+             (getLastRow()===0) it seeds the header row + formatHeaderRow. Returns null on failure.
+  PARAMS:    (none)
+  RETURNS:   Sheet, or null.
+*/
+function getRevisionHistorySheet_() {
+  const sheet = getDatabaseSheet(DB_SHEET_NAMES.REVISION_HISTORY, true);
+  if (!sheet) return null;
+  if (sheet.getLastRow() === 0) {
+    const headers = [
+      'HistoryID', 'SessionID', 'RoundNumber', 'Stage', 'ApproverName', 'ApproverEmail',
+      'Role', 'Decision', 'Status', 'Comments', 'FlaggedFields', 'Routing', 'DecisionDate', 'SnapshotAt'
+    ];
+    sheet.appendRow(headers);
+    try { formatHeaderRow(sheet); } catch (e) { /* header formatting is best-effort */ }
+  }
+  return sheet;
+}
+
+/*
+  Function: writeRevisionHistorySnapshot_
+  LAYMAN:    Right before a returned application is resubmitted (which erases the whole approval
+             trail), this copies that round's decisions — who approved/returned, their comments, the
+             fields they flagged, and the ISM routing choice — into the permanent logbook so the
+             back-and-forth is never lost.
+  TECHNICAL: Reads the three workflow sheets for the session, keeps only ACTIONED rows (skips
+             Pending/blank), and appends one Revision_History row per decision, tagged with the next
+             RoundNumber (max prior round + 1). The passed-in approverFlags (captured before the
+             Applications cell is cleared) is attached to the row that Returned. Fully wrapped in
+             try/catch — a history-write failure must NEVER block a resubmit.
+  PARAMS:    - sessionId — application id (base id; resubmits reuse it).
+             - approverFlags — the Approver_Flags object, read before it was cleared.
+  RETURNS:   undefined (side-effect: appended rows).
+*/
+function writeRevisionHistorySnapshot_(sessionId, approverFlags) {
+  try {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    const sheet = getRevisionHistorySheet_();
+    if (!sheet) return;
+
+    // Next round number = (max prior round for this session) + 1
+    let round = 1;
+    const existing = sheet.getDataRange().getValues();
+    for (let i = 1; i < existing.length; i++) {
+      if (String(existing[i][REVISION_HISTORY_COLS.SESSION_ID - 1] || '').trim() === sid) {
+        const r = Number(existing[i][REVISION_HISTORY_COLS.ROUND_NUMBER - 1] || 0);
+        if (r >= round) round = r + 1;
+      }
+    }
+
+    const snapshotAt = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+    const flagsStr = (approverFlags && typeof approverFlags === 'object')
+      ? JSON.stringify(approverFlags)
+      : String(approverFlags || '');
+    const isReturnDecision = function (decision, status) {
+      return /return|reject/i.test(String(decision || '') + ' ' + String(status || ''));
+    };
+    const rows = [];
+
+    const collect = function (sheetName, cols, stage, nameCol, emailCol, roleFn, routingCol) {
+      const src = getDatabaseSheet(sheetName, false);
+      if (!src) return;
+      const data = src.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        if (String(row[cols.SESSION_ID - 1] || '').trim() !== sid) continue;
+        const status = String(row[cols.STATUS - 1] || '');
+        if (status === 'Pending' || status === '') continue; // only rows that were actioned
+        const decision = row[cols.DECISION - 1];
+        rows.push([
+          Utilities.getUuid(), sid, round, stage,
+          nameCol ? (row[nameCol - 1] || '') : '',
+          row[emailCol - 1] || '',
+          roleFn(row),
+          decision || '',
+          status,
+          row[cols.COMMENTS - 1] || '',
+          isReturnDecision(decision, status) ? flagsStr : '',
+          routingCol ? (row[routingCol - 1] || '') : '',
+          row[cols.DECISION_DATE - 1] || '',
+          snapshotAt
+        ]);
+      }
+    };
+
+    collect(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS, 'head',
+      APPROVAL_COLS.APPROVER_NAME, APPROVAL_COLS.APPROVER_EMAIL,
+      function (row) {
+        const s = Number(row[APPROVAL_COLS.CURRENT_STEP - 1] || 0);
+        return s === 1 ? 'Immediate Head' : s === 2 ? 'Department Head' : 'Head';
+      }, null);
+
+    collect(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS, 'ism',
+      ISM_WORKFLOW_COLS.ISM_MEMBER_NAME, ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL,
+      function () { return 'InfoSec Reviewer'; }, ISM_WORKFLOW_COLS.ROUTING_DESTINATION);
+
+    collect(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS, 'divhead',
+      null, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL,
+      function () { return 'Division Head'; }, null);
+
+    if (rows.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+      Logger.log('Revision history: snapshotted ' + rows.length + ' decision(s) for ' + sid + ' (round ' + round + ')');
+    }
+  } catch (e) {
+    Logger.log('writeRevisionHistorySnapshot_ failed (non-blocking): ' + e.toString());
+  }
+}
+
+/*
+  Function: getRevisionHistory
+  LAYMAN:    Reads back the logbook for one application, grouped by round, so emails / the review
+             screen / the certificate / the requestor timeline can show the full return history.
+  TECHNICAL: Filters Revision_History by sessionId, groups rows by RoundNumber, parses FlaggedFields
+             JSON, and returns rounds sorted ascending. Returns [] if the tab or rows don't exist.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   Array of { round, decisions:[{stage, approverName, approverEmail, role, decision,
+             status, comments, flaggedFields, routing, decisionDate, snapshotAt}] }.
+*/
+function getRevisionHistory(sessionId) {
+  try {
+    const sheet = getDatabaseSheet(DB_SHEET_NAMES.REVISION_HISTORY, false);
+    if (!sheet || sheet.getLastRow() < 2) return [];
+    const sid = String(sessionId || '').trim();
+    const data = sheet.getDataRange().getValues();
+    const byRound = {};
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (String(row[REVISION_HISTORY_COLS.SESSION_ID - 1] || '').trim() !== sid) continue;
+      const round = Number(row[REVISION_HISTORY_COLS.ROUND_NUMBER - 1] || 0);
+      if (!byRound[round]) byRound[round] = { round: round, decisions: [] };
+      let flags = {};
+      try { flags = JSON.parse(row[REVISION_HISTORY_COLS.FLAGGED_FIELDS - 1] || '{}'); } catch (e) { flags = {}; }
+      byRound[round].decisions.push({
+        stage: row[REVISION_HISTORY_COLS.STAGE - 1] || '',
+        approverName: row[REVISION_HISTORY_COLS.APPROVER_NAME - 1] || '',
+        approverEmail: row[REVISION_HISTORY_COLS.APPROVER_EMAIL - 1] || '',
+        role: row[REVISION_HISTORY_COLS.ROLE - 1] || '',
+        decision: row[REVISION_HISTORY_COLS.DECISION - 1] || '',
+        status: row[REVISION_HISTORY_COLS.STATUS - 1] || '',
+        comments: row[REVISION_HISTORY_COLS.COMMENTS - 1] || '',
+        flaggedFields: flags,
+        routing: row[REVISION_HISTORY_COLS.ROUTING - 1] || '',
+        decisionDate: row[REVISION_HISTORY_COLS.DECISION_DATE - 1] || '',
+        snapshotAt: row[REVISION_HISTORY_COLS.SNAPSHOT_AT - 1] || ''
+      });
+    }
+    return Object.keys(byRound).map(function (k) { return byRound[k]; }).sort(function (a, b) { return a.round - b.round; });
+  } catch (e) {
+    Logger.log('getRevisionHistory failed: ' + e.toString());
+    return [];
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 💾 DATABASE INITIALIZATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3744,6 +3928,18 @@ function submitApplication(appData) {
           };
         }
         
+        // ── Revision history: snapshot the round about to be wiped (non-blocking) ──
+        // Runs BEFORE Approver_Flags is cleared (below) and BEFORE the workflow rows are
+        // deleted, so the prior round's decisions + flags are preserved in Revision_History.
+        try {
+          const priorFlagsRaw = appSheet.getRange(freshRowNum, APPLICATIONS_COLS.APPROVER_FLAGS).getValue();
+          let priorFlags = {};
+          try { priorFlags = JSON.parse(priorFlagsRaw || '{}'); } catch (e) { priorFlags = {}; }
+          writeRevisionHistorySnapshot_(sessionId, priorFlags);
+        } catch (e) {
+          Logger.log('Revision history snapshot skipped (non-blocking): ' + e.toString());
+        }
+
         // UPDATE existing row (resubmission mode)
         appSheet.getRange(freshRowNum, APPLICATIONS_COLS.STATUS).setValue('Pending');
         appSheet.getRange(freshRowNum, APPLICATIONS_COLS.PIA_1_DATA).setValue(pia1Data);
