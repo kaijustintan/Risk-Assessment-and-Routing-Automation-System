@@ -7788,6 +7788,18 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
                 <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(appData.pia1?.purpose || '—')}</td>
               </tr>
               <tr>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280; vertical-align: top;">Scope</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(appData.pia1?.scope || '—')}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280; vertical-align: top;">Benefits</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(appData.pia1?.benefits || '—')}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280; vertical-align: top;">End User</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(appData.pia1?.endUser || '—')}</td>
+              </tr>
+              <tr>
                 <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Access Type</td>
                 <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.accessNeeded || '—')}</td>
               </tr>
