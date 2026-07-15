@@ -1486,6 +1486,19 @@ function submitDCS(payload, sessionId = '') {
     // for a document not covered by the fixed NDA/DPA/DSA/Endorsement slots). Stored as MULTIPLE
     // SUPPLEMENTARY entries (never one-per-type replaced), so they accumulate across resubmissions —
     // retained prior entries stay in uploadedIds and each newly uploaded file is appended.
+    // Round-4: EXCEPT when an approver flagged a supplementary doc — then the resubmit replaces the
+    // whole set (old entries archived as superseded, same as the fixed slots). Server-authoritative:
+    // the flag is read from the PIA Applications sheet, not trusted from the client.
+    if (isRevision && Array.isArray(payload.supplementaryFiles) && payload.supplementaryFiles.some(function (f) { return f && f.base64; })) {
+      try {
+        const piaRec = getPIARecordByDCSId_(ss, reqId);
+        const flags = (piaRec && piaRec.approverFlags) ? piaRec.approverFlags : {};
+        const hasSuppFlag = Object.keys(flags).some(function (k) { return k.indexOf('DCS - Additional Supporting Document:') === 0; });
+        if (hasSuppFlag) {
+          uploadedIds = archiveAndRecordSuperseded_(uploadedIds, function (f) { return f.type === 'SUPPLEMENTARY'; }, newlySuperseded, supersedeStamp, supersedeRound);
+        }
+      } catch (e) { Logger.log('Supplementary flag check failed (non-blocking, docs accumulate as before): ' + e.toString()); }
+    }
     if (Array.isArray(payload.supplementaryFiles)) {
       for (let i = 0; i < payload.supplementaryFiles.length; i++) {
         const sf = payload.supplementaryFiles[i];
@@ -2621,6 +2634,65 @@ function getDivHeadApproversList_(ss, piaSessionId) {
                piaDecision, hasPiaFlags, approverFlags, approverComments, approvers, ismApprovers,
                divHeadApprovers } on success; { found:false } if missing; { found:false, error } on error.
 */
+/*
+  Function: getRevisionHistoryRows_
+  LAYMAN (Tropang Ex):
+  Binabasa nito yung "Revision_History" logbook tab na sinusulatan ng PIA app tuwing may
+  return-and-resubmit, para maipakita sa requestor ang KUMPLETONG kwento ng approvals (lahat ng
+  rounds), hindi lang yung kasalukuyang round na nasa workflow sheets.
+
+  TECHNICAL:
+  Pure additive READ of the PIA-owned 'Revision_History' sheet in the same DB_ID spreadsheet.
+  Keyed by the PIA session id (NOT the DCS reqId). Local column map mirrors pia_code.js's
+  REVISION_HISTORY_COLS — pia_code.js owns the schema; keep in sync if it ever changes.
+  Null-guarded + try/catch: returns [] when the tab is missing, empty, or unreadable.
+
+  PARAMS:
+    - ss           — the database Spreadsheet object.
+    - piaSessionId — the linked PIA session id ('' or null returns []).
+  RETURNS: Array of { round, decisions:[{stage, approverName, approverEmail, role, decision,
+           status, comments, flaggedFields, routing, decisionDate}] }, rounds ascending.
+*/
+function getRevisionHistoryRows_(ss, piaSessionId) {
+  try {
+    const sid = String(piaSessionId || '').trim();
+    if (!sid) return [];
+    const sheet = ss.getSheetByName('Revision_History');
+    if (!sheet || sheet.getLastRow() < 2) return [];
+    // Mirrors pia_code.js REVISION_HISTORY_COLS (1-based) — pia_code.js owns this schema.
+    const COL = { SESSION_ID: 2, ROUND_NUMBER: 3, STAGE: 4, APPROVER_NAME: 5, APPROVER_EMAIL: 6,
+                  ROLE: 7, DECISION: 8, STATUS: 9, COMMENTS: 10, FLAGGED_FIELDS: 11, ROUTING: 12,
+                  DECISION_DATE: 13 };
+    const data = sheet.getDataRange().getValues();
+    const byRound = {};
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (String(row[COL.SESSION_ID - 1] || '').trim() !== sid) continue;
+      const round = Number(row[COL.ROUND_NUMBER - 1] || 0);
+      if (!byRound[round]) byRound[round] = { round: round, decisions: [] };
+      let flags = {};
+      try { flags = JSON.parse(row[COL.FLAGGED_FIELDS - 1] || '{}'); } catch (e) { flags = {}; }
+      byRound[round].decisions.push({
+        stage: row[COL.STAGE - 1] || '',
+        approverName: row[COL.APPROVER_NAME - 1] || '',
+        approverEmail: row[COL.APPROVER_EMAIL - 1] || '',
+        role: row[COL.ROLE - 1] || '',
+        decision: row[COL.DECISION - 1] || '',
+        status: row[COL.STATUS - 1] || '',
+        comments: row[COL.COMMENTS - 1] || '',
+        flaggedFields: flags,
+        routing: row[COL.ROUTING - 1] || '',
+        decisionDate: row[COL.DECISION_DATE - 1] ? String(row[COL.DECISION_DATE - 1]) : ''
+      });
+    }
+    return Object.keys(byRound).map(function (k) { return byRound[k]; })
+      .sort(function (a, b) { return a.round - b.round; });
+  } catch (e) {
+    Logger.log('getRevisionHistoryRows_ failed (non-blocking): ' + e.message);
+    return [];
+  }
+}
+
 function apiGetRequestData(reqId) {
   try {
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
@@ -2707,7 +2779,10 @@ function apiGetRequestData(reqId) {
       approverComments: (piaRecord && piaRecord.approverComments) ? piaRecord.approverComments : (metadata.approverComments || null),
       approvers: batch.approvals,
       ismApprovers: batch.ismApprovals,
-      divHeadApprovers: batch.divHeadApprovals
+      divHeadApprovers: batch.divHeadApprovals,
+      // Round-4 (additive): prior rounds from PIA's Revision_History logbook, keyed by the PIA
+      // session id. [] for requests that never reached PIA or were never returned.
+      revisionHistory: getRevisionHistoryRows_(ss, piaRecord ? piaRecord.piaSessionId : '')
     };
     
   } catch (err) {
