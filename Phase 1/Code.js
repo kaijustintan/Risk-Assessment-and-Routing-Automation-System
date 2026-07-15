@@ -1482,6 +1482,21 @@ function submitDCS(payload, sessionId = '') {
       uploadedIds = archiveAndRecordSuperseded_(uploadedIds, function(f) { return f.type === 'DSA'; }, newlySuperseded, supersedeStamp, supersedeRound);
       uploadedIds.push({ type: 'DSA', id: id, name: payload.dsaFile.fileName });
     }
+    // Commit 5: Additional Supporting Documents — optional, ad-hoc extra files (e.g. an approver asks
+    // for a document not covered by the fixed NDA/DPA/DSA/Endorsement slots). Stored as MULTIPLE
+    // SUPPLEMENTARY entries (never one-per-type replaced), so they accumulate across resubmissions —
+    // retained prior entries stay in uploadedIds and each newly uploaded file is appended.
+    if (Array.isArray(payload.supplementaryFiles)) {
+      for (let i = 0; i < payload.supplementaryFiles.length; i++) {
+        const sf = payload.supplementaryFiles[i];
+        if (sf && sf.base64) {
+          // Globally-unique Drive filename suffix (counts prior SUPPLEMENTARY entries incl. retained ones).
+          const existingSupp = uploadedIds.filter(function (f) { return f.type === 'SUPPLEMENTARY'; }).length;
+          const sId = uploadProxy(sf.base64, sf.fileName, 'SUPPLEMENTARY-' + (existingSupp + 1), sf.mimeType, reqId);
+          uploadedIds.push({ type: 'SUPPLEMENTARY', id: sId, name: sf.fileName });
+        }
+      }
+    }
   } catch (err) {
     return { success: false, error: 'File upload failed: ' + err.message };
   }
@@ -1799,12 +1814,12 @@ function notifyDcsRequester_(toEmail, reqId, phase2Url) {
     'Your Data Collection request (' + reqId + ') has been submitted successfully and is cleared to proceed to Phase 2 (Privacy Impact Assessment).\n\n' +
     'Proceed to Phase 2: ' + (phase2Url || '(open the DCS app)') + '\n\n' +
     'Submitted: ' + dateStr + '\n\n' +
-    '— Megaworld Data Privacy System';
+    '— Megaworld ISM Department';
   const html =
     '<div style="font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;background:#f9fafb;padding:24px;color:#333;line-height:1.6;">' +
       '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.08);overflow:hidden;">' +
         '<div style="background:' + accent + ';padding:18px 28px;">' +
-          '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld Data Privacy System</div>' +
+          '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld ISM Department</div>' +
           '<div style="color:#ffffff;font-size:20px;font-weight:700;margin-top:4px;">Request Submitted — Proceed to Phase 2</div>' +
         '</div>' +
         '<div style="padding:28px;">' +
@@ -1816,9 +1831,10 @@ function notifyDcsRequester_(toEmail, reqId, phase2Url) {
           '</tbody></table>' +
           '<div style="margin:22px 0 4px;"><a href="' + safe(phase2Url || '#') + '" style="display:inline-block;background:' + accent + ';color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:11px 24px;border-radius:6px;">Proceed to Phase 2 &rarr;</a></div>' +
         '</div>' +
-        '<div style="padding:16px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;font-size:11.5px;color:#9ca3af;">This is an automated message from the Megaworld Data Privacy System. Please do not reply to this email.</div>' +
+        '<div style="padding:16px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;font-size:11.5px;color:#9ca3af;">This is an automated message from the Megaworld ISM Department. Please do not reply to this email.</div>' +
       '</div></div>';
-  MailApp.sendEmail(toEmail, subject, plain, { htmlBody: html });
+  // Commit 9: brand the From display name as the ISM Department.
+  MailApp.sendEmail(toEmail, subject, plain, { htmlBody: html, name: 'Megaworld ISM Department' });
 }
 
 /*

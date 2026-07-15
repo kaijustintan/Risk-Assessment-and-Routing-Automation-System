@@ -2176,6 +2176,9 @@ function escapeHtml_(str) {
 */
 function sendEmailWithRetry_(recipients, subject, plainText, options) {
   var maxRetries = 5;
+  // Commit 9: brand the From display name as the ISM Department (unless a caller set one explicitly).
+  options = options || {};
+  if (!options.name) options.name = 'Megaworld ISM Department';
   for (var attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       MailApp.sendEmail(recipients, subject, plainText, options);
@@ -3161,11 +3164,11 @@ function buildAdminEmailHtml_(opts) {
   var cta = (opts.ctaText && opts.ctaUrl) ?
     '<div style="margin:22px 0 4px;"><a href="' + esc(opts.ctaUrl) + '" style="display:inline-block;background:' + accent +
     ';color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:11px 24px;border-radius:6px;">' + esc(opts.ctaText) + '</a></div>' : '';
-  var footer = opts.footerNote || 'This is an automated message from the Megaworld Data Privacy System. Please do not reply to this email.';
+  var footer = opts.footerNote || 'This is an automated message from the Megaworld ISM Department. Please do not reply to this email.';
   return '<div style="font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;background:#f9fafb;padding:24px;color:#333;line-height:1.6;">' +
     '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.08);overflow:hidden;">' +
       '<div style="background:' + accent + ';padding:18px 28px;">' +
-        '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld Data Privacy System</div>' +
+        '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld ISM Department</div>' +
         '<div style="color:#ffffff;font-size:20px;font-weight:700;margin-top:4px;">' + esc(opts.heading || 'Notification') + '</div>' +
       '</div>' +
       '<div style="padding:28px;">' +
@@ -3227,6 +3230,7 @@ function buildCertificateHtml_(sessionId, pia1, linkedReqId, applicantEmail,
     '<div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 40px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">' +
     // Header
     '<div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #2a5285; padding-bottom: 20px;">' +
+    '<div style="color: #2a5285; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 8px;">Megaworld ISM Department</div>' +
     '<h1 style="color: #2a5285; margin: 0; font-size: 28px; letter-spacing: -0.02em;">Certificate of Approval</h1>' +
     '<p style="color: #6b7280; margin: 5px 0 0 0; font-size: 14px;">Privacy Impact Assessment & Access Request</p>' +
     '</div>' +

@@ -2538,7 +2538,7 @@ function getCombinedStatusBadge(dcsStatus, piaStatus) {
   HTML string for the collapsible summary card.
 */
 // Helper function for the detailed DCS Submission Summary card
-function getDetailedDcsSummaryCardHtml(s, reqId, ndaFile, dsaFile, endorsementFile, remarks) {
+function getDetailedDcsSummaryCardHtml(s, reqId, ndaFile, dsaFile, endorsementFile, remarks, supplementaryHtml, supersededHtml) {
   return `
     <details open class="card" style="padding: 0; border: none; background: transparent;">
       <summary style="font-weight: 600; color: var(--text); cursor: pointer; padding: 1rem 1.25rem; border: 1px solid var(--border); border-radius: var(--radius-lg); list-style: none; display: flex; justify-content: space-between; align-items: center; background: var(--bg);">
@@ -2582,6 +2582,8 @@ function getDetailedDcsSummaryCardHtml(s, reqId, ndaFile, dsaFile, endorsementFi
           ${summaryRowRaw('NDA/DPA/CU File', ndaFile)}
           ${summaryRowRaw('DSA File', dsaFile)}
           ${endorsementFile ? summaryRowRaw('Endorsement Letter', endorsementFile) : ''}
+          ${supplementaryHtml ? summaryRowRaw('Additional Supporting Documents', supplementaryHtml) : ''}
+          ${supersededHtml ? summaryRowRaw('Previous Versions (superseded)', supersededHtml) : ''}
         </div>
         <div class="summary-section">
           <h3>Remarks</h3>
@@ -3520,10 +3522,12 @@ function preserveFiles() {
   const ndaInput = document.getElementById('dcs-main');
   const dsaInput = document.getElementById('dcs-dsa');
   const endorseInput = document.getElementById('dcs-agency-endorsement');
+  const suppInput = document.getElementById('dcs-supplementary');
   state._savedFiles = {
     nda: ndaInput?.files?.length ? ndaInput.files[0] : null,
     dsa: dsaInput?.files?.length ? dsaInput.files[0] : null,
-    endorsement: endorseInput?.files?.length ? endorseInput.files[0] : null
+    endorsement: endorseInput?.files?.length ? endorseInput.files[0] : null,
+    supplementary: suppInput?.files?.length ? Array.from(suppInput.files) : []
   };
 }
 
@@ -4638,11 +4642,28 @@ function renderForm() {
           ✓ ${(state.dcs.agency && state.dcs.agency.endorsementLetter) || ''} selected
         </div>
       </div>
+
+      <div class="field" id="supplementary-wrapper">
+        <label class="upload-card">
+          <input id="dcs-supplementary" type="file" accept=".pdf,.doc,.docx" multiple onchange="handleSupplementaryChange(this)">
+          <div class="upload-content">
+            <div class="upload-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text2);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+            </div>
+            <div class="upload-text">
+              <strong>Additional Supporting Documents (optional)</strong>
+              <span>Attach any extra files an approver may require. PDF, DOC, DOCX up to 10MB each; you can select multiple.</span>
+            </div>
+            <div class="upload-action">Browse</div>
+          </div>
+        </label>
+        <div id="supplementary-success" class="upload-success ${(state.dcs.supplementaryNames && state.dcs.supplementaryNames.length) ? '' : 'hidden'}">${(state.dcs.supplementaryNames && state.dcs.supplementaryNames.length) ? ('&#10003; ' + state.dcs.supplementaryNames.length + ' file' + (state.dcs.supplementaryNames.length > 1 ? 's' : '') + ' selected: ' + state.dcs.supplementaryNames.map(function(n){return escapeHtml(n);}).join(', ')) : ''}</div>
+      </div>
     </div>
 
     <div class="btn-row spread">
-      ${state.isEditing 
-        ? `<button class="btn" type="button" onclick="cancelRevision()">&larr; Cancel Revision</button>` 
+      ${state.isEditing
+        ? `<button class="btn" type="button" onclick="cancelRevision()">&larr; Cancel Revision</button>`
         : `<button class="btn" type="button" onclick="goBack('guide')">&larr; Back</button>`}
       <button class="btn btn-primary" type="button" onclick="saveDCSForm()">${isAgency ? 'Agency Details &rarr;' : 'Review Summary &rarr;'}</button>
     </div>
@@ -4793,6 +4814,15 @@ function renderForm() {
       endorseInput.files = dt.files;
       handleFileChange(endorseInput, 'agency-endorsement-success');
     }
+    if (state._savedFiles.supplementary && state._savedFiles.supplementary.length) {
+      const suppInput = document.getElementById('dcs-supplementary');
+      if (suppInput) {
+        const dt = new DataTransfer();
+        state._savedFiles.supplementary.forEach(function (f) { dt.items.add(f); });
+        suppInput.files = dt.files;
+        handleSupplementaryChange(suppInput);
+      }
+    }
     // Clear saved files after restoring so they don't re-apply on subsequent renders
     delete state._savedFiles;
   }
@@ -4827,6 +4857,32 @@ function handleFileChange(input, successId) {
     if (state.dcs._hadFiles) {
       state.dcs._hadFiles = false;
     }
+  } else {
+    successEl.classList.add('hidden');
+  }
+}
+
+/*
+  Function Name: handleSupplementaryChange
+  LAYMAN: For the optional "Additional Supporting Documents" picker (which allows several files at
+          once), shows a "N files selected: a.pdf, b.pdf" confirmation and remembers the names so they
+          still show on the Review Summary.
+  TECHNICAL: Reads every input.files entry (multi-file input). Stores the names in
+             state.dcs.supplementaryNames for summary rendering and updates the #supplementary-success
+             element. Files themselves are read at submit time (readFileAsBase64) and preserved across
+             re-renders via state._savedFiles.supplementary.
+  PARAMS:
+  - input — the multi-file <input type=file> element that changed.
+  RETURNS: Nothing.
+*/
+function handleSupplementaryChange(input) {
+  const successEl = document.getElementById('supplementary-success');
+  const names = (input.files && input.files.length) ? Array.from(input.files).map(f => f.name) : [];
+  state.dcs.supplementaryNames = names;
+  if (!successEl) return;
+  if (names.length > 0) {
+    successEl.innerHTML = '&#10003; ' + names.length + ' file' + (names.length > 1 ? 's' : '') + ' selected: ' + names.map(escapeHtml).join(', ');
+    successEl.classList.remove('hidden');
   } else {
     successEl.classList.add('hidden');
   }
@@ -5635,6 +5691,9 @@ function renderSummary() {
           }
           return summaryRow(endLabel, endName || 'Not attached');
         })() : ''}
+        ${(state.dcs.supplementaryNames && state.dcs.supplementaryNames.length)
+          ? summaryRow('Additional Supporting Documents', state.dcs.supplementaryNames.join(', '))
+          : ''}
       </div>
     </div>
 
@@ -5721,6 +5780,7 @@ async function submitRequest() {
       ndaFile: null, // Will be populated below if file exists
       dpaFile: null, // Will be populated below if file exists
       dsaFile: null, // Will be populated below if file exists
+      supplementaryFiles: [], // Commit 5: optional additional supporting documents (multi-file)
       isEditing: state.isEditing,
       agencyData: null
     };
@@ -5756,6 +5816,18 @@ async function submitRequest() {
           payload.agencyData.endorsementLetterFile = await readFileAsBase64(endorseInput.files[0]);
         } catch (e) {
           throw new Error('Endorsement letter error: ' + e.message);
+        }
+      }
+    }
+
+    // Commit 5: read every selected Additional Supporting Document (optional, multi-file).
+    const suppInput = document.getElementById('dcs-supplementary');
+    if (suppInput?.files?.length) {
+      for (let i = 0; i < suppInput.files.length; i++) {
+        try {
+          payload.supplementaryFiles.push(await readFileAsBase64(suppInput.files[i]));
+        } catch (e) {
+          throw new Error('Additional supporting document error: ' + e.message);
         }
       }
     }
@@ -6209,6 +6281,19 @@ function renderRequestDetails(data) {
   const dsaFile = fileLinkHtml(files.find(f => f.type === 'DSA'));
   const endorsementObj = files.find(f => f.type === 'ENDORSEMENT');
   const endorsementFile = endorsementObj ? fileLinkHtml(endorsementObj) : '';
+  // Commit 5: additional supporting documents — multiple SUPPLEMENTARY entries, listed together.
+  const supplementaryDocs = files.filter(f => f.type === 'SUPPLEMENTARY');
+  const supplementaryHtml = supplementaryDocs.length
+    ? supplementaryDocs.map(function (f) { return fileLinkHtml(f); }).join('<br>')
+    : '';
+  // Commit 4 (requestor view): previous document versions kept viewable via the Archive folder, not trashed.
+  const supersededDocs = Array.isArray(s.supersededFiles) ? s.supersededFiles : [];
+  const supersededHtml = supersededDocs.length
+    ? supersededDocs.map(function (f) {
+        const roundLabel = f.supersededRound ? ' <span style="color:var(--text3);">(replaced in round ' + escapeHtml(String(f.supersededRound)) + ')</span>' : '';
+        return fileLinkHtml(f) + roundLabel;
+      }).join('<br>')
+    : '';
 
   let actionButtonHtml = '';
   const hasPhase2Url = data.phase2Url && data.phase2Url.trim() !== '';
@@ -6307,7 +6392,7 @@ function renderRequestDetails(data) {
       `;
     })()}
 
-    ${getDetailedDcsSummaryCardHtml(s, data.reqId, ndaFile, dsaFile, endorsementFile, data.remarks)}
+    ${getDetailedDcsSummaryCardHtml(s, data.reqId, ndaFile, dsaFile, endorsementFile, data.remarks, supplementaryHtml, supersededHtml)}
 
     ${renderApprovalTracker(data)}
 

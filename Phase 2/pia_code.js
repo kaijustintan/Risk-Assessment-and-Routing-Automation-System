@@ -473,6 +473,9 @@ function findRowsToDelete(data, colIndex, value) {
 function sendEmailWithRetry(recipient, subject, body, options) {
   const MAX_ATTEMPTS = 3;
   const RETRY_DELAYS_MS = [1000, 3000, 5000];  // 1s, 3s, 5s backoff
+  // Commit 9: brand the From display name as the ISM Department (unless a caller set one explicitly).
+  options = options || {};
+  if (!options.name) options.name = 'Megaworld ISM Department';
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
@@ -1089,7 +1092,8 @@ const APPROVAL_COLS = {
   STATUS: 9,
   REMINDER_DATE: 10,
   EMAIL_STATUS: 11,
-  EMAIL_ERROR: 12
+  EMAIL_ERROR: 12,
+  NOTIFIED_DATE: 13 // Commit 6: date this approver was first notified (drives the 7-day first-reminder clock)
 };
 
 const AUDIT_COLS = {
@@ -1135,7 +1139,8 @@ const ISM_WORKFLOW_COLS = {
   ROUTING_DESTINATION: 12,
   REMINDER_DATE: 13,
   EMAIL_STATUS: 14,
-  EMAIL_ERROR: 15
+  EMAIL_ERROR: 15,
+  NOTIFIED_DATE: 16 // Commit 6: date this ISM member was first notified (drives the 7-day first-reminder clock)
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1151,7 +1156,8 @@ const DIV_HEAD_CONFIG_COLS = {
   STATUS: 7,
   REMINDER_DATE: 8,
   EMAIL_STATUS: 9,
-  EMAIL_ERROR: 10
+  EMAIL_ERROR: 10,
+  NOTIFIED_DATE: 11 // Commit 6: date this Division Head was first notified (drives the 7-day first-reminder clock)
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1802,6 +1808,10 @@ function handleEmailAction(params) {
       dcsFilesHtml = dcsFiles.map(f => {
         const fn = (f.name || '').toUpperCase();
         let docType = '';
+
+        // ── LAYER 0 (Commit 5): explicit type on the FILE_ID entry — supplementary docs have no
+        //    template suffix/keyword, so label them directly instead of falling through to "NDA Document".
+        if (f.type === 'SUPPLEMENTARY' || /SUPPLEMENTARY/i.test(fn)) docType = 'Additional Supporting Document';
 
         // ── LAYER 1: Check Metadata_JSON for document type field ──
         if (!docType && dcsData) {
@@ -3194,9 +3204,9 @@ function initializeDatabase() {
       const apprSheet = getDatabaseSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
       if (!apprSheet) throw new Error('Failed to create Approval_Workflow sheet');
       const headers = [
-        'ApprovalID', 'SessionID', 'CurrentStep', 'ApproverName', 
+        'ApprovalID', 'SessionID', 'CurrentStep', 'ApproverName',
         'ApproverEmail', 'Decision', 'Comments', 'DecisionDate', 'Status', 'ReminderDate',
-        'EmailStatus', 'EmailError'
+        'EmailStatus', 'EmailError', 'NotifiedDate'
       ];
       apprSheet.appendRow(headers);
       formatHeaderRow(apprSheet);
@@ -3262,7 +3272,7 @@ function initializeDatabase() {
       const ismHeaders = [
         'ISM_Approval_ID', 'SessionID', 'CurrentStep', 'ISM_Member_Name', 'ISM_Member_Email',
         'Decision', 'Comments', 'DecisionDate', 'Status', 'Requires_DivHead', 'DivHead_Escalation_ID', 'Routing_Destination', 'ReminderDate',
-        'EmailStatus', 'EmailError'
+        'EmailStatus', 'EmailError', 'NotifiedDate'
       ];
       createPhase3SheetWithValidation(DB_SHEET_NAMES.ISM_WORKFLOW, ismHeaders, []);
     } else {
@@ -3272,8 +3282,8 @@ function initializeDatabase() {
     // Create Division Head Config table with validation
     if (!sheetExists(DB_SHEET_NAMES.DIV_HEAD_CONFIG)) {
       const divHeadHeaders = [
-        'Escalation_ID', 'SessionID', 'DivHead_Email', 'Decision', 'Comments', 
-        'DecisionDate', 'Status', 'ReminderDate', 'EmailStatus', 'EmailError'
+        'Escalation_ID', 'SessionID', 'DivHead_Email', 'Decision', 'Comments',
+        'DecisionDate', 'Status', 'ReminderDate', 'EmailStatus', 'EmailError', 'NotifiedDate'
       ];
       createPhase3SheetWithValidation(DB_SHEET_NAMES.DIV_HEAD_CONFIG, divHeadHeaders, []);
     } else {
@@ -4781,7 +4791,10 @@ function processEmailQueue() {
       }
 
       try {
-        const options = htmlBody ? { htmlBody: htmlBody } : {};
+        // Commit 9: brand the From display name as the ISM Department on every queued email.
+        const options = htmlBody
+          ? { htmlBody: htmlBody, name: 'Megaworld ISM Department' }
+          : { name: 'Megaworld ISM Department' };
         GmailApp.sendEmail(recipient, subject, plainBody, options);
 
         // Mark as Sent
@@ -4942,25 +4955,59 @@ function setupEmailQueueTrigger() {
   return { success: true, message: 'Email queue trigger created. processEmailQueue will run every 1 minute.' };
 }
 
+/*
+  Function: getNotifiedDateStamp_
+  LAYMAN:   Today's date as a plain 'YYYY-MM-DD' text, used to mark when an approver was first notified
+            (the start of their 7-day reminder countdown).
+  TECHNICAL: Local-timezone date string, same format sendDailyReminders compares against.
+  RETURNS:  'YYYY-MM-DD'
+*/
+function getNotifiedDateStamp_() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+/*
+  Function: stampNotifiedDate_
+  LAYMAN:   Records "this approver was notified today" on their workflow row — but only the first time,
+            so a later notification never resets the 7-day reminder countdown.
+  TECHNICAL: Sets the NOTIFIED_DATE cell (1-based colNum) on the given 1-based sheet row to today's
+            YYYY-MM-DD, only when currently blank. Fully guarded — never throws into the caller.
+  PARAMS:   - sheet — workflow Sheet object.  - rowNum1 — 1-based sheet row.  - colNum — 1-based NOTIFIED_DATE column.
+  RETURNS:  undefined.
+*/
+function stampNotifiedDate_(sheet, rowNum1, colNum) {
+  try {
+    if (!sheet || !rowNum1 || !colNum) return;
+    const cell = sheet.getRange(rowNum1, colNum);
+    if (!cell.getValue()) cell.setValue(getNotifiedDateStamp_());
+  } catch (_) {}
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 🔔 DAILY REMINDER ENGINE — Nags pending approvers once per day
+// 🔔 DAILY REMINDER ENGINE — Nags pending approvers on a 7-day-then-every-3-days cadence
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Scans all three workflow sheets for Pending rows whose ReminderDate
-// is not today. Queues a gentle reminder email and stamps today's date.
+// Scans all three workflow sheets for Pending rows and nudges only the next pending approver per
+// request, on a cadence: first reminder 7 days after they were notified (NOTIFIED_DATE), then every
+// 3 days (from REMINDER_DATE). Runs daily but only sends when a row is due.
 // Uses CacheService continuation tokens to survive 6-min timeout.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
   Function: sendDailyReminders
-  LAYMAN:    The daily nudge. Looks across all three approval sheets for whoever is currently holding
-             things up and queues them one gentle reminder per day — but only the next person in
-             line, never people who haven't been reached yet.
+  LAYMAN:    The reminder engine (runs daily). Looks across all three approval sheets for whoever is
+             currently holding things up and nudges only the next person in line — never people who
+             haven't been reached yet. It doesn't nag every day: the first nudge goes out a week after
+             that approver was notified, then follow-ups every 3 days until they act.
   TECHNICAL: Trigger-driven; no-op if config.enabled is false. Pre-filters to sessionIds whose
              application is in an active status. For each of the three workflow sheets it groups
-             Pending rows by sessionId, keeps only the LOWEST pending step (sequential order), skips
-             rows already reminded today, and calls buildReminderEmail + stamps today's REMINDER_DATE.
-             Uses a CacheService continuation token + MAX_SCAN_ROWS cap to survive the execution-time
-             limit, and stops early if the Gmail daily quota is nearly exhausted.
+             Pending rows by sessionId and keeps only the LOWEST pending step (sequential order). Send
+             gate (Commit 6): if REMINDER_DATE is empty, send only when today − NOTIFIED_DATE ≥ 7 days;
+             otherwise send when today − REMINDER_DATE ≥ 3 days. Legacy pending rows with a blank
+             NOTIFIED_DATE get stamped today (starting their 7-day clock) instead of firing immediately.
+             On send it calls buildReminderEmail + stamps today's REMINDER_DATE. Uses a CacheService
+             continuation token + MAX_SCAN_ROWS cap to survive the execution-time limit, and stops
+             early if the Gmail daily quota is nearly exhausted.
   PARAMS:    (none)
   RETURNS:   { success:true, processed, reminded } (plus skipped/capped/quotaExhausted flags).
 */
@@ -4996,6 +5043,26 @@ function sendDailyReminders() {
   var cache = CacheService.getScriptCache();
   var CONTINUATION_KEY = 'reminder_continuation';
   var MAX_SCAN_ROWS = 300; // Safety cap per execution
+
+  // Commit 6: reminder cadence — first nudge 7 days after the approver was notified, then every 3 days.
+  var REMINDER_FIRST_DAYS = 7;
+  var REMINDER_REPEAT_DAYS = 3;
+  // Whole-day difference (local midnight-to-midnight) between a 'YYYY-MM-DD' string and today. -1 if unparseable.
+  var daysSince = function (dateStr) {
+    var parts = String(dateStr || '').split('-');
+    if (parts.length !== 3) return -1;
+    var then = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    if (isNaN(then.getTime())) return -1;
+    var nowMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    return Math.floor((nowMid - then) / 86400000);
+  };
+  // Normalize a cell value (Sheets may return a Date object) to a 'YYYY-MM-DD' string.
+  var normalizeDateCell = function (raw) {
+    if (Object.prototype.toString.call(raw) === '[object Date]') {
+      return raw.getFullYear() + '-' + String(raw.getMonth() + 1).padStart(2, '0') + '-' + String(raw.getDate()).padStart(2, '0');
+    }
+    return String(raw || '').trim();
+  };
 
   // Read continuation token from previous run
   var continuation = null;
@@ -5107,7 +5174,8 @@ function sendDailyReminders() {
           step: step,
           approverEmail: data[i][sheetDef.emailCol - 1],
           approverName: sheetDef.nameCol ? data[i][sheetDef.nameCol - 1] : 'Division Head',
-          reminderDate: normalizedDate
+          reminderDate: normalizedDate,
+          notifiedDate: normalizeDateCell(data[i][sheetDef.cols.NOTIFIED_DATE - 1])
         };
       }
     }
@@ -5126,8 +5194,20 @@ function sendDailyReminders() {
       }
       processedCount++;
 
-      // Skip if already reminded today
+      // Commit 6: cadence gate — first reminder 7 days after notification, then every 3 days.
+      // Legacy pending rows created before NOTIFIED_DATE existed have no notified date: stamp it
+      // today to start their 7-day clock (avoids a burst of reminders on the first scan) and skip.
+      if (!row.notifiedDate) {
+        try { sheet.getRange(row.rowIndex + 1, sheetDef.cols.NOTIFIED_DATE).setValue(todayStr); } catch (_) {}
+        continue;
+      }
+      // Already reminded today — nothing to do.
       if (row.reminderDate === todayStr) continue;
+      // Decide by cadence: never reminded → wait 7 days from notification; else → every 3 days.
+      var shouldSend = row.reminderDate
+        ? (daysSince(row.reminderDate) >= REMINDER_REPEAT_DAYS)
+        : (daysSince(row.notifiedDate) >= REMINDER_FIRST_DAYS);
+      if (!shouldSend) continue;
 
       // Check daily quota before queueing
       try {
@@ -5227,7 +5307,7 @@ function buildReminderEmail(sessionId, approverEmail, approverName, stepInfo) {
         generateEmailDecisionsHTML(sessionId) +
         '</div>' +
         '<div><a href="' + reviewUrl + '" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>' +
-        '<p style="font-size:12px;color:#9ca3af;margin-top:16px;">You will receive a reminder daily until you take action on this application.</p>'
+        '<p style="font-size:12px;color:#9ca3af;margin-top:16px;">You will receive periodic reminders until you take action on this application.</p>'
     });
 
     // Queue via existing email infrastructure — use 'reminder' type for all
@@ -5280,11 +5360,11 @@ function buildPiaEmailHtml_(opts) {
   return '<div style="font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;background:#f9fafb;padding:24px;color:#333;line-height:1.6;">' +
     '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.08);overflow:hidden;">' +
       '<div style="background:' + accent + ';padding:18px 28px;">' +
-        '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld Data Privacy System</div>' +
+        '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld ISM Department</div>' +
         '<div style="color:#ffffff;font-size:20px;font-weight:700;margin-top:4px;">' + heading + '</div>' +
       '</div>' +
       '<div style="padding:28px;">' + content + '</div>' +
-      '<div style="padding:16px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;font-size:12px;color:#6b7280;line-height:1.5;"><strong style="color:#374151;">No-reply notice.</strong> This mailbox is not monitored, so please do not reply. Use the button above to take action. For assistance, contact ISM-InfoSec at <strong style="color:#374151;">infosec@megaworldcorp.com</strong>.</div>' +
+      '<div style="padding:16px 28px;border-top:1px solid #e5e7eb;background:#f9fafb;font-size:12px;color:#6b7280;line-height:1.5;"><div style="font-weight:600;color:#374151;margin-bottom:4px;">Megaworld ISM Department</div><strong style="color:#374151;">No-reply notice.</strong> This mailbox is not monitored, so please do not reply. Use the button above to take action. For assistance, contact ISM-InfoSec at <strong style="color:#374151;">infosec@megaworldcorp.com</strong>.</div>' +
     '</div></div>';
 }
 
@@ -5313,7 +5393,8 @@ function notifyApprover(sessionId, approverIndex) {
     // Find all approval records for this sessionId to determine total steps
     let totalSteps = 0;
     let approverToNotify = null;
-    
+    let approverRowIndex = -1; // 0-based index into apprData (sheet row = index + 1) for NOTIFIED_DATE stamping
+
     for (let i = 1; i < apprData.length; i++) {
       if (apprData[i][APPROVAL_COLS.SESSION_ID - 1] === sessionId) {
         totalSteps++;
@@ -5323,6 +5404,7 @@ function notifyApprover(sessionId, approverIndex) {
             name: apprData[i][APPROVAL_COLS.APPROVER_NAME - 1],
             email: apprData[i][APPROVAL_COLS.APPROVER_EMAIL - 1]
           };
+          approverRowIndex = i;
         }
       }
     }
@@ -5374,6 +5456,9 @@ function notifyApprover(sessionId, approverIndex) {
 
     // Queue email for deferred reliable delivery (avoids Gmail throttling in-request)
     queueEmail(sessionId, approver.email, subject, "Please view this email in an HTML-compatible client.", 'approver', htmlBody);
+
+    // Commit 6: mark when this approver was first notified (starts their 7-day reminder clock).
+    if (approverRowIndex > 0) stampNotifiedDate_(apprSheet, approverRowIndex + 1, APPROVAL_COLS.NOTIFIED_DATE);
   } catch (e) {
     Logger.log('FAILSAFE: Email queue for approver failed for ' + sessionId + ': ' + e.toString());
     try {
@@ -7694,17 +7779,20 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       // Prevents duplicate escalation records when multiple ISM members escalate
       const existingDivData = divHeadSheet.getDataRange().getValues();
       let hasPendingEscalation = false;
+      let divHeadRowNum = -1; // 1-based sheet row of the Pending DivHead escalation (for NOTIFIED_DATE stamping)
       for (let di = 1; di < existingDivData.length; di++) {
         if (existingDivData[di][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === sessionId &&
             existingDivData[di][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') {
           hasPendingEscalation = true;
+          divHeadRowNum = di + 1;
           Logger.log(`[AUDIT] ${sessionId}: Pending DivHead escalation already exists — skipping duplicate creation`);
           break;
         }
       }
-      
+
       if (!hasPendingEscalation) {
         divHeadSheet.appendRow([escalationId, sessionId, divHeadEmail, '', '', '', 'Pending', '', 'Pending', '']);
+        divHeadRowNum = divHeadSheet.getLastRow();
       }
 
       Logger.log(`[AUDIT] ${sessionId}: ISM Review Escalated to Division Head (${divHeadEmail}) by ${ismMemberEmail}`);
@@ -7738,6 +7826,8 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
               <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
           });
           queueEmail(sessionId, divHeadEmail, subject, "Please view this email in an HTML-compatible client.", 'divhead', htmlBody);
+          // Commit 6: mark when the Division Head was first notified (starts their 7-day reminder clock).
+          if (divHeadRowNum > 0) stampNotifiedDate_(divHeadSheet, divHeadRowNum, DIV_HEAD_CONFIG_COLS.NOTIFIED_DATE);
         } catch(e) {
           Logger.log('Error queuing Div Head notification: ' + e);
           logAuditTrail(sessionId, 'Email Failed', JSON.stringify({
@@ -7789,6 +7879,7 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
     const data = ismWorkflowSheet.getDataRange().getValues();
 
     let ismMember = null;
+    let ismRowIndex = -1; // 0-based index into data (sheet row = index + 1) for NOTIFIED_DATE stamping
     for (let i = 1; i < data.length; i++) {
       if (data[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId &&
           Number(data[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1]) === Number(stepNumber) &&
@@ -7797,6 +7888,7 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
           name: data[i][ISM_WORKFLOW_COLS.ISM_MEMBER_NAME - 1],
           email: data[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]
         };
+        ismRowIndex = i;
         break;
       }
     }
@@ -7841,6 +7933,8 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
 
     // Queue for deferred delivery (avoids Gmail throttling in-request)
     queueEmail(sessionId, ismMember.email, subject, "Please view this email in an HTML-compatible client.", 'ism', htmlBody);
+    // Commit 6: mark when this ISM member was first notified (starts their 7-day reminder clock).
+    if (ismRowIndex > 0) stampNotifiedDate_(ismWorkflowSheet, ismRowIndex + 1, ISM_WORKFLOW_COLS.NOTIFIED_DATE);
     Logger.log('✓ ISM review notification queued for ' + ismMember.email + ' step ' + stepNumber);
   } catch (e) {
     Logger.log('Error in apiPhase3_NotifyISMember: ' + e.toString());
@@ -8112,6 +8206,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
           <!-- Header -->
           <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #2a5285; padding-bottom: 20px;">
             <img src="https://upload.wikimedia.org/wikipedia/commons/e/e2/Megaworld_logo_and_wordmark.svg" alt="Megaworld Logo" height="28" style="margin-bottom: 15px;">
+            <div style="color: #2a5285; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 8px;">Megaworld ISM Department</div>
             <h1 style="color: #2a5285; margin: 0; font-size: 28px; letter-spacing: -0.02em;">Certificate of Approval</h1>
             <p style="color: #6b7280; margin: 5px 0 0 0; font-size: 14px;">Privacy Impact Assessment & Access Request</p>
           </div>
