@@ -853,12 +853,15 @@ function getStyledHtmlWrapper(header, content) {
           padding: 4px 12px; border-radius: 99px; letter-spacing: 0.01em;
           white-space: nowrap; /* Prevent "Y E S" stacking */
         }
+        /* Round-4 unified status matrix: approved=green, returned=amber, denied=red,
+           escalated/pending=blue (matches DCS + the emails; amber is reserved for Returned). */
         .status-approved { background: var(--success); color: var(--success-text); }
-        .status-pending  { background: var(--warn);    color: var(--warn-text); }
+        .status-pending  { background: #eff6ff; color: #1e40af; }
+        .status-returned { background: var(--warn); color: var(--warn-text); }
         .status-rejected { background: var(--danger);  color: var(--danger-text); }
         .status-denied   { background: var(--danger);  color: var(--danger-text);  }
         .status-complete { background: var(--success); color: var(--success-text); }
-        .status-escalated { background: #f3e8ff; color: #6b21a8; }
+        .status-escalated { background: #eff6ff; color: #1e40af; }
         /* New styles for buttons */
         .btn-success { background: var(--success); color: var(--success-text); border-color: transparent; }
         .btn-warn    { background: var(--warn);    color: var(--warn-text);    border-color: transparent; }
@@ -1744,7 +1747,8 @@ function handleEmailAction(params) {
             // ONLY add if not already found in dcsFiles (prevents double buttons for same file)
             const alreadyFound = dcsFiles.some(f => f.id === val.id);
             if (!alreadyFound) {
-              endorsementFileHtml = `<a href="https://drive.google.com/file/d/${escapeHtml(val.id)}/view" target="_blank" class="btn btn-sm" style="color: var(--navy-bright); text-decoration: none; border-color: var(--navy-bright);" title="${escapeHtml(val.name || 'Endorsement Letter')}">📄 View Endorsement Letter</a>`;
+              // Round-4: endorsement letter is flaggable too (same 'DCS - ' prefix contract).
+              endorsementFileHtml = `<span style="display: inline-flex; align-items: center; gap: 2px;"><a href="https://drive.google.com/file/d/${escapeHtml(val.id)}/view" target="_blank" class="btn btn-sm" style="color: var(--navy-bright); text-decoration: none; border-color: var(--navy-bright);" title="${escapeHtml(val.name || 'Endorsement Letter')}">View Endorsement Letter</a>${makeFlagBtn('DCS - Endorsement Letter')}</span>`;
             }
             return;
           }
@@ -1859,7 +1863,15 @@ function handleEmailAction(params) {
         // ── LAYER 4: Final fallback ──
         if (!docType) docType = 'NDA Document';
 
-        return `<a href="${escapeHtml(f.url)}" target="_blank" class="btn btn-sm" style="color: var(--navy-bright); text-decoration: none; border-color: var(--navy-bright);" title="${escapeHtml(f.name)}">View ${docType}</a>`;
+        // Round-4: documents are now flaggable. Labels keep the 'DCS - ' prefix (the DCS app buckets
+        // flags by that prefix) and supplementary docs are keyed per filename so the requestor knows
+        // exactly which extra file was flagged.
+        let docFlagLabel = 'DCS - NDA Document';
+        if (docType === 'Additional Supporting Document') docFlagLabel = 'DCS - Additional Supporting Document: ' + (f.name || 'file');
+        else if (docType === 'DSA') docFlagLabel = 'DCS - DSA Document';
+        else if (docType === 'Endorsement Letter') docFlagLabel = 'DCS - Endorsement Letter';
+
+        return `<span style="display: inline-flex; align-items: center; gap: 2px;"><a href="${escapeHtml(f.url)}" target="_blank" class="btn btn-sm" style="color: var(--navy-bright); text-decoration: none; border-color: var(--navy-bright);" title="${escapeHtml(f.name)}">View ${docType}</a>${makeFlagBtn(docFlagLabel)}</span>`;
       }).join('');
     }
 
@@ -1875,7 +1887,10 @@ function handleEmailAction(params) {
     const badgeClass = (() => {
       const s = String(appData.status || '').toLowerCase();
       if (s.includes('approve')) return 'approved';
-      if (s.includes('reject') || s.includes('return')) return 'rejected';
+      // Round-4: Returned is a fixable loop, not a terminal denial — amber, not red.
+      // 'Rejected by ISM' stays terminal-red; plain 'Rejected' is the legacy Returned label.
+      if (s.includes('rejected by ism')) return 'denied';
+      if (s.includes('reject') || s.includes('return')) return 'returned';
       if (s.includes('deny')) return 'denied';
       if (s.includes('escalat')) return 'escalated';
       return 'pending';
@@ -1923,7 +1938,9 @@ function handleEmailAction(params) {
   const getStatusBadgeClass = (status) => {
     const s = String(status || '').toLowerCase();
     if (s.includes('approve')) return 'approved';
-    if (s.includes('reject') || s.includes('return')) return 'rejected';
+    // Round-4: Returned = amber (fixable loop); only 'Rejected by ISM' keeps the terminal red.
+    if (s.includes('rejected by ism')) return 'denied';
+    if (s.includes('reject') || s.includes('return')) return 'returned';
     if (s.includes('deny')) return 'denied';
     if (s.includes('escalat')) return 'escalated';
     return 'pending'; // Default for 'Pending', 'Under Review', 'Escalated...'
@@ -2035,7 +2052,7 @@ function handleEmailAction(params) {
         } else if (step1.routing === 'TECHSERVE') {
           routingBadge = `<span class="status-badge" style="background:#ccfbf1; color:#115e59; border:1px solid rgba(17,94,89,0.2);">TechServe</span>`;
         } else if (step1.routing === 'BOTH') {
-          routingBadge = `<span class="status-badge" style="background:#f3e8ff; color:#6b21a8; border:1px solid rgba(107,33,168,0.2);">Both Teams</span>`;
+          routingBadge = `<span class="status-badge" style="background:#eff6ff; color:#1e40af; border:1px solid rgba(30,64,175,0.2);">Both Teams</span>`;
         } else {
           routingBadge = `<span class="status-badge" style="background:var(--bg3); color:var(--text2); border:1px solid var(--border);">${escapeHtml(step1.routing)}</span>`;
         }
@@ -2065,7 +2082,7 @@ function handleEmailAction(params) {
     const approverBadgesHtml = (appData.approvers || []).map(a => {
       let badgeCls = 'status-pending';
       if (a.status === 'Approved') badgeCls = 'status-approved';
-      else if (a.status === 'Rejected' || a.status === 'Returned') badgeCls = 'status-rejected';
+      else if (a.status === 'Rejected' || a.status === 'Returned') badgeCls = 'status-returned';
       else if (a.status === 'Denied') badgeCls = 'status-denied';
 
       const roleLabel = a.role ? `<div style="font-size: 9px; font-weight: 800; color: var(--text3); text-transform: uppercase; margin-bottom: 3px; letter-spacing: 0.03em;">${escapeHtml(a.role)}</div>` : '';
@@ -2083,8 +2100,9 @@ function handleEmailAction(params) {
     const ismApproverBadgesHtml = (ismWorkflowContext.steps || []).map(a => {
       let badgeCls = 'status-pending';
       if (a.status === 'Approved') badgeCls = 'status-approved';
-      else if (a.status === 'Rejected' || a.status === 'Returned') badgeCls = 'status-rejected';
+      else if (a.status === 'Rejected' || a.status === 'Returned') badgeCls = 'status-returned';
       else if (a.status === 'Denied') badgeCls = 'status-denied';
+      else if (a.status === 'EscalatedToDivisionHead') badgeCls = 'status-escalated';
 
       const roleLabel = `<div style="font-size: 9px; font-weight: 800; color: var(--text3); text-transform: uppercase; margin-bottom: 3px; letter-spacing: 0.03em;">InfoSec Member (Step ${a.step})</div>`;
       const dateStr = formatApproverDate(a.decisionDate);
@@ -2115,7 +2133,7 @@ function handleEmailAction(params) {
           </div>
           <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Forward this application to the Division Head for executive review.</div>
-            <button type="button" class="btn btn-secondary" style="background:#7c3aed; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#7c3aed;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
+            <button type="button" class="btn btn-secondary" style="background:#1e40af; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#1e40af;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
           </div>
           <div class="action-deny-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Send this application back to the original requestor for necessary revisions.</div>
@@ -2141,7 +2159,7 @@ function handleEmailAction(params) {
         escalateBtnHtml = `
           <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Forward this application to the Division Head for executive review.</div>
-            <button type="button" class="btn btn-secondary" style="background:#7c3aed; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#7c3aed;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
+            <button type="button" class="btn btn-secondary" style="background:#1e40af; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#1e40af;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
           </div>
         `;
       }
@@ -2164,15 +2182,25 @@ function handleEmailAction(params) {
       `;
     }
     
-    const ismPriorRounds = buildRevisionHistoryHtml(sessionId);
-    const ismRevisionBanner = ismPriorRounds
-      ? '<div style="margin-top:1.5rem; padding:14px 16px; background:#fff8e1; border:1px solid rgba(180,109,20,0.25); border-radius:var(--radius);"><div style="font-size:13px; font-weight:700; color:#92400e; margin-bottom:8px;">This request was returned and revised. Previous review rounds:</div>' + ismPriorRounds + '</div>'
-      : '';
+    // Round-4: personalized "you previously approved/returned this" chip for the reviewer.
+    const ismPriorChip = buildPriorReviewChipHtml_(sessionId, targetEmail);
+    // Round-4 unified history: the same grouped-by-round list the standard form shows (replaces the
+    // prior-rounds-only banner). The current-state chips below stay for quick scanning.
+    const ismApprovalHistory = (function () {
+      try {
+        const h = buildUnifiedHistoryHtml(getUnifiedHistory(sessionId, true));
+        return h
+          ? '<div class="summary-section-title" style="margin-top: 1.5rem;">Approval History</div>' +
+            '<div style="margin-top: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px;">' + h + '</div>'
+          : '';
+      } catch (e) { return ''; }
+    })();
 
     const content = `
       ${errorAlert}
+      ${ismPriorChip}
       ${previewHtml}
-      ${ismRevisionBanner}
+      ${ismApprovalHistory}
       <div class="summary-section-title" style="margin-top: 1.5rem;">Main Workflow Approvers</div>
       <div class="ismApproverContainer" style="margin-top: 8px;">${approverBadgesHtml}</div>
       <div class="summary-section-title" style="margin-top: 1.5rem;">ISM Workflow Approvers</div>
@@ -2434,9 +2462,15 @@ function handleEmailAction(params) {
         }
         
         function showReturnOptions() {
+          // Round-4: a Return must identify at least one flagged item (was unchecked on the ISM form,
+          // while the standard form demanded 2 — both now consistently require 1).
+          if (Object.keys(flagData).length < 1) {
+            showError('Please flag at least 1 field or document before returning the application.');
+            return;
+          }
           document.getElementById('returnModal').style.display = 'flex';
         }
-        
+
         function closeReturnModal() {
           document.getElementById('returnModal').style.display = 'none';
         }
@@ -2547,7 +2581,8 @@ function handleEmailAction(params) {
     }
     
     // Call Phase 3 API to process ISM decision
-    const result = apiPhase3_ProcessISMDecision(sessionId, targetEmail, ismDecision, comment || 'No additional comments provided.', routingDestination, stepParam, approverFlags);
+    // Round-4: no boilerplate default comment; an empty comment is stored empty and hidden at render.
+    const result = apiPhase3_ProcessISMDecision(sessionId, targetEmail, ismDecision, comment || '', routingDestination, stepParam, approverFlags);
     
     if (result.success) {
       let displayDecision = ismDecision;
@@ -2597,40 +2632,26 @@ function handleEmailAction(params) {
       } catch(e) { return ''; }
     };
 
-    let badgesSection = '';
-    if (approverType === 'divhead') {
-      const approverBadgesHtml = (appData.approvers || []).map(a => {
-        let badgeCls = 'status-pending';
-        if (a.status === 'Approved') badgeCls = 'status-approved';
-        else if (a.status === 'Rejected' || a.status === 'Returned') badgeCls = 'status-rejected';
-        else if (a.status === 'Denied') badgeCls = 'status-denied';
-        const roleLabel = a.role ? `<div style="font-size: 9px; font-weight: 800; color: var(--text3); text-transform: uppercase; margin-bottom: 3px; letter-spacing: 0.03em;">${escapeHtml(a.role)}</div>` : '';
-        const dateStr = formatApproverDateReview(a.decisionDate);
-        const dateHtml = dateStr ? `<div style="font-size: 9px; color: var(--text3); margin-top: 2px;">${escapeHtml(dateStr)}</div>` : '';
-        return `
-          <div style="display: inline-flex; flex-direction: column; margin-right: 12px; margin-bottom: 12px; vertical-align: top; max-width: 210px;">
-            ${roleLabel}
-            <span class="status-badge ${badgeCls}" style="font-size: 11px; border: 1px solid var(--border); border-color: rgba(0,0,0,0.1); padding: 4px 10px;">${escapeHtml(a.name)}: ${escapeHtml(a.status)}</span>
-            ${dateHtml}
-          </div>`;
-      }).join('');
-
-      badgesSection = `
-        <div class="summary-section-title" style="margin-top: 1.5rem;">Main Workflow Approvers</div>
-        <div class="ismApproverContainer" style="margin-top: 8px;">${approverBadgesHtml}</div>
-      `;
-    }
-
-    const stdPriorRounds = buildRevisionHistoryHtml(sessionId);
-    const stdRevisionBanner = stdPriorRounds
-      ? '<div style="margin-top:1.5rem; padding:14px 16px; background:#fff8e1; border:1px solid rgba(180,109,20,0.25); border-radius:var(--radius);"><div style="font-size:13px; font-weight:700; color:#92400e; margin-bottom:8px;">This request was returned and revised. Previous review rounds:</div>' + stdPriorRounds + '</div>'
-      : '';
+    // Round-4: personalized "you previously approved/returned this" chip for the reviewer.
+    const stdPriorChip = buildPriorReviewChipHtml_(sessionId, targetEmail);
+    // Round-4 unified history: ONE grouped-by-round list for EVERY approver type (previously only
+    // the Division Head saw other approvers' badges; plain heads saw nothing about the chain).
+    // Pending rows included so the reviewer sees who is next in line.
+    const stdApprovalHistory = (function () {
+      try {
+        const h = buildUnifiedHistoryHtml(getUnifiedHistory(sessionId, true));
+        return h
+          ? '<div class="summary-section-title" style="margin-top: 1.5rem;">Approval History</div>' +
+            '<div style="margin-top: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px;">' + h + '</div>'
+          : '';
+      } catch (e) { return ''; }
+    })();
 
     const content = `
       ${errorAlert}
+      ${stdPriorChip}
       ${previewHtml}
-      ${stdRevisionBanner}
-      ${badgesSection}
+      ${stdApprovalHistory}
       <span class="step-badge" style="text-transform: none; font-weight: 500; margin-bottom: 15px;">You are reviewing as <strong>${escapeHtml(activeUser)}</strong></span>
       <p>Please provide your feedback and select a decision for application <strong>${escapeHtml(sessionId)}</strong> below.</p>
       <form method="POST" id="approvalForm" action="${webAppUrl}" target="_top">
@@ -2820,8 +2841,9 @@ function handleEmailAction(params) {
         });
         
         function showReturnOptions() {
-          if (Object.keys(flagData).length < 2) {
-            showError('Please flag at least 2 fields before returning the application.');
+          // Round-4: minimum lowered 2 -> 1 (one clearly flagged item is enough to justify a return).
+          if (Object.keys(flagData).length < 1) {
+            showError('Please flag at least 1 field or document before returning the application.');
             return;
           }
           document.getElementById('returnModal').style.display = 'flex';
@@ -2866,29 +2888,27 @@ function handleEmailAction(params) {
       sessionId,
       targetEmail,
       action,
-      comment || 'Approved via secure access review link.',
+      // Round-4: no boilerplate default comment; empty stays empty and is hidden at render.
+      comment || '',
       approverFlags
     );
   } else {
     result = processApprovalDecision(
-      sessionId, targetEmail, action, comment || 'Approved via secure access review link.', stepParam, approverFlags
+      sessionId, targetEmail, action, comment || '', stepParam, approverFlags
     );
   }
-  
+
   if (result.success) {
-    const isSuccess = action === 'Approve';
-    const textColorVar = isSuccess ? 'var(--success-text)' : 'var(--danger-text)';
-    const bgColorVar = isSuccess ? 'var(--success)' : 'var(--danger)';
-    const borderColorVar = isSuccess ? 'rgba(22,163,74,0.2)' : 'rgba(220,38,38,0.2)';
-    
     let displayAction = action;
     if (action === 'Approve') displayAction = 'Approved';
     if (action === 'Deny') displayAction = 'Denied';
     if (action === 'Return') displayAction = 'Returned to Requestor';
 
+    // Round-4: the box confirms the SAVE succeeded, so it is green for every decision
+    // (a red box on Return read as an error; matches the ISM branch which was already green).
     return HtmlService.createHtmlOutput(getStyledHtmlWrapper(
       `<span class="step-badge">Action Completed</span><h1>Successfully ${displayAction}!</h1>`,
-      `<div class="alert" style="background: ${bgColorVar}; color: ${textColorVar}; border-color: ${borderColorVar};">The decision for application <strong>${sessionId}</strong> has been safely recorded in the database.</div>
+      `<div class="alert" style="background: var(--success); color: var(--success-text); border-color: rgba(22,163,74,0.2);">The decision for application <strong>${sessionId}</strong> has been safely recorded in the database.</div>
       ${previewHtml}
       <p style="text-align: center; color: var(--text2); margin-top: 1.5rem; font-size: 13px;">Your response has been saved. You may now safely close this window.</p>`
     ));
@@ -3134,6 +3154,130 @@ function getRevisionHistory(sessionId) {
   } catch (e) {
     Logger.log('getRevisionHistory failed: ' + e.toString());
     return [];
+  }
+}
+
+/*
+  Function: collectCurrentRoundDecisions_
+  LAYMAN:    Reads the CURRENT round's approver rows straight from the three live workflow sheets
+             (the prior rounds live in Revision_History; the current one only exists here until the
+             next return wipes it into the logbook).
+  TECHNICAL: Same three-sheet walk as writeRevisionHistorySnapshot_'s collect, returning objects in
+             the getRevisionHistory decision shape instead of sheet rows. Duplicated from the
+             snapshot on purpose: its WRITE path must stay untouched (risk containment). When
+             includePending is true, Pending/blank rows are kept as status 'Pending' so in-progress
+             surfaces can show who is next in line.
+  PARAMS:    - sessionId — application id.  - includePending — keep Pending rows too.
+  RETURNS:   Array of decision objects (possibly empty). Never throws.
+*/
+function collectCurrentRoundDecisions_(sessionId, includePending) {
+  const sid = String(sessionId || '').trim();
+  const out = [];
+  if (!sid) return out;
+  const collect = function (sheetName, cols, stage, nameCol, emailCol, roleFn, routingCol) {
+    try {
+      const src = getDatabaseSheet(sheetName, false);
+      if (!src) return;
+      const data = src.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        if (String(row[cols.SESSION_ID - 1] || '').trim() !== sid) continue;
+        const status = String(row[cols.STATUS - 1] || '');
+        const isPending = status === 'Pending' || status === '';
+        if (isPending && !includePending) continue;
+        out.push({
+          stage: stage,
+          approverName: nameCol ? (row[nameCol - 1] || '') : '',
+          approverEmail: row[emailCol - 1] || '',
+          role: roleFn(row),
+          decision: row[cols.DECISION - 1] || '',
+          status: isPending ? 'Pending' : status,
+          comments: row[cols.COMMENTS - 1] || '',
+          flaggedFields: {},
+          routing: routingCol ? (row[routingCol - 1] || '') : '',
+          decisionDate: row[cols.DECISION_DATE - 1] || ''
+        });
+      }
+    } catch (e) { Logger.log('collectCurrentRoundDecisions_ (' + sheetName + ') failed: ' + e.toString()); }
+  };
+
+  collect(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS, 'head',
+    APPROVAL_COLS.APPROVER_NAME, APPROVAL_COLS.APPROVER_EMAIL,
+    function (row) {
+      const s = Number(row[APPROVAL_COLS.CURRENT_STEP - 1] || 0);
+      return s === 1 ? 'Immediate Head' : s === 2 ? 'Department Head' : 'Head';
+    }, null);
+
+  collect(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS, 'ism',
+    ISM_WORKFLOW_COLS.ISM_MEMBER_NAME, ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL,
+    function () { return 'InfoSec Reviewer'; }, ISM_WORKFLOW_COLS.ROUTING_DESTINATION);
+
+  collect(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS, 'divhead',
+    null, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL,
+    function () { return 'Division Head'; }, null);
+
+  return out;
+}
+
+/*
+  Function: getUnifiedHistory
+  LAYMAN:    The single source for "everything that happened to this application, start to finish":
+             every prior round (from the logbook) plus the current in-progress round, grouped by
+             round. Feeds the emails, both review screens, the certificate, and the requestor views.
+  TECHNICAL: getRevisionHistory prior rounds (isCurrent:false) + collectCurrentRoundDecisions_ as
+             round (last prior + 1, isCurrent:true). Current round omitted when it has no rows.
+  PARAMS:    - sessionId — application id.  - includePending — include Pending rows in the current round.
+  RETURNS:   { rounds: [{round, isCurrent, decisions:[...]}] } (rounds may be empty).
+*/
+function getUnifiedHistory(sessionId, includePending) {
+  const prior = getRevisionHistory(sessionId);
+  const rounds = prior.map(function (r) { return { round: r.round, isCurrent: false, decisions: r.decisions }; });
+  const current = collectCurrentRoundDecisions_(sessionId, includePending);
+  if (current.length > 0) {
+    const currentRound = (rounds.length ? rounds[rounds.length - 1].round : 0) + 1;
+    rounds.push({ round: currentRound, isCurrent: true, decisions: current });
+  }
+  return { rounds: rounds };
+}
+
+/*
+  Function: apiGetApprovalHistory
+  LAYMAN:    Lets the requestor's own wizard screen fetch the complete grouped-by-round approval
+             history (including who is currently pending) to draw the vertical timeline. Only the
+             applicant who owns the application can read it.
+  TECHNICAL: Ownership check first (normalized active-user email must equal the application's
+             applicantEmail); then getUnifiedHistory(sessionId, true). Dates are stringified because
+             google.script.run cannot serialize Date objects. Separate endpoint on purpose:
+             apiGetDCSContext runs pre-submission (no PIA session yet) and stays untouched.
+  PARAMS:    - sessionId — the requestor's own application id.
+  RETURNS:   { success:true, rounds } or { success:false, error }.
+*/
+function apiGetApprovalHistory(sessionId) {
+  try {
+    const me = getNormalizedEmail(Session.getActiveUser().getEmail());
+    if (!me) return { success: false, error: 'Unauthorized' };
+    const appData = getApplicationData(sessionId);
+    if (!appData) return { success: false, error: 'Application not found' };
+    if (getNormalizedEmail(String(appData.applicantEmail || '')) !== me) {
+      return { success: false, error: 'Unauthorized' };
+    }
+    const unified = getUnifiedHistory(sessionId, true);
+    unified.rounds.forEach(function (r) {
+      (r.decisions || []).forEach(function (d) {
+        if (Object.prototype.toString.call(d.decisionDate) === '[object Date]') {
+          d.decisionDate = Utilities.formatDate(d.decisionDate, Session.getScriptTimeZone(), 'MMM dd, yyyy, hh:mm a');
+        } else if (d.decisionDate) {
+          d.decisionDate = String(d.decisionDate);
+        }
+        if (d.snapshotAt && Object.prototype.toString.call(d.snapshotAt) === '[object Date]') {
+          d.snapshotAt = String(d.snapshotAt);
+        }
+      });
+    });
+    return { success: true, rounds: unified.rounds };
+  } catch (e) {
+    Logger.log('apiGetApprovalHistory failed: ' + e.toString());
+    return { success: false, error: e.toString() };
   }
 }
 
@@ -5451,6 +5595,7 @@ function notifyApprover(sessionId, approverIndex) {
           <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>
           ${generateEmailDecisionsHTML(sessionId)}
         </div>
+        ${buildPriorReviewChipHtml_(sessionId, normalizedApproverEmail)}
         <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
     });
 
@@ -5538,7 +5683,7 @@ function notifyApplicant(sessionId, status, options) {
   } else if (status === 'approved_main') {
     statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application is now <strong>HEADS APPROVED</strong> — it cleared all required Head approvals and is being reviewed by the ISM (InfoSec) team. This is not yet final approval.</div></div>`;
   } else if (status === 'escalated_divhead') {
-    statusMessage = `<div style="background: #f3e8ff; color: #6b21a8; border: 1px solid rgba(107,33,168,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application has been <strong>ESCALATED</strong> to the Division Head for executive review.</div></div>`;
+    statusMessage = `<div style="background: #eff6ff; color: #1e40af; border: 1px solid rgba(30,64,175,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application has been <strong>ESCALATED</strong> to the Division Head for executive review.</div></div>`;
   } else if (status === 'approved_divhead_progressing') {
     statusMessage = `<div style="background: #e3f2fd; color: #1e88e5; border: 1px solid rgba(30,136,229,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application was <strong>approved by the Division Head</strong> and is returning to the ISM team for continued review. This is not yet final approval.</div></div>`;
   } else if (status === 'progressing_ism') {
@@ -5661,40 +5806,148 @@ function notifyApplicant(sessionId, status, options) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
-  Function: buildRevisionHistoryHtml
-  LAYMAN:    Renders the preserved return-cycle history for an application — every prior round's
-             approver decisions, feedback, flagged fields and ISM routing — as an email/cert/screen-safe
-             HTML block. Returns '' when the request has never been returned (no prior rounds), so
-             surfaces only show it for genuinely revised applications.
-  TECHNICAL: Reads getRevisionHistory(sessionId) (already grouped by round) and emits inline-styled
-             rows with palette-aligned status colors. Shared by the approver emails (via
-             generateEmailDecisionsHTML), the review screens, and the certificate.
-  PARAMS:    - sessionId — application id.
-  RETURNS:   HTML string, or '' if there is no prior-round history.
+  Function: isLegacyDefaultComment_
+  LAYMAN:    Checks if a stored approver comment is just the old auto-inserted boilerplate
+             ("Approved via secure access review link.") rather than something a person wrote,
+             so displays can hide it. We stopped storing these, but old rows keep them forever.
+  TECHNICAL: Exact-match against the two legacy fallback strings (never rewrite sheet rows;
+             filtering is render-time only).
+  PARAMS:    - c — the comment string.
+  RETURNS:   true if it is legacy boilerplate.
 */
-function buildRevisionHistoryHtml(sessionId) {
-  const rounds = getRevisionHistory(sessionId);
-  if (!rounds || rounds.length === 0) return '';
+function isLegacyDefaultComment_(c) {
+  const s = String(c || '').trim();
+  return s === 'Approved via secure access review link.' || s === 'No additional comments provided.';
+}
+
+/*
+  Function: getLatestPriorDecisionByEmail_
+  LAYMAN:    "Did THIS approver already act on this request in an earlier round?" Walks the preserved
+             return-cycle history newest-first and returns their most recent prior decision, if any.
+  TECHNICAL: getRevisionHistory rounds descending; matches getNormalizedEmail(approverEmail) against
+             the target. Division Head rows have blank names but always carry the email, so matching
+             is email-only by design. Never throws.
+  PARAMS:    - sessionId — application id.  - email — the approver being notified/reviewing.
+  RETURNS:   { round, decision, status, dateStr } or null.
+*/
+function getLatestPriorDecisionByEmail_(sessionId, email) {
+  try {
+    if (!email) return null;
+    const rounds = getRevisionHistory(sessionId);
+    if (!rounds || rounds.length === 0) return null;
+    const target = getNormalizedEmail(String(email));
+    for (let i = rounds.length - 1; i >= 0; i--) {
+      const ds = rounds[i].decisions || [];
+      for (let j = ds.length - 1; j >= 0; j--) {
+        const d = ds[j];
+        if (d.approverEmail && getNormalizedEmail(String(d.approverEmail)) === target) {
+          let dateStr = '';
+          try {
+            const raw = d.decisionDate;
+            if (Object.prototype.toString.call(raw) === '[object Date]') {
+              dateStr = raw.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+            } else if (raw) {
+              const parsed = new Date(raw);
+              dateStr = isNaN(parsed.getTime()) ? String(raw) : parsed.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+            }
+          } catch (_) {}
+          return { round: rounds[i].round, decision: d.decision, status: d.status, dateStr: dateStr };
+        }
+      }
+    }
+  } catch (e) { Logger.log('getLatestPriorDecisionByEmail_ failed: ' + e.toString()); }
+  return null;
+}
+
+/*
+  Function: buildPriorReviewChipHtml_
+  LAYMAN:    The amber "you already reviewed this before" note shown to an approver when a returned
+             request comes back to them, in their email (above the Review button) and on the review
+             screen. Personalized: it states THEIR OWN prior decision, not just "this was returned".
+  TECHNICAL: Email-safe inline hex styles, plain string concatenation. Wrapped in try/catch returning
+             '' so a chip failure can never break an email send or the review page.
+  PARAMS:    - sessionId — application id.  - email — the recipient/reviewer.
+  RETURNS:   HTML string or ''.
+*/
+function buildPriorReviewChipHtml_(sessionId, email) {
+  try {
+    const prior = getLatestPriorDecisionByEmail_(sessionId, email);
+    if (!prior) return '';
+    const st = String(prior.status || prior.decision || '');
+    let verb = '';
+    if (/Approved/i.test(st)) verb = 'approved';
+    else if (/Return|Reject/i.test(st)) verb = 'returned';
+    else if (/Deny|Denied/i.test(st)) verb = 'denied';
+    else if (/Escalat/i.test(st)) verb = 'escalated';
+    if (!verb) return '';
+    const tail = verb === 'approved'
+      ? ' It was returned and has been revised. Please re-review the updated submission.'
+      : ' It has since been revised and resubmitted for a fresh review.';
+    return '<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:13px;line-height:1.5;">' +
+      '<strong>You previously ' + verb + ' this request</strong>' +
+      (prior.dateStr ? ' on ' + escapeHtml(prior.dateStr) : '') +
+      (prior.round ? ' (Round ' + escapeHtml(String(prior.round)) + ')' : '') + '.' +
+      tail + '</div>';
+  } catch (e) { return ''; }
+}
+
+/*
+  Function: buildUnifiedHistoryHtml
+  LAYMAN:    Renders the complete start-to-finish approval story as ONE list grouped by round:
+             "Round 1" (who decided what, comments, flags), "Round 2 (Current)" and so on. Used by
+             the emails, both review screens, the certificate, and the requestor views, so the
+             history looks identical everywhere.
+  TECHNICAL: Consumes getUnifiedHistory output. Email-safe: inline styles, hex colors only.
+             Status colors follow the unified matrix (approved green #065f46, returned amber
+             #92400e, denied red #991b1b, escalated/pending blue #1e40af). Legacy boilerplate
+             comments are hidden via isLegacyDefaultComment_.
+  PARAMS:    - unified — { rounds } from getUnifiedHistory.
+  RETURNS:   HTML string ('' when there are no rounds).
+*/
+function buildUnifiedHistoryHtml(unified) {
+  const rounds = (unified && unified.rounds) || [];
+  if (!rounds.length) return '';
   const colorFor = function (status, decision) {
     const s = String(status || '') + ' ' + String(decision || '');
-    if (/Approved/i.test(status)) return '#065f46';
+    if (/Approved/i.test(String(status || ''))) return '#065f46';
+    if (/Pending/i.test(String(status || ''))) return '#1e40af';
     if (/Return|Reject/i.test(s)) return '#92400e';
     if (/Deny|Denied/i.test(s)) return '#991b1b';
     if (/Escalat/i.test(s)) return '#1e40af';
     return '#6b7280';
   };
   const labelFor = function (status) {
-    if (/Approved/i.test(status)) return 'Approved';
-    if (/Return|Reject/i.test(status)) return 'Returned to Requestor';
-    if (/Deny|Denied/i.test(status)) return 'Denied';
-    if (/Escalat/i.test(status)) return 'Escalated to Division Head';
-    return String(status || '');
+    const s = String(status || '');
+    if (/Approved/i.test(s)) return 'Approved';
+    if (/Pending/i.test(s)) return 'Pending review';
+    if (/Return|Reject/i.test(s)) return 'Returned to Requestor';
+    if (/Deny|Denied/i.test(s)) return 'Denied';
+    if (/Escalat/i.test(s)) return 'Escalated to Division Head';
+    return s;
   };
-  let html = '';
+  const routingLabelFor = function (raw) {
+    const r = String(raw || '').trim().toUpperCase();
+    if (r === 'DCOPS') return 'DCOPS';
+    if (r === 'TECHSERVE') return 'TechServe';
+    if (r === 'BOTH') return 'DCOPS + TechServe';
+    return '';
+  };
+  const fmtDate = function (raw) {
+    if (!raw) return '';
+    try {
+      if (Object.prototype.toString.call(raw) === '[object Date]') {
+        return Utilities.formatDate(raw, Session.getScriptTimeZone(), 'MMM dd, yyyy, hh:mm a');
+      }
+      return String(raw);
+    } catch (e) { return String(raw); }
+  };
+  let html = '<div style="font-family: sans-serif;">';
   rounds.forEach(function (r) {
     let decisions = '';
     (r.decisions || []).forEach(function (d) {
-      const routing = d.routing ? ` <span style="color:#6b7280;">&middot; Routing: ${escapeHtml(String(d.routing))}</span>` : '';
+      const routing = routingLabelFor(d.routing);
+      const routingHtml = routing ? `<div style="font-size:12px;color:#6b7280;margin-top:3px;">Routing: <strong>${escapeHtml(routing)}</strong></div>` : '';
+      const dateStr = fmtDate(d.decisionDate);
       const flagKeys = (d.flaggedFields && typeof d.flaggedFields === 'object') ? Object.keys(d.flaggedFields) : [];
       let flags = '';
       if (flagKeys.length > 0) {
@@ -5703,119 +5956,43 @@ function buildRevisionHistoryHtml(sessionId) {
           return escapeHtml(k) + (reason && reason !== true ? ' (' + escapeHtml(String(reason)) + ')' : '');
         }).join(', ') + '</div>';
       }
+      const showComment = d.comments && !isLegacyDefaultComment_(d.comments);
       decisions += `
-        <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #f0f0f0;">
-          <div style="font-size:13px;color:#333;"><strong>${escapeHtml(d.approverName || d.approverEmail || 'Approver')}</strong> <span style="color:#6b7280;">— ${escapeHtml(d.role || '')}</span>: <span style="color:${colorFor(d.status, d.decision)};font-weight:600;">${escapeHtml(labelFor(d.status))}</span>${routing}</div>
-          ${d.decisionDate ? `<div style="font-size:11px;color:#999;margin-top:2px;">${escapeHtml(String(d.decisionDate))}</div>` : ''}
-          ${d.comments ? `<div style="font-size:12.5px;color:#666;margin-top:3px;">"${escapeHtml(String(d.comments))}"</div>` : ''}
+        <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f0f0f0;">
+          <div style="font-size:13px;color:#333;"><strong>${escapeHtml(d.approverName || d.approverEmail || 'Approver')}</strong> <span style="color:#6b7280;">(${escapeHtml(d.role || 'Approver')})</span>: <span style="color:${colorFor(d.status, d.decision)};font-weight:600;">${escapeHtml(labelFor(d.status))}</span></div>
+          ${dateStr ? `<div style="font-size:11px;color:#999;margin-top:2px;">${escapeHtml(dateStr)}</div>` : ''}
+          ${routingHtml}
+          ${showComment ? `<div style="font-size:12.5px;color:#666;margin-top:3px;">"${escapeHtml(String(d.comments))}"</div>` : ''}
           ${flags}
         </div>`;
     });
+    const headerColor = r.isCurrent ? '#1a3a5c' : '#6b7280';
+    const headerLabel = 'Round ' + r.round + (r.isCurrent ? ' (Current)' : '');
     html += `
-      <div style="margin-bottom:14px;">
-        <div style="font-size:12px;font-weight:700;color:#1a3a5c;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;">Round ${escapeHtml(String(r.round))}</div>
+      <div style="margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:700;color:${headerColor};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">${escapeHtml(headerLabel)}</div>
         ${decisions}
       </div>`;
   });
-  return html;
+  return html + '</div>';
 }
 
 /*
   Function: generateEmailDecisionsHTML
-  LAYMAN:    Builds the little "who decided what" history block shown inside applicant emails, pulling
-             together every recorded approver / Division Head / ISM decision.
-  TECHNICAL: Inner processDecisions() walks a workflow sheet for sessionId, skips Pending/blank rows,
-             formats date + a color-coded status label, and escapes name/comment (XSS-safe). Runs it
-             over Approval_Workflow, DivisionHead_Approval_Workflow, and ISM_Approval_Workflow.
+  LAYMAN:    Builds the "who decided what" history block shown inside emails: now ONE complete list
+             grouped by round (prior rounds + the current one), instead of a separate "previous
+             rounds" block stacked on top of the current decisions.
+  TECHNICAL: Round-4 refactor: delegates to getUnifiedHistory(sessionId, false) +
+             buildUnifiedHistoryHtml. Name/signature kept so all five email call sites are untouched.
   PARAMS:    - sessionId — application id.
   RETURNS:   HTML string; a "No decisions recorded yet." note if nothing is found.
 */
 function generateEmailDecisionsHTML(sessionId) {
-  let hasRecords = false;
-  let html = `<div style="font-family: sans-serif;">`;
-  
-  const processDecisions = (sheetName, idCol, nameCol, statusCol, commentCol, dateCol, defaultName, roleType, stepCol, routingCol = null) => {
-    const sheet = getDatabaseSheet(sheetName, false);
-    if (!sheet) return;
-    const data = sheet.getDataRange().getValues();
-    
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][idCol - 1] === sessionId) {
-        const status = String(data[i][statusCol - 1] || '');
-        if (status === 'Pending' || status === '') continue; // Skip pending to remove tracking
-        
-        const rawName = nameCol ? data[i][nameCol - 1] : '';
-        const approverName = escapeHtml(rawName || defaultName);
-        // #13: resolve a human role label so the requester knows WHICH head/reviewer acted
-        let roleLabel = defaultName;
-        if (roleType === 'head') {
-          const stepVal = stepCol ? Number(data[i][stepCol - 1] || 0) : 0;
-          roleLabel = stepVal === 1 ? 'Immediate Head' : stepVal === 2 ? 'Department Head' : 'Head';
-        } else if (roleType === 'divhead') { roleLabel = 'Division Head'; }
-        else if (roleType === 'ism') { roleLabel = 'InfoSec Reviewer'; }
-        const comment = data[i][commentCol - 1];
-        const decisionDateRaw = dateCol ? data[i][dateCol - 1] : '';
-        // Commit 7: show the ISM routing recommendation (DCOPS/TechServe/Both) inline
-        let routingLabel = '';
-        if (routingCol) {
-          const rawRouting = String(data[i][routingCol - 1] || '').trim().toUpperCase();
-          if (rawRouting === 'DCOPS') routingLabel = 'DCOPS';
-          else if (rawRouting === 'TECHSERVE') routingLabel = 'TechServe';
-          else if (rawRouting === 'BOTH') routingLabel = 'DCOPS + TechServe';
-        }
-
-        // Format timestamp if available
-        let decisionDateStr = '';
-        if (decisionDateRaw) {
-          try {
-            if (Object.prototype.toString.call(decisionDateRaw) === '[object Date]') {
-              decisionDateStr = Utilities.formatDate(decisionDateRaw, Session.getScriptTimeZone(), "MMM dd, yyyy, hh:mm a");
-            } else {
-              decisionDateStr = String(decisionDateRaw); // Already a formatted string (e.g. from toLocaleString)
-            }
-          } catch(e) {
-            decisionDateStr = String(decisionDateRaw);
-          }
-        }
-        
-        hasRecords = true;
-        // Status colors mapped to the shared palette (was bespoke #BA7517/#1D9E75/#A22D2D/#6b21a8)
-        let color = '#92400e';
-        let statusLabel = status;
-
-        if (status === 'Approved') { color = '#065f46'; statusLabel = 'Approved'; }
-        else if (status.includes('Reject') || status.includes('Return')) { color = '#92400e'; statusLabel = 'Returned to Requestor'; }
-        else if (status.includes('Deny')) { color = '#991b1b'; statusLabel = 'Denied'; }
-        else if (status === 'EscalatedToDivisionHead') { color = '#1e40af'; statusLabel = 'Escalated to Division Head'; }
-
-        // HIGH FIX: Escape comment to prevent XSS in emails
-        const escapedComment = escapeHtml(comment);
-        html += `
-          <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #f0f0f0;">
-            <div style="font-size: 13px; color: #333;"><strong>${approverName}</strong> <span style="color:#6b7280; font-weight:500;">— ${escapeHtml(roleLabel)}</span>: <span style="color: ${color}; font-weight: 600;">${statusLabel}</span></div>
-            ${decisionDateStr ? `<div style="font-size: 11px; color: #999; margin-top: 2px;">${escapeHtml(decisionDateStr)}</div>` : ''}
-            ${routingLabel ? `<div style="font-size: 12px; color: #6b7280; margin-top: 3px;">Routing: <strong>${escapeHtml(routingLabel)}</strong></div>` : ''}
-            ${comment ? `<div style="font-size: 13px; color: #666; margin-top: 4px;">"${escapedComment}"</div>` : ''}
-          </div>
-        `;
-      }
-    }
-  };
-
-  // Process all approval stages to show comprehensive latest decisions
-  processDecisions(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS.SESSION_ID, APPROVAL_COLS.APPROVER_NAME, APPROVAL_COLS.STATUS, APPROVAL_COLS.COMMENTS, APPROVAL_COLS.DECISION_DATE, 'Approver', 'head', APPROVAL_COLS.CURRENT_STEP);
-  processDecisions(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, null, DIV_HEAD_CONFIG_COLS.STATUS, DIV_HEAD_CONFIG_COLS.COMMENTS, DIV_HEAD_CONFIG_COLS.DECISION_DATE, 'Division Head', 'divhead', null);
-  processDecisions(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_NAME, ISM_WORKFLOW_COLS.STATUS, ISM_WORKFLOW_COLS.COMMENTS, ISM_WORKFLOW_COLS.DECISION_DATE, 'ISM Member', 'ism', null, ISM_WORKFLOW_COLS.ROUTING_DESTINATION);
-
-  html += `</div>`;
-  // Commit 3 (Q2): prepend the preserved prior-round history so every approver email shows that the
-  // request was returned + who decided what before. Empty for first-round (never-returned) requests.
-  const priorRoundsHtml = buildRevisionHistoryHtml(sessionId);
-  const priorBlock = priorRoundsHtml
-    ? `<div style="margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #e5e7eb;"><div style="font-size:11px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">Previous Review Rounds (returned &amp; revised)</div>${priorRoundsHtml}</div>`
-    : '';
-  const currentBlock = hasRecords ? html : `<div style="font-size: 13px; color: #666; font-style: italic;">No decisions recorded yet.</div>`;
-  return priorBlock + currentBlock;
+  const unified = getUnifiedHistory(sessionId, false);
+  if (!unified.rounds.length) {
+    return `<div style="font-size: 13px; color: #666; font-style: italic;">No decisions recorded yet.</div>`;
+  }
+  return buildUnifiedHistoryHtml(unified);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -7928,6 +8105,7 @@ function apiPhase3_NotifyISMember(sessionId, stepNumber) {
           <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Review Status</div>
           ${generateEmailDecisionsHTML(sessionId)}
         </div>
+        ${buildPriorReviewChipHtml_(sessionId, normalizedIsmEmail)}
         <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
     });
 
@@ -8055,7 +8233,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
               <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
-              ${escapeHtml(a.comment || '—')}
+              ${escapeHtml((a.comment && !isLegacyDefaultComment_(a.comment)) ? a.comment : '—')}
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
               ${escapeHtml(dateStr)}
@@ -8086,7 +8264,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
               <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
-              ${escapeHtml(divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1] || '—')}
+              ${escapeHtml((divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1] && !isLegacyDefaultComment_(divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1])) ? divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1] : '—')}
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
               ${escapeHtml(dateStr)}
@@ -8134,7 +8312,7 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
               <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
-              ${escapeHtml(ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1] || '—')}
+              ${escapeHtml((ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1] && !isLegacyDefaultComment_(ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1])) ? ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1] : '—')}
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
               ${escapeHtml(dateStr)}
@@ -8193,10 +8371,14 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
       }
     } catch (e) { Logger.log('Cert supporting-docs build failed: ' + e.toString()); }
 
-    // Commit 3 (Q1): revision-history section for the certificate (empty if never returned).
-    const certRevisionHistory = buildRevisionHistoryHtml(sessionId);
+    // Round-4 (was Commit 3/Q1): the certificate now records the COMPLETE approval story, start to
+    // finish in one grouped-by-round list (not just the prior "revision" rounds). Rendered always:
+    // a never-returned request shows its single round.
+    const certRevisionHistory = (function () {
+      try { return buildUnifiedHistoryHtml(getUnifiedHistory(sessionId, false)); } catch (e) { return ''; }
+    })();
     const certRevisionSection = certRevisionHistory
-      ? `<div style="margin-bottom: 30px;"><h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Revision History</h2>${certRevisionHistory}</div>`
+      ? `<div style="margin-bottom: 30px;"><h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Complete Approval History</h2>${certRevisionHistory}</div>`
       : '';
 
     const htmlBody = `
@@ -8250,6 +8432,18 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
               <tr>
                 <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Access Type</td>
                 <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.accessNeeded || '—')}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">Site / Office</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml(dcsData.locations || dcsData.location || '—')}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">DCS Submitted</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${escapeHtml((function () { try { const d = dcsData.submissionDate; if (!d) return '—'; const p = new Date(d); return isNaN(p.getTime()) ? String(d) : p.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return '—'; } })())}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; font-weight: 600; color: #6b7280; vertical-align: top;">PII Categories Collected</td>
+                <td style="padding: 6px 0; color: #1a3a5c;">${(function () { try { const pii = getPIIFieldsList(appData); return pii && pii.length ? pii.map(function (p) { return escapeHtml(p); }).join(', ') : 'None specified'; } catch (e) { return 'None specified'; } })()}</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; font-weight: 600; color: #6b7280;">iHelp Reference</td>

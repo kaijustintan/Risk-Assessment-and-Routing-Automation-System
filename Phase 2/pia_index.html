@@ -682,13 +682,17 @@
   .status-badge::before {
     display: none;
   }
+  /* Round-4 unified status matrix: approved=green, returned=amber, denied=red,
+     escalated/pending=blue. Amber is reserved for Returned (status-rejected = legacy returned label). */
   .status-complete { background: var(--success); color: var(--success-text); }
-  .status-pending  { background: var(--warn);    color: var(--warn-text); }
+  .status-pending  { background: #eff6ff; color: #1e40af; }
   .status-approved { background: var(--success); color: var(--success-text); }
   .status-rejected { background: var(--warn);    color: var(--warn-text); }
   .status-denied   { background: var(--danger);  color: var(--danger-text); }
   .status-draft { background: var(--bg3); color: var(--text2); }
-  .status-escalated { background: #f3e8ff; color: #6b21a8; }
+  .status-escalated { background: #eff6ff; color: #1e40af; }
+  /* Identity chips (ids, not decisions) — neutral so green never reads as an approval. */
+  .chip-identity { background: var(--bg3); color: var(--navy-text); }
 
   /* ═══════════════════════════════════════════════════
      TIMELINE
@@ -713,6 +717,9 @@
   .timeline-dot.done     { background: #16a34a; border-color: #16a34a; }
   .timeline-dot.active   { background: var(--navy-bright); border-color: var(--navy-bright); box-shadow: 0 0 0 3px var(--navy-glow); }
   .timeline-dot.rejected { background: #dc2626; border-color: #dc2626; }
+  /* Round-4: returned = amber (fixable loop), escalated = blue — matches the unified status matrix. */
+  .timeline-dot.returned  { background: #d97706; border-color: #d97706; }
+  .timeline-dot.escalated { background: #1e40af; border-color: #1e40af; }
 
   .timeline-title { font-size: 13px; font-weight: 500; color: var(--text); }
   .timeline-sub   { font-size: 12px; color: var(--text2); margin-top: 3px; }
@@ -2219,6 +2226,91 @@ function renderSidebarTracker(activeStep) {
 // 📖 GUIDE / DCS LINKING
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /*
+  Function Name: renderApprovalTimeline
+  LAYMAN: Draws the vertical "Approval History" timeline on the requestor's first screen: every
+    round of review (including past returned rounds), each approver's decision, date and comment,
+    and who is currently pending. Dati puro isolated comments lang ang nakikita ng requestor;
+    ngayon buong kwento na, isang list.
+  TECHNICAL: Consumes apiGetApprovalHistory rounds. Built with plain STRING CONCATENATION (this
+    file is template-served; backtick helpers corrupt at GAS serve time, CLAUDE.md section 8).
+    Wires the previously-dormant .timeline CSS component (.timeline-item/.timeline-dot variants).
+  PARAMS:
+  - rounds — array of { round, isCurrent, decisions[] }.
+  RETURNS: HTML string ('' when rounds is empty).
+*/
+function renderApprovalTimeline(rounds) {
+  if (!rounds || !rounds.length) return '';
+  var html = '<div class="card"><div class="card-title">Approval History</div>';
+  for (var i = 0; i < rounds.length; i++) {
+    var r = rounds[i];
+    var headerLabel = 'Round ' + r.round + (r.isCurrent ? ' (Current)' : ' (returned and revised)');
+    html += '<div style="font-size:11px;font-weight:700;color:' + (r.isCurrent ? 'var(--navy-text)' : 'var(--text3)') +
+      ';text-transform:uppercase;letter-spacing:0.05em;margin:12px 0 10px;border-bottom:1px solid var(--border);padding-bottom:4px;">' +
+      escapeHtml(headerLabel) + '</div>';
+    html += '<div class="timeline">';
+    var ds = r.decisions || [];
+    for (var j = 0; j < ds.length; j++) {
+      var d = ds[j];
+      var st = String(d.status || d.decision || '').toLowerCase();
+      var dotCls = 'timeline-dot';
+      var label = '';
+      if (st.indexOf('approved') !== -1) { dotCls += ' done'; label = 'Approved'; }
+      else if (st.indexOf('pending') !== -1 || st === '') { dotCls += ' active'; label = 'Pending review'; }
+      else if (st.indexOf('return') !== -1 || st.indexOf('reject') !== -1) { dotCls += ' returned'; label = 'Returned to Requestor'; }
+      else if (st.indexOf('deny') !== -1 || st.indexOf('denied') !== -1) { dotCls += ' rejected'; label = 'Denied'; }
+      else if (st.indexOf('escalat') !== -1) { dotCls += ' escalated'; label = 'Escalated to Division Head'; }
+      else { label = String(d.status || d.decision || ''); }
+      var name = escapeHtml(d.approverName || d.approverEmail || 'Approver');
+      var role = escapeHtml(d.role || 'Approver');
+      var dateStr = d.decisionDate ? escapeHtml(String(d.decisionDate)) : '';
+      var routing = String(d.routing || '').trim().toUpperCase();
+      var routingLabel = routing === 'DCOPS' ? 'DCOPS' : routing === 'TECHSERVE' ? 'TechServe' : routing === 'BOTH' ? 'DCOPS + TechServe' : '';
+      var comment = (d.comments && String(d.comments).trim() !== '' &&
+        String(d.comments).trim() !== 'Approved via secure access review link.' &&
+        String(d.comments).trim() !== 'No additional comments provided.') ? escapeHtml(String(d.comments)) : '';
+      html += '<div class="timeline-item">' +
+        '<div class="' + dotCls + '" aria-hidden="true"></div>' +
+        '<div class="timeline-title">' + name + ' <span style="font-weight:400;color:var(--text3);font-size:11px;">(' + role + ')</span></div>' +
+        '<div class="timeline-sub">' + escapeHtml(label) +
+          (dateStr ? ' &middot; ' + dateStr : '') +
+          (routingLabel ? ' &middot; Routing: ' + escapeHtml(routingLabel) : '') + '</div>' +
+        (comment ? '<div class="timeline-comment">"' + comment + '"</div>' : '') +
+        '</div>';
+    }
+    html += '</div>';
+  }
+  return html + '</div>';
+}
+
+/*
+  Function Name: loadApprovalHistory
+  LAYMAN: Quietly fetches the approval history for your submitted application and, when it
+    arrives, shows the timeline card. Kung mag-fail ang fetch, walang sira: hindi lang lalabas
+    ang timeline (nananatili ang existing feedback blocks).
+  TECHNICAL: google.script.run apiGetApprovalHistory(sessionId) into #approval-history-container.
+    Failure handler is a silent no-op by design (the comments blob remains the fallback).
+  PARAMS:
+  - sessionId — the requestor's own PIA session id.
+  RETURNS: undefined (async).
+*/
+function loadApprovalHistory(sessionId) {
+  try {
+    if (!sessionId || typeof google === 'undefined') return;
+    google.script.run
+      .withSuccessHandler(function (res) {
+        try {
+          var el = document.getElementById('approval-history-container');
+          if (el && res && res.success && res.rounds && res.rounds.length) {
+            el.innerHTML = renderApprovalTimeline(res.rounds);
+          }
+        } catch (e) {}
+      })
+      .withFailureHandler(function () { /* silent: comments blob remains the fallback */ })
+      .apiGetApprovalHistory(sessionId);
+  } catch (e) {}
+}
+
+/*
   Function Name: renderDCSCheck
   LAYMAN: The first screen. It verifies the DCS link you arrived with and figures out what
     you're allowed to do: start a brand-new PIA, resume an unfinished draft, revise a
@@ -2274,6 +2366,8 @@ function renderDCSCheck() {
 
     <div id="dcs-alert-container"></div>
 
+    <div id="approval-history-container"></div>
+
     <div class="btn-row">
       <button class="btn btn-primary" id="proceed-to-guide-btn" disabled aria-label="Proceed">Verifying Link...</button>
     </div>
@@ -2310,16 +2404,20 @@ function renderDCSCheck() {
           <div class="pia-status-row" style="border-bottom: 1px dashed var(--border);">
             <div class="pia-status-label">DCS ID</div>
             <div class="pia-status-value">
-              <span class="status-badge status-approved">${escapeHtml(parentId)}</span>
+              <span class="status-badge chip-identity">${escapeHtml(parentId)}</span>
             </div>
           </div>
           <div class="pia-status-row" style="border-bottom: none;">
             <div class="pia-status-label">Session ID</div>
             <div class="pia-status-value">
-              <span class="status-badge status-${result.existingSubmissionId ? 'approved' : (result.existingDraftSessionId ? 'rejected' : 'pending')}">${result.existingSubmissionId ? escapeHtml(result.existingSubmissionId) : (result.existingDraftSessionId ? escapeHtml(result.existingDraftSessionId) : 'Not Started')}</span>
+              <span class="status-badge ${result.existingSubmissionId || result.existingDraftSessionId ? 'chip-identity' : 'status-draft'}">${result.existingSubmissionId ? escapeHtml(result.existingSubmissionId) : (result.existingDraftSessionId ? escapeHtml(result.existingDraftSessionId) : 'Not Started')}</span>
             </div>
           </div>
         `;
+
+        // Round-4: any existing submission gets the full grouped-by-round Approval History
+        // timeline (fetched async; on failure the feedback blocks below remain the fallback).
+        if (result.existingSubmissionId) loadApprovalHistory(result.existingSubmissionId);
         
         // 1. If it's already submitted and NOT rejected/returned -> Stop here
         if (result.existingSubmissionId && result.existingSubmissionStatus !== 'Rejected' && result.existingSubmissionStatus !== 'Returned') {
