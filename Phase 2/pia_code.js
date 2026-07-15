@@ -2154,9 +2154,15 @@ function handleEmailAction(params) {
       `;
     }
     
+    const ismPriorRounds = buildRevisionHistoryHtml(sessionId);
+    const ismRevisionBanner = ismPriorRounds
+      ? '<div style="margin-top:1.5rem; padding:14px 16px; background:#fff8e1; border:1px solid rgba(180,109,20,0.25); border-radius:var(--radius);"><div style="font-size:13px; font-weight:700; color:#92400e; margin-bottom:8px;">This request was returned and revised. Previous review rounds:</div>' + ismPriorRounds + '</div>'
+      : '';
+
     const content = `
       ${errorAlert}
       ${previewHtml}
+      ${ismRevisionBanner}
       <div class="summary-section-title" style="margin-top: 1.5rem;">Main Workflow Approvers</div>
       <div class="ismApproverContainer" style="margin-top: 8px;">${approverBadgesHtml}</div>
       <div class="summary-section-title" style="margin-top: 1.5rem;">ISM Workflow Approvers</div>
@@ -2252,7 +2258,7 @@ function handleEmailAction(params) {
             
             box.innerHTML = 
               '<span style="font-size:12px; font-weight:600; color:var(--danger-text); white-space:nowrap;">Flag Reason:</span>' +
-              '<input type="text" class="flag-reason-input" maxlength="50" placeholder="Required (max 50 chars)" style="flex:1; padding:6px; border:1px solid var(--border2); border-radius:4px; font-size:12px;">' +
+              '<input type="text" class="flag-reason-input" maxlength="200" placeholder="Required (max 200 chars)" style="flex:1; padding:6px; border:1px solid var(--border2); border-radius:4px; font-size:12px;">' +
               '<button type="button" class="btn btn-sm btn-primary save-flag-btn" style="padding:4px 10px;">Save</button>' +
               '<button type="button" class="btn btn-sm btn-danger remove-flag-btn" style="padding:4px 10px; display:none;">Remove</button>' +
               '<button type="button" class="btn btn-sm btn-secondary close-flag-btn" style="padding:4px 10px;">Close</button>';
@@ -2605,9 +2611,15 @@ function handleEmailAction(params) {
       `;
     }
 
+    const stdPriorRounds = buildRevisionHistoryHtml(sessionId);
+    const stdRevisionBanner = stdPriorRounds
+      ? '<div style="margin-top:1.5rem; padding:14px 16px; background:#fff8e1; border:1px solid rgba(180,109,20,0.25); border-radius:var(--radius);"><div style="font-size:13px; font-weight:700; color:#92400e; margin-bottom:8px;">This request was returned and revised. Previous review rounds:</div>' + stdPriorRounds + '</div>'
+      : '';
+
     const content = `
       ${errorAlert}
       ${previewHtml}
+      ${stdRevisionBanner}
       ${badgesSection}
       <span class="step-badge" style="text-transform: none; font-weight: 500; margin-bottom: 15px;">You are reviewing as <strong>${escapeHtml(activeUser)}</strong></span>
       <p>Please provide your feedback and select a decision for application <strong>${escapeHtml(sessionId)}</strong> below.</p>
@@ -2668,7 +2680,7 @@ function handleEmailAction(params) {
             
             box.innerHTML = 
               '<span style="font-size:12px; font-weight:600; color:var(--danger-text); white-space:nowrap;">Flag Reason:</span>' +
-              '<input type="text" class="flag-reason-input" maxlength="50" placeholder="Required (max 50 chars)" style="flex:1; padding:6px; border:1px solid var(--border2); border-radius:4px; font-size:12px;">' +
+              '<input type="text" class="flag-reason-input" maxlength="200" placeholder="Required (max 200 chars)" style="flex:1; padding:6px; border:1px solid var(--border2); border-radius:4px; font-size:12px;">' +
               '<button type="button" class="btn btn-sm btn-primary save-flag-btn" style="padding:4px 10px;">Save</button>' +
               '<button type="button" class="btn btn-sm btn-danger remove-flag-btn" style="padding:4px 10px; display:none;">Remove</button>' +
               '<button type="button" class="btn btn-sm btn-secondary close-flag-btn" style="padding:4px 10px;">Close</button>';
@@ -5564,6 +5576,66 @@ function notifyApplicant(sessionId, status, options) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
+  Function: buildRevisionHistoryHtml
+  LAYMAN:    Renders the preserved return-cycle history for an application — every prior round's
+             approver decisions, feedback, flagged fields and ISM routing — as an email/cert/screen-safe
+             HTML block. Returns '' when the request has never been returned (no prior rounds), so
+             surfaces only show it for genuinely revised applications.
+  TECHNICAL: Reads getRevisionHistory(sessionId) (already grouped by round) and emits inline-styled
+             rows with palette-aligned status colors. Shared by the approver emails (via
+             generateEmailDecisionsHTML), the review screens, and the certificate.
+  PARAMS:    - sessionId — application id.
+  RETURNS:   HTML string, or '' if there is no prior-round history.
+*/
+function buildRevisionHistoryHtml(sessionId) {
+  const rounds = getRevisionHistory(sessionId);
+  if (!rounds || rounds.length === 0) return '';
+  const colorFor = function (status, decision) {
+    const s = String(status || '') + ' ' + String(decision || '');
+    if (/Approved/i.test(status)) return '#065f46';
+    if (/Return|Reject/i.test(s)) return '#92400e';
+    if (/Deny|Denied/i.test(s)) return '#991b1b';
+    if (/Escalat/i.test(s)) return '#1e40af';
+    return '#6b7280';
+  };
+  const labelFor = function (status) {
+    if (/Approved/i.test(status)) return 'Approved';
+    if (/Return|Reject/i.test(status)) return 'Returned to Requestor';
+    if (/Deny|Denied/i.test(status)) return 'Denied';
+    if (/Escalat/i.test(status)) return 'Escalated to Division Head';
+    return String(status || '');
+  };
+  let html = '';
+  rounds.forEach(function (r) {
+    let decisions = '';
+    (r.decisions || []).forEach(function (d) {
+      const routing = d.routing ? ` <span style="color:#6b7280;">&middot; Routing: ${escapeHtml(String(d.routing))}</span>` : '';
+      const flagKeys = (d.flaggedFields && typeof d.flaggedFields === 'object') ? Object.keys(d.flaggedFields) : [];
+      let flags = '';
+      if (flagKeys.length > 0) {
+        flags = '<div style="font-size:11px;color:#92400e;margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
+          const reason = d.flaggedFields[k];
+          return escapeHtml(k) + (reason && reason !== true ? ' (' + escapeHtml(String(reason)) + ')' : '');
+        }).join(', ') + '</div>';
+      }
+      decisions += `
+        <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #f0f0f0;">
+          <div style="font-size:13px;color:#333;"><strong>${escapeHtml(d.approverName || d.approverEmail || 'Approver')}</strong> <span style="color:#6b7280;">— ${escapeHtml(d.role || '')}</span>: <span style="color:${colorFor(d.status, d.decision)};font-weight:600;">${escapeHtml(labelFor(d.status))}</span>${routing}</div>
+          ${d.decisionDate ? `<div style="font-size:11px;color:#999;margin-top:2px;">${escapeHtml(String(d.decisionDate))}</div>` : ''}
+          ${d.comments ? `<div style="font-size:12.5px;color:#666;margin-top:3px;">"${escapeHtml(String(d.comments))}"</div>` : ''}
+          ${flags}
+        </div>`;
+    });
+    html += `
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px;font-weight:700;color:#1a3a5c;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;">Round ${escapeHtml(String(r.round))}</div>
+        ${decisions}
+      </div>`;
+  });
+  return html;
+}
+
+/*
   Function: generateEmailDecisionsHTML
   LAYMAN:    Builds the little "who decided what" history block shown inside applicant emails, pulling
              together every recorded approver / Division Head / ISM decision.
@@ -5622,13 +5694,14 @@ function generateEmailDecisionsHTML(sessionId) {
         }
         
         hasRecords = true;
-        let color = '#BA7517'; 
+        // Status colors mapped to the shared palette (was bespoke #BA7517/#1D9E75/#A22D2D/#6b21a8)
+        let color = '#92400e';
         let statusLabel = status;
-        
-        if (status === 'Approved') { color = '#1D9E75'; statusLabel = 'Approved'; }
-        else if (status.includes('Reject') || status.includes('Return')) { color = '#BA7517'; statusLabel = 'Returned to Requestor'; }
-        else if (status.includes('Deny')) { color = '#A22D2D'; statusLabel = 'Denied'; }
-        else if (status === 'EscalatedToDivisionHead') { color = '#6b21a8'; statusLabel = 'Escalated to Division Head'; }
+
+        if (status === 'Approved') { color = '#065f46'; statusLabel = 'Approved'; }
+        else if (status.includes('Reject') || status.includes('Return')) { color = '#92400e'; statusLabel = 'Returned to Requestor'; }
+        else if (status.includes('Deny')) { color = '#991b1b'; statusLabel = 'Denied'; }
+        else if (status === 'EscalatedToDivisionHead') { color = '#1e40af'; statusLabel = 'Escalated to Division Head'; }
 
         // HIGH FIX: Escape comment to prevent XSS in emails
         const escapedComment = escapeHtml(comment);
@@ -5650,7 +5723,14 @@ function generateEmailDecisionsHTML(sessionId) {
   processDecisions(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_NAME, ISM_WORKFLOW_COLS.STATUS, ISM_WORKFLOW_COLS.COMMENTS, ISM_WORKFLOW_COLS.DECISION_DATE, 'ISM Member', 'ism', null, ISM_WORKFLOW_COLS.ROUTING_DESTINATION);
 
   html += `</div>`;
-  return hasRecords ? html : `<div style="font-size: 13px; color: #666; font-style: italic;">No decisions recorded yet.</div>`;
+  // Commit 3 (Q2): prepend the preserved prior-round history so every approver email shows that the
+  // request was returned + who decided what before. Empty for first-round (never-returned) requests.
+  const priorRoundsHtml = buildRevisionHistoryHtml(sessionId);
+  const priorBlock = priorRoundsHtml
+    ? `<div style="margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #e5e7eb;"><div style="font-size:11px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">Previous Review Rounds (returned &amp; revised)</div>${priorRoundsHtml}</div>`
+    : '';
+  const currentBlock = hasRecords ? html : `<div style="font-size: 13px; color: #666; font-style: italic;">No decisions recorded yet.</div>`;
+  return priorBlock + currentBlock;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -8019,6 +8099,12 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
       }
     } catch (e) { Logger.log('Cert supporting-docs build failed: ' + e.toString()); }
 
+    // Commit 3 (Q1): revision-history section for the certificate (empty if never returned).
+    const certRevisionHistory = buildRevisionHistoryHtml(sessionId);
+    const certRevisionSection = certRevisionHistory
+      ? `<div style="margin-bottom: 30px;"><h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Revision History</h2>${certRevisionHistory}</div>`
+      : '';
+
     const htmlBody = `
       <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 800px; margin: 0 auto; color: #333; line-height: 1.6; padding: 20px; background-color: #f9fafb;">
         <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 40px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
@@ -8170,6 +8256,9 @@ function apiPhase3_RouteApprovedRequest(sessionId, destination) {
               </tbody>
             </table>
           </div>
+
+          <!-- Revision History (Q1) -->
+          ${certRevisionSection}
 
           <!-- Routing Information -->
           <div style="margin-top: 40px; padding-top: 25px; border-top: 2px solid #2a5285; text-align: center;">
