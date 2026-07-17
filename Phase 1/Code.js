@@ -1492,7 +1492,10 @@ function submitDCS(payload, sessionId = '') {
     if (isRevision && Array.isArray(payload.supplementaryFiles) && payload.supplementaryFiles.some(function (f) { return f && f.base64; })) {
       try {
         const piaRec = getPIARecordByDCSId_(ss, reqId);
-        const flags = (piaRec && piaRec.approverFlags) ? piaRec.approverFlags : {};
+        // Two independent sources so the gate fires even if one is empty at this stage:
+        // (1) the now-corrected Applications read, (2) the flags PIA mirrors into DCS metadata
+        // on return (oldMetadata is the current DCS row's parsed Metadata_JSON, used above).
+        const flags = (piaRec && piaRec.approverFlags) ? piaRec.approverFlags : (oldMetadata.approverFlags || {});
         const hasSuppFlag = Object.keys(flags).some(function (k) { return k.indexOf('DCS - Additional Supporting Document:') === 0; });
         if (hasSuppFlag) {
           uploadedIds = archiveAndRecordSuperseded_(uploadedIds, function (f) { return f.type === 'SUPPLEMENTARY'; }, newlySuperseded, supersedeStamp, supersedeRound);
@@ -2374,9 +2377,16 @@ function getPIARecordByDCSId_(ss, dcsReqId) {
   let approverComments = null;
 
   if (sheet) {
-    // ✅ Fix #2: Use TextFinder.findAll() instead of full sheet load
-    // This is more efficient and prevents race conditions with multiple revisions
-    const finder = sheet.getRange('B:B')
+    // Bugfix: search the Linked_ReqID column, not a hardcoded 'B:B'. In the Applications sheet
+    // column B is the Applicant Email, so the DCS ReqID never matched and this returned an empty
+    // record, which silently skipped the supplementary-archive gate in submitDCS. Mirrors the
+    // healthy sibling getRequestDataBatch_. Falls back to 'B:B' only if the header is missing.
+    const _hdrsForSearch = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const _linkedColForSearch = _hdrsForSearch.indexOf('Linked_ReqID');
+    const _searchRange = _linkedColForSearch !== -1
+      ? sheet.getRange(String.fromCharCode(65 + _linkedColForSearch) + ':' + String.fromCharCode(65 + _linkedColForSearch))
+      : sheet.getRange('B:B');
+    const finder = _searchRange
       .createTextFinder(String(dcsReqId))
       .matchEntireCell(true)
       .findAll();

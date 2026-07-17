@@ -4411,7 +4411,7 @@ function processDivHeadDecision(sessionId, approverEmail, decision, comments, ap
             const flagKeys = Object.keys(flagsObj);
             hasDCSFlags = flagKeys.length === 0 || flagKeys.some(key => key.startsWith('DCS - '));
           } catch(e) {}
-          if (hasDCSFlags) updateDCSStatus(linkedReqId, 'Returned');
+          if (hasDCSFlags) updateDCSStatus(linkedReqId, 'Returned', approverFlags);
         }
       }
       notifyApplicant(sessionId, decision === 'Deny' ? 'denied' : 'returned');
@@ -4695,7 +4695,7 @@ function processApprovalDecision(sessionId, approverEmail, decision, comments, s
           const flagKeys = Object.keys(flagsObj);
           hasDCSFlags = flagKeys.length === 0 || flagKeys.some(key => key.startsWith('DCS - '));
           } catch(e) {}
-          if (hasDCSFlags) updateDCSStatus(linkedReqId, 'Returned');
+          if (hasDCSFlags) updateDCSStatus(linkedReqId, 'Returned', approverFlags);
         }
         
         Logger.log(`[AUDIT] ${sessionId}: Application Returned to Requestor by ${approverEmail}`);
@@ -4766,20 +4766,37 @@ function checkAllApproved(sessionId) {
 
 /*
   Function: updateDCSStatus
-  LAYMAN:    Writes a status back onto the Phase 1 DCS request — how PIA tells DCS "this is now
-             Complete / Returned".
-  TECHNICAL: Finds the Data_Collection row by REQ_ID and sets its STATUS cell. This is the only
-             cross-phase write PIA makes into the DCS sheet (the shared-DB integration point).
-  PARAMS:    - reqId — the DCS Request ID (Linked_ReqID).
-             - newStatus — the status string to write (e.g. 'Complete', 'Returned').
+  LAYMAN:    Writes a status back onto the Phase 1 DCS request. This is how PIA tells DCS "this is
+             now Complete / Returned". On a return that flagged DCS documents, it also copies the
+             approver's flags into the DCS row so the DCS resubmit form knows which supporting
+             documents to re-upload and archive.
+  TECHNICAL: Finds the Data_Collection row by REQ_ID and sets its STATUS cell. When approverFlags
+             is passed (return paths only), it also merges those flags into METADATA_JSON.approverFlags
+             (best-effort, non-blocking). This is the cross-phase write PIA makes into the DCS sheet.
+  PARAMS:    - reqId: the DCS Request ID (Linked_ReqID).
+             - newStatus: the status string to write (e.g. 'Complete', 'Returned').
+             - approverFlags: optional JSON string or object of flags to mirror into DCS metadata.
   RETURNS:   undefined (no-op if reqId not found).
 */
-function updateDCSStatus(reqId, newStatus) {
+function updateDCSStatus(reqId, newStatus, approverFlags) {
   const dcsSheet = getDatabaseSheet(DB_SHEET_NAMES.DATA_COLLECTION, true);
   const dcsData = dcsSheet.getDataRange().getValues();
   for (let j = 1; j < dcsData.length; j++) {
     if (dcsData[j][DCS_COLS.REQ_ID - 1] === reqId) {
       dcsSheet.getRange(j + 1, DCS_COLS.STATUS).setValue(newStatus);
+      // Round-4: mirror approver flags into the DCS row's metadata so submitDCS can archive the
+      // old flagged supporting documents on resubmit. Best-effort; must not block the status write.
+      if (approverFlags) {
+        try {
+          const flagsObj = (typeof approverFlags === 'string') ? JSON.parse(approverFlags || '{}') : approverFlags;
+          let meta = {};
+          try { meta = JSON.parse(dcsData[j][DCS_COLS.METADATA_JSON - 1] || '{}'); } catch (e) { meta = {}; }
+          meta.approverFlags = flagsObj;
+          dcsSheet.getRange(j + 1, DCS_COLS.METADATA_JSON).setValue(JSON.stringify(meta));
+        } catch (e) {
+          Logger.log('updateDCSStatus: metadata flag mirror failed (non-blocking): ' + e.toString());
+        }
+      }
       Logger.log(`Updated DCS request ${reqId} to status ${newStatus}`);
       break;
     }
@@ -7909,7 +7926,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
           hasDCSFlags = flagKeys.length === 0 || flagKeys.some(key => key.startsWith('DCS - '));
         } catch(e) {}
         if (hasDCSFlags) {
-          updateDCSStatus(linkedReqId, 'Returned');
+          updateDCSStatus(linkedReqId, 'Returned', approverFlags);
           Logger.log(`[AUDIT] ${sessionId}: ISM Review Returned DCS & PIA by ${ismMemberEmail}`);
         } else {
           Logger.log(`[AUDIT] ${sessionId}: ISM Review Returned PIA (No DCS flags) by ${ismMemberEmail}`);
