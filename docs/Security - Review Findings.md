@@ -49,11 +49,49 @@ is the unguarded direct-call surface.
 | F-02 | 🔴 Critical | ✅ Fixed | PIA: identity guard (`activeUser == approverEmail`) on `apiPhase3_ProcessISMDecision`/`processApprovalDecision`/`processDivHeadDecision` |
 | F-03 | 🔴 Critical | ✅ Fixed | Covered by the `saveConfigData` + `adminApi_setNotificationConfig` guards |
 | F-04 | 🟠 High | ✅ Fixed | DCS: owner guard on `apiGetRequestData` (returns `{found:false}` for non-owner) |
-| F-05 | 🟠 High | ✅ Fixed | PIA: new `isAuthorizedForApplication_` (owner + Stage-A + ISM + DivHead) on `apiPhase3_FetchPIAData`/`FetchDCSData` |
-| F-07 | 🟡 Medium | ✅ Verified PASS | `submitApplication` already re-checks ownership in-lock + server-computes status; no change needed |
-| F-08 | 🟢 Low | ✅ Fixed | DCS: `getGatewayRecord` bound to `Session.getActiveUser()` (override ignored) |
+| F-05 | 🟠 High | ⚠️ **Was only half-fixed → ✅ Closed 2026-08-11** | The 2026-06-23 fix guarded `apiPhase3_FetchPIAData`/`FetchDCSData` and `apiGetApplicationData` — the **wrappers**. `getApplicationData` itself stayed a public global, so `google.script.run.getApplicationData('PIA-000123')` still returned the full record for any guessable session id. **The primitive is now `getApplicationData_`.** See §F-05 note below. |
+| F-07 | 🟡 Medium | ✅ Verified PASS | `submitApplication_` already re-checks ownership in-lock + server-computes status; no change needed |
+| F-08 | 🟢 Low | ✅ Fixed | DCS: `getGatewayRecord_` bound to `Session.getActiveUser()` (override ignored) |
 | F-06 | 🟡 Medium | ⏳ Deferred (3b) | Error-message sweep — 58 `error: e.toString()/e.message` sites across 3 files; do as a dedicated pass with a shared `safeError_` helper |
-| — | 🟡 Medium | ⏳ Deferred (3b) | `adminApi_resendToStage` / `adminApi_resendEmail` / `getFailedEmails` / `getEmailLog` — `handleAdminApi_`-only (not confirmed frontend-called); confirm no external API integration before guarding (a `checkAccess_` would break a no-active-user external caller) |
+| — | 🟡 Medium | ✅ Closed 2026-08-11 | `adminApi_resendToStage` / `adminApi_resendEmail` / `getFailedEmails` / `getEmailLog` — resolved by **privatization** rather than by a guard, which sidesteps the original concern entirely: they are dispatched only from `handleAdminApi_`'s `switch`, so a trailing underscore breaks no caller and no `checkAccess_` is needed on a possibly-no-active-user external path. |
+
+### 🔴 F-09 (new, 2026-08-11) — project-wide callable-surface exposure
+
+Measured before the sweep: **178 of 229** top-level functions were reachable from any authenticated
+domain account via `google.script.run`. The highest-impact ones, all now closed:
+
+| Function | Project | Exposure | Fix |
+|---|---|---|---|
+| `getSystemSecret` | PIA | Returned the **HMAC token-signing key** verbatim as a string | → `getSystemSecret_` |
+| `getApplicationData` | PIA | Full PII record for any sequential (guessable) session id — the F-05 primitive | → `getApplicationData_` |
+| `getAdminData` | Admin | **Every request in the system with all PII**, to any domain caller. Missed by F-01, which only covered the `adminApi_*`/`apiAdmin_*` families | + `checkAccess_` |
+| `getAuditLogs`, `exportToSheet`, `debugSheets`, `ping`, `getAdminDataDebug`, `adminGetEmailLog`, `adminGetFailedEmails` | Admin | Frontend-callable, no authorization check at all | + `checkAccess_` |
+| 16 × `admin*` (`adminSetNotificationConfig`, `adminCancelQueuedEmails`, `adminResendToStage`, …) | PIA | Config mutation, email suppression, send amplification | → all private |
+| `apiPhase3_InitializeISMWorkflow`, `apiPhase3_RetryISMWorkflow` | PIA | **Unauthenticated ISM workflow mutators** (one has zero callers at all) | → private |
+| `notifyApprover`, `notifyApplicant`, `apiPhase3_NotifyISMember` | Admin | Send-amplifiers; previously documented as "deliberately not renamed" on reasoning that did not hold | → all private |
+| `processEmailQueue`, `sendDailyReminders`, `purgeExpiredDrafts`, `forceAuthorize`, `test*`, … | all 3 | Trigger/editor entry points; cannot take an underscore (triggers bind by **name string**) | + `isOwnerContext_()` |
+
+**After: 82 public across all three projects, none of them unguarded.** Verify with
+`node docs/tools/surface.js` (committed — the sibling COC repo lost its equivalent checker to a
+scratchpad directory).
+
+**Generalizable lesson, and the reason F-05 sat half-open for six weeks: guard the primitive, not the
+wrapper.** A wrapper guard reads as a fix and passes review, but in Apps Script the function
+underneath is its own endpoint. A finding is not closed until the primitive is closed.
+
+### 🟠 F-10 (new, 2026-08-11) — uploaded documents were world-readable
+
+`uploadProxy` ended with `file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, VIEW)`, so every NDA,
+DPA, DSA, Confidentiality Undertaking and Endorsement Letter was readable by **anyone on the internet
+with the URL** — and the raw `drive.google.com/file/d/<id>/view` URL was rendered into the DCS
+request-details screen, the PIA summary and the approver review form.
+
+Closed by: removing the `setSharing` call (files are owner-only by default), and serving reads
+through the new identity-gated `apiDownloadDcsFile` with an anti-confused-deputy check that the
+requested `fileId` belongs to the request. `getAndShareDCSFiles_` / `getDCSSupersededFiles_` retain a
+narrower `DOMAIN_WITH_LINK` elevation as the single documented exception, because the Certificate of
+Approval email and PDF cannot call `google.script.run`. Historic files need
+`backfillPrivateDcsFiles(false)` (owner-gated, dry-run by default, **not git-revertible**).
 
 All applied changes are backend-only and **pending deploy** (PIA + Admin + DCS, each Edit → New version).
 

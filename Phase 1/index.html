@@ -817,6 +817,30 @@
       border-color: var(--navy-mid);
     }
     .btn-sm { padding: 5px 12px; font-size: 12px; }
+
+    /* Document download trigger. Renders like the underlined link it replaced (uploaded documents
+       used to be raw Drive links) so the request-details layout is visually unchanged, but it is a
+       real <button> because it fires an authenticated fetch rather than navigating. */
+    .doc-link {
+      display: inline;
+      padding: 0;
+      margin: 0;
+      border: 0;
+      background: none;
+      font: inherit;
+      font-size: inherit;
+      color: var(--navy-bright);
+      text-decoration: underline;
+      cursor: pointer;
+      text-align: left;
+    }
+    .doc-link:hover:not(:disabled) { color: var(--navy-mid); }
+    .doc-link:disabled { cursor: default; text-decoration: none; }
+    .doc-link:focus-visible {
+      outline: 2px solid var(--navy-bright);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
     .btn-row {
       display: flex;
       gap: 8px;
@@ -3269,6 +3293,78 @@ function showLoading(message = 'Processing...') {
 */
 function hideLoading() {
   document.getElementById('loader-overlay')?.remove();
+}
+
+/*
+  Function Name: safeIdAttr
+  LAYMAN: Cleans an ID so it is safe to drop inside an onclick="..." attribute. Request IDs and
+          Drive file IDs are only ever letters, numbers, dashes and underscores, so anything else
+          is stripped rather than escaped.
+  TECHNICAL: Whitelist filter (not a blacklist) — returns '' for null/undefined. Used instead of
+             escapeHtml for values that land inside a JS string literal inside an HTML attribute,
+             where HTML-entity escaping alone would not prevent quote breakout.
+  PARAMS:
+  - v — the raw id.
+  RETURNS: The filtered id string.
+*/
+function safeIdAttr(v) {
+  return String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '');
+}
+
+/*
+  Function Name: downloadDcsFile
+  LAYMAN: Downloads one of your uploaded documents. Files now live PRIVATELY in the company Drive
+          vault (they used to be shared with anyone who had the link, which meant a forwarded link
+          leaked an NDA publicly). So instead of opening a Drive page, we ask the server for the
+          file, it checks that the document really is yours, and then it hands the bytes straight
+          to your browser as a download.
+  TECHNICAL: Calls apiDownloadDcsFile(reqId, fileId); on success base64-decodes into a Blob and
+             triggers a synthetic <a download> click, then revokes the object URL. Mirrors the
+             existing pattern in Admin/adminView.html downloadCertificateFromModal(). Disables the
+             button and shows inline progress for the round trip, restoring it in every branch.
+  PARAMS:
+  - reqId  — the DCS Request ID that owns the document.
+  - fileId — the Drive file ID (validated server-side against reqId).
+  - btn    — the clicked element, so we can show a per-button loading state.
+  RETURNS: Nothing (async; triggers a browser download or a toast on failure).
+*/
+function downloadDcsFile(reqId, fileId, btn) {
+  var originalHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.innerHTML = 'Opening...'; }
+
+  var restore = function () {
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.innerHTML = originalHtml; }
+  };
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      restore();
+      if (!res || !res.success) {
+        showCustomAlert((res && res.error) ? res.error : 'Could not open this document.', 'danger');
+        return;
+      }
+      try {
+        var byteChars = atob(res.data.base64);
+        var byteNums = new Array(byteChars.length);
+        for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+        var blob = new Blob([new Uint8Array(byteNums)], { type: res.data.mimeType });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = res.data.filename || 'document';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showCustomAlert('Could not prepare the download. Please try again.', 'danger');
+      }
+    })
+    .withFailureHandler(function (err) {
+      restore();
+      showCustomAlert('Could not open this document. Please try again or contact ISM.', 'danger');
+    })
+    .apiDownloadDcsFile(reqId, fileId);
 }
 
 /*
@@ -6461,13 +6557,24 @@ function renderRequestDetails(data) {
   const container = document.getElementById('screen-request-details');
   const s = data.metadata || {};
   const files = data.files || [];
-  // #2: render uploaded documents as clickable Drive links (files carry {type,name,id})
+  // #2: render uploaded documents as download buttons (files carry {type,name,id}).
+  // SECURITY: these used to be raw https://drive.google.com/file/d/<id>/view links, which only
+  // worked because uploadProxy_ published every document with ANYONE_WITH_LINK. Documents are now
+  // PRIVATE in Drive and are served exclusively through apiDownloadDcsFile, which re-checks
+  // ownership and that the fileId really belongs to this request. No Drive URL reaches the browser.
   // NOTE: built with plain string concatenation (no template literal) on purpose — keep it ASCII.
+  // (See CLAUDE.md §8: a backtick template in a string helper here corrupted the whole page at GAS
+  //  serve time. Do not "modernize" this into a template literal.)
+  const reqIdAttr = safeIdAttr(data.reqId);
   const fileLinkHtml = function (obj) {
     if (!obj || !obj.id) return 'Not attached';
-    var url = 'https://drive.google.com/file/d/' + escapeHtml(obj.id) + '/view';
+    var fid = safeIdAttr(obj.id);
     var name = escapeHtml(obj.name || 'View file');
-    return '<a href="' + url + '" target="_blank" rel="noopener" style="color:var(--navy-bright);text-decoration:underline;">' + name + ' &#8599;</a>';
+    // Missing ids would produce a dead button — show the plain name instead.
+    if (!fid || !reqIdAttr) return name;
+    return '<button type="button" class="doc-link" title="Download ' + name + '"' +
+           ' onclick="downloadDcsFile(\'' + reqIdAttr + '\',\'' + fid + '\',this)">' +
+           name + '</button>';
   };
   const ndaFile = fileLinkHtml(files.find(f => f.type === 'NDA' || f.type === 'CU' || f.type === 'DPA'));
   const dsaFile = fileLinkHtml(files.find(f => f.type === 'DSA'));

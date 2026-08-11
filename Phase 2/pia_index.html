@@ -3555,7 +3555,11 @@ function renderSummary() {
         };
         // Build endorsement file button for Supporting Documents (skip in agency card)
         if (agency.endorsementLetter && typeof agency.endorsementLetter === 'object' && agency.endorsementLetter.id) {
-          window._endorsementFileHtml = `<a href="https://drive.google.com/file/d/${escapeHtmlMemo(agency.endorsementLetter.id)}/view" target="_blank" class="btn btn-sm" style="color: var(--navy-bright); text-decoration: none; border-color: var(--navy-bright); margin-right: 8px;" title="${escapeHtmlMemo(agency.endorsementLetter.name || 'Endorsement Letter')}">📄 View Endorsement Letter</a>`;
+          // SECURITY: was a raw https://drive.google.com/file/d/<id>/view link, which only worked
+          // because DCS uploads were published with ANYONE_WITH_LINK. Documents are private now and
+          // are fetched through apiDownloadDcsFile, which re-checks that the caller is party to this
+          // application. Also dropped the emoji icon (interface icons should not be emoji).
+          window._endorsementFileHtml = `<button type="button" class="btn btn-sm" style="color: var(--navy-bright); border-color: var(--navy-bright); margin-right: 8px;" title="${escapeHtmlMemo(agency.endorsementLetter.name || 'Endorsement Letter')}" onclick="downloadDcsFile('${safeIdAttr(state.sessionId)}','${safeIdAttr(agency.endorsementLetter.id)}',this)">View Endorsement Letter</button>`;
         }
         // Dynamically render all fields
         Object.keys(agency).forEach(key => {
@@ -3847,6 +3851,72 @@ function _showToast(msg, type) {
 function showError(msg)   { _showToast(msg, 'error'); }
 /* showSuccess — convenience wrapper: shows a success toast. */
 function showSuccess(msg) { _showToast(msg, 'success'); }
+
+/*
+  Function Name: safeIdAttr
+  LAYMAN: Nililinis yung ID bago ilagay sa loob ng onclick="..." — letra, numero, dash, underscore
+          lang ang papasa. Ganun lang naman talaga ang session IDs at Drive file IDs.
+  TECHNICAL: Whitelist filter (not a blacklist) for values that land in a JS string literal inside
+             an HTML attribute, where HTML-entity escaping alone would not stop a quote breakout.
+  PARAMS:
+  - v — the raw id.
+  RETURNS: The filtered id string ('' for null/undefined).
+*/
+function safeIdAttr(v) {
+  return String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '');
+}
+
+/*
+  Function Name: downloadDcsFile
+  LAYMAN: Binubuksan yung DCS na dokumentong naka-attach sa application mo. Dati direktang Drive
+          link ito, at yung link na yun ay bukas sa kahit sino sa internet. Ngayon hinihingi natin
+          sa server, tinitingnan muna niya kung kasama ka ba sa request na to, tsaka niya ibibigay
+          yung file mismo para ma-download mo.
+  TECHNICAL: Calls apiDownloadDcsFile(sessionId, fileId); on success base64-decodes into a Blob and
+             triggers a synthetic <a download> click, then revokes the object URL. Same pattern as
+             the twin in Phase 1/index.html and in the server-rendered review form.
+  PARAMS:
+  - sessionId — PIA session id that owns the linked DCS request.
+  - fileId    — Drive file id (validated server-side against the request).
+  - btn       — the clicked element, for a per-button loading state.
+  RETURNS: Nothing (async; triggers a browser download or an error toast).
+*/
+function downloadDcsFile(sessionId, fileId, btn) {
+  var originalHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.innerHTML = 'Opening...'; }
+  function restore() {
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.innerHTML = originalHtml; }
+  }
+  google.script.run
+    .withSuccessHandler(function (res) {
+      restore();
+      if (!res || !res.success) {
+        showError((res && res.error) ? res.error : 'Could not open this document.');
+        return;
+      }
+      try {
+        var byteChars = atob(res.data.base64);
+        var byteNums = new Array(byteChars.length);
+        for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+        var blob = new Blob([new Uint8Array(byteNums)], { type: res.data.mimeType });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = res.data.filename || 'document';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showError('Could not prepare the download. Please try again.');
+      }
+    })
+    .withFailureHandler(function () {
+      restore();
+      showError('Could not open this document. Please try again or contact ISM.');
+    })
+    .apiDownloadDcsFile(sessionId, fileId);
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ✅ VALIDATION

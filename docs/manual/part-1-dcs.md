@@ -97,12 +97,19 @@ badges are computed in the frontend, not stored strings.)*
 | `DB_ID` | Yes | Spreadsheet ID of the shared database |
 | `ADMIN_FOLDER_ID` | Yes | Drive folder for uploaded NDA/DPA/DSA/CU files |
 | `PIA_APP_URL` | Yes | Live **PIA** `/exec` URL ("Proceed to Phase 2" button) |
-| `DCS_WEB_APP_URL` | Yes | Live **DCS** `/exec` URL (self-reference) |
+| `DCS_WEB_APP_URL` | **No — not read by code** | Nominally the live **DCS** `/exec` (self-reference). See the note below. |
 | `DOMAIN` | Yes | Corporate domain, no `@` (e.g. `megaworldcorp.com`) |
 
 > ⚠️ The old DCS manual listed an `HMAC_SECRET` property. It is a **misnomer** — DCS does no
 > token signing. The signing secret is `SYSTEM_SECRET` and lives in the **PIA** project
 > ([§0.6](part-0-common.md#06--security-model)).
+
+> ⚠️ **`DCS_WEB_APP_URL` is not read anywhere in the DCS project.** Verified: zero occurrences in
+> `Phase 1/Code.js` and `Phase 1/index.html`. It was previously documented as Required, which is
+> wrong — nothing breaks if it is absent, and setting it changes no behavior. The property that
+> genuinely matters is the **PIA** project's own `DCS_WEB_APP_URL`, which powers the applicant's
+> "View DCS Submission" link ([§2.2](part-2-pia.md#22--maintenance-)). Leave any existing DCS-side
+> value in place: it is harmless, and deleting a live Script Property has no upside.
 
 ### Downloadable templates (7 forms)
 The Step-1 download buttons are driven by the `DOWNLOADABLES` array in `renderGuide()`

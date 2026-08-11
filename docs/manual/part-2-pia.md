@@ -139,23 +139,31 @@ Drafts via debounced `apiSaveDraft()`. The DCS-link screen (`renderDCSCheck`) ca
 - **Approval workflow (Stage A/D):** `initializeApprovalWorkflow()`,
   `processApprovalDecision()`, `processDivHeadDecision()`, `checkAllApproved()`
 - **ISM Phase 3 (Stage B/C):** `apiPhase3_InitializeISMWorkflow()`,
-  `apiPhase3_ProcessISMDecision()`, `apiPhase3_NotifyISMember()`,
-  `apiPhase3_RouteApprovedRequest()`, `getISMReviewerStep()`, `apiPhase3_RetryISMWorkflow()`
-- **Email:** `notifyApprover()`, `notifyApplicant()`, `sendEmailWithRetry()`,
+  `apiPhase3_ProcessISMDecision()`, `notifyISMember_()`,
+  `routeApprovedRequest_()`, `getISMReviewerStep()`, `apiPhase3_RetryISMWorkflow()`
+- **Email:** `notifyApprover_()`, `notifyApplicant_()`, `sendEmailWithRetry()`,
   `getWebAppUrl()`, `getDCSWebAppUrl()`; reminders `sendDailyReminders()` /
   `buildReminderEmail()`
 - **Audit:** `logAuditTrail()`, `analyzeApplicationRisk()`
-- **DCS bridge:** `apiGetDCSContext()`, `getAndShareDCSFiles()`, `updateDCSStatus()`
+- **DCS bridge:** `apiGetDCSContext()`, `getAndShareDCSFiles()`, `updateDCSStatus_()`
+
+> 🔒 **The trailing underscore on five of these is deliberate and load-bearing.**
+> `routeApprovedRequest_`, `updateDCSStatus_`, `notifyISMember_`, `notifyApprover_`, and
+> `notifyApplicant_` are **private** — in Apps Script a trailing-underscore name cannot be called
+> from the browser via `google.script.run`. They were renamed from public `apiPhase3_*` / bare names
+> precisely to remove that surface (a public finalizer let any domain user email a forged Certificate
+> of Approval for any guessable session ID). Do not rename them back. Full rationale in
+> `CLAUDE.md` §8b.
 - **Drafts:** `apiSaveDraft()`, `apiRestoreDraft()`, `apiDeleteDraft()`, `cleanupExpiredDrafts()`
 
 ### Data flow (condensed)
 `parentID` link → `doGet` renders SPA → `apiGetDCSContext` verifies & pre-fills →
 7-step form (auto-saved) → `apiSubmitApplication` writes `Applications` →
-`initializeApprovalWorkflow` → `notifyApprover` (HMAC link) →
-`processApprovalDecision` (next approver or done) → ISM init + `apiPhase3_NotifyISMember` →
+`initializeApprovalWorkflow` → `notifyApprover_` (HMAC link) →
+`processApprovalDecision` (next approver or done) → ISM init + `notifyISMember_` →
 `apiPhase3_ProcessISMDecision` (Approve/Return/Deny/Escalate) → on full approval,
-`apiPhase3_RouteApprovedRequest` generates the Certificate PDF (now including each approver's
-**comments**) and emails the site's TechServe / DCOPS team; `notifyApplicant` updates the applicant
+`routeApprovedRequest_` generates the Certificate PDF (now including each approver's
+**comments**) and emails the site's TechServe / DCOPS team; `notifyApplicant_` updates the applicant
 throughout and, on the **FULLY APPROVED** email, **attaches the certificate** plus a "being
 processed — contact TechServe" block (named per-site contacts). **All four approver notification
 emails now carry a "Review Status" block** (`generateEmailDecisionsHTML`) so the current approver

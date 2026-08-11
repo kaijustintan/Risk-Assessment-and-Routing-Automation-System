@@ -268,6 +268,57 @@ calls). Backend → GAS editor **Executions** + `Logger.log` / Stackdriver. Audi
 - **Ownership:** only the owner of a PIA application can view/revise it; approvers can view
   only while reviewing.
 
+### 🚩 The callable surface (the control that is easiest to get wrong)
+
+In Apps Script, **every top-level function in a project is an HTTP endpoint.** Any signed-in
+corporate account can open a browser console on any page of the app and call
+`google.script.run.anyFunctionName(...)`. Hiding a button, gating a page, or simply never calling a
+function from the UI provides **zero** protection. The only thing that removes a function from that
+surface is a **trailing underscore** in its name (`myFunction_`).
+
+As of **2026-08-11** all three projects follow one rule, and every new backend function must pick
+exactly one of these three:
+
+| Situation | What to do |
+|---|---|
+| Internal helper (the default) | Name it `myFunction_` |
+| Genuinely called by the frontend | Keep the bare name **and** guard the body — not the wrapper |
+| Trigger handler / editor-run helper | Keep the bare name and guard with `isOwnerContext_()` |
+
+The third case exists because a time-driven trigger binds its handler by **name string**
+(`ScriptApp.newTrigger('sendDailyReminders')`), so renaming one silently orphans the installed
+trigger. `isOwnerContext_()` compares `getEffectiveUser()` with `getActiveUser()`; they are equal
+only for the script owner or a trigger run.
+
+Before the sweep, **178 of 229** functions were publicly callable. After it, **82 — none of them
+unguarded.** Verify any time with:
+
+```bash
+node docs/tools/surface.js
+```
+
+That checker is committed on purpose; run it before every deploy.
+
+### 🚩 Uploaded documents are private
+
+Attachments (NDA / DPA / DSA / Confidentiality Undertaking / Endorsement Letter) are stored
+**owner-only** in the Drive vault. They previously carried `ANYONE_WITH_LINK` sharing, which made
+every signed contract readable by anyone on the internet holding the URL.
+
+Users and approvers now open documents through **`apiDownloadDcsFile`**, which re-checks that the
+caller is party to that request, confirms the requested file actually belongs to it, and returns the
+bytes to the browser. No Drive URL ever reaches the page.
+
+**One deliberate exception:** the Certificate of Approval email and PDF sent to DCOPS / TechServe
+carry real links, because an email client cannot call back into the app. Those files are elevated to
+**domain-only** link sharing (never public), only at final-certificate time, and only for that one
+request. See `getAndShareDCSFiles_` in `pia_code.js`.
+
+> 🛠 **Historic files:** documents uploaded before this change are still shared. Run
+> `backfillPrivateDcsFiles(true)` in the DCS project to preview, then `(false)` to apply.
+> ⚠️ This permanently breaks document links in **already-sent emails** (intended, but tell ISM
+> first) and cannot be undone by reverting the code.
+
 ### Token security
 - Approval/review/decision email links carry an **HMAC-SHA256 token** bound to the approver
   email + specific action (Approve, Deny, Return, Review, ISMReview), with a **14-day TTL**.
@@ -287,12 +338,29 @@ calls). Backend → GAS editor **Executions** + `Logger.log` / Stackdriver. Audi
 - Decision records can't be modified once processed (duplicate-action detection).
 - File uploads are validated client- and server-side (extension, size ≤10MB, MIME).
 
-### This session's hardening (summary)
+### Hardening history
+
+**Round 1 (2026-06-23)**
 - **DCS (`Code.js`):** findings F-04 / F-08 addressed.
 - **PIA (`pia_code.js`):** F-05 + identity guards on ISM / approval / DivHead decisions.
 - **Admin (`admin_code.js`):** 17 `checkAccess_` guards added across API entry points.
-- Full detail: `docs/Security - Review Findings.md` and `docs/Security - Recommendations.md`
-  (reproduced in Appendix, see `appendices.md`).
+
+**Round 2 (2026-08-11)** — prompted by a cross-repository review against the sibling COC portal
+(`docs/Cross-Repo Review - DCS vs COC.md`):
+- **Callable surface closed project-wide** (F-09): 178 → 82 public functions, none unguarded.
+  Notably `getSystemSecret` had been returning the HMAC signing key to any domain caller, and
+  `getAdminData` had been returning every request in the system with all PII.
+- **F-05 re-opened and properly closed.** Round 1 guarded `apiGetApplicationData` (the wrapper) but
+  left `getApplicationData` (the primitive) public. 🚩 **Lesson worth keeping: guard the primitive,
+  not the wrapper — a finding is not closed until the primitive is closed.**
+- **Uploaded documents made private** (F-10) with the `apiDownloadDcsFile` proxy.
+- **Answer snapshots** added (`Application_Snapshots`) so a resubmit no longer destroys the version
+  of the assessment that approvers actually signed off on.
+- **Daily reminders now fail loudly.** A failed pre-filter read used to produce a silent
+  zero-reminder run; it now aborts with a logged reason and an `{aborted:true}` return.
+
+Full detail: `docs/Security - Review Findings.md` and `docs/Security - Recommendations.md`
+(reproduced in Appendix, see `appendices.md`).
 
 ---
 

@@ -107,14 +107,15 @@ one the email code reads.
 | Project (Script Properties) | Property | Must hold | Feeds / read by |
 |---|---|---|---|
 | **DCS** | `PIA_APP_URL` | live **PIA** `/exec` | "Proceed to Phase 2" button (`generatePhase2Url_`) |
-| **DCS** | `DCS_WEB_APP_URL` | live **DCS** `/exec` | DCS self-reference |
+| **DCS** | `DCS_WEB_APP_URL` | *(nothing — unused)* | ⚠️ **Not read by any DCS code.** Verified zero occurrences in `Phase 1/Code.js` + `Phase 1/index.html`. Previously documented as a "self-reference"; it isn't one. Harmless if set, harmless if absent — don't wire anything to it. The one that matters is **PIA**'s `DCS_WEB_APP_URL` (next row but one). |
 | **PIA** | `WEB_APP_URL` | live **PIA** `/exec` | approver "Review Access Request", ISM/approval forms, reminders (`getWebAppUrl`) |
 | **PIA** | `DCS_WEB_APP_URL` | live **DCS** `/exec` | applicant "View DCS Submission" link (`getDCSWebAppUrl`) |
-| **Admin** | `WEB_APP_URL` | live **PIA** `/exec` | manual-resend email CTAs (`notifyApprover` / `notifyApplicant` / `apiPhase3_NotifyISMember`, via `getOptionalUrl_`). Generic "Open the System" link — **no token, no `parentID`**. Missing prop → button silently omitted (graceful). Admin uses **no** `DCS_WEB_APP_URL` / `PIA_APP_URL`. |
+| **Admin** | `WEB_APP_URL` | live **PIA** `/exec` | manual-resend email CTAs, via `getOptionalUrl_`, through **Admin's own** `notifyApprover` / `notifyApplicant` / `apiPhase3_NotifyISMember` (`admin_code.js:3350` / `:3421` / `:3483` — separate project, separate copies from PIA's now-private ones). Generic "Open the System" link — **no token, no `parentID`**. Missing prop → button silently omitted (graceful). Admin uses **no** `DCS_WEB_APP_URL` / `PIA_APP_URL`. |
 
-Consistency check: **DCS `PIA_APP_URL` == PIA `WEB_APP_URL`** (both = live PIA), and **DCS
-`DCS_WEB_APP_URL` == PIA `DCS_WEB_APP_URL`** (both = live DCS). If a pair disagrees, a link is
-about to break.
+Consistency check: **DCS `PIA_APP_URL` == PIA `WEB_APP_URL`** (both = live PIA). That is the only
+pair that must agree. (The old check also paired DCS↔PIA `DCS_WEB_APP_URL`; that was wrong, because
+the DCS-side copy is never read — see the table note above.) If the pair disagrees, a link is about
+to break.
 
 **Gotchas when links die:**
 - **Emails freeze their links at send time.** Updating a property only fixes **future** emails;
@@ -135,7 +136,7 @@ about to break.
 | `Phase 1/index.html` | **DCS frontend** — CSS, 9 screens, client JS, validation | ✅ main work |
 | `Phase 1/Code.js` | DCS backend (~2,670 lines) — `doGet`, drafts, `submitDCS`, risk audit. **One email:** `notifyDcsRequester_` ("Proceed to Phase 2" confirmation). | ⚠️ careful |
 | `Phase 2/pia_index.html` | PIA frontend — multi-section assessment wizard | ⚠️ as needed |
-| `Phase 2/pia_code.js` | PIA backend (~9,000 lines) — approval workflow, ISM, **all email** (`notifyApplicant`) | ⚠️ careful |
+| `Phase 2/pia_code.js` | PIA backend (~9,000 lines) — approval workflow, ISM, **all email** (`notifyApplicant_`) | ⚠️ careful |
 | `Admin/adminView.html` | Admin frontend — dashboard, settings, email routing | ⚠️ as needed |
 | `Admin/admin_code.js` | Admin backend — config, manual email resend (`adminResendEmail`), `MailApp` senders | ⚠️ careful |
 | `*/…_appsscript.json` | Per-phase GAS manifest (Asia/Manila, scopes, DOMAIN access) | ⚠️ only for a new scope |
@@ -202,8 +203,36 @@ functionally read it. When verifying token security, check **`SYSTEM_SECRET` in 
 **Security (do not weaken):** `doGet` blocks non-domain accounts before serving the HTML;
 `submitDCS` re-validates domain + required fields + email formats server-side
 (defense-in-depth). Files are uploaded base64 → Drive folder `ADMIN_FOLDER_ID` via
-`uploadProxy`. `analyzeDCSRisk()` auto-flags conflict-of-interest / duplicate-role /
+`uploadProxy_`. `analyzeDCSRisk_()` auto-flags conflict-of-interest / duplicate-role /
 short-entry / missing-accountable patterns into `Risk_Audit`.
+
+**🚩 Uploaded documents are PRIVATE (2026-08-11). Do not re-add link sharing.** `uploadProxy_`
+used to end with `file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, …)`, publishing every NDA / DPA /
+DSA / Confidentiality Undertaking / Endorsement Letter to **anyone on the internet holding the URL** —
+and the raw `drive.google.com/file/d/<id>/view` URL was rendered straight into the request-details
+screen, the PIA summary and the approver review form. One forwarded screenshot leaked a signed
+contract publicly. `DriveApp.createFile()` leaves a file owner-only, so the fix is that the function
+now sets **no sharing at all**.
+
+Read access is served only by **`apiDownloadDcsFile`** (one copy per project, different signatures:
+Phase 1 takes `(reqId, fileId)` and gates on request ownership; PIA takes `(sessionId, fileId)` and
+reuses `isAuthorizedForApplication_`). Both then apply the **anti-confused-deputy check**: the
+requested `fileId` must actually appear in that request's `FILE_ID` JSON / `supersededFiles` /
+agency `endorsementLetter`. *Owning a request is not owning a file* — without that check, a caller
+who passes the ownership gate on their own request could hand in any Drive ID in the script owner's
+Drive and have it served back under the owner's full `drive` scope. Both cap the response at 8 MB
+(base64 inflates ~33%, and `google.script.run` payloads get unreliable past ~10 MB).
+
+**The ONE deliberate exception:** `getAndShareDCSFiles_` and `getDCSSupersededFiles_` in
+`pia_code.js` still elevate to `DOMAIN_WITH_LINK` — never `ANYONE_WITH_LINK` — because their only
+caller is the Certificate of Approval builder, whose email + PDF go to the DCOPS/TechServe inboxes
+and **cannot call `google.script.run`**. It fires only at final-certificate time, for that one
+request's files. Both functions carry a comment saying so; if the certificate ever stops linking
+documents, delete the elevation with it.
+
+`backfillPrivateDcsFiles(dryRun)` (Phase 1, owner-gated, **`dryRun` defaults to true**) privatizes
+files uploaded before the fix. ⚠️ It retroactively kills Drive links in already-sent emails — correct,
+but tell ISM first, and it is **not** git-revertible.
 
 **Server API contract** (what each `google.script.run` call returns — read the function in
 `Code.js` before relying on a field):
@@ -304,6 +333,23 @@ ask before inventing one — consistency with the navy system matters to the sup
 - **DCS sends exactly one email** (`Phase 1/Code.js`): `notifyDcsRequester_` (~line 1705), the styled
   *"Request submitted — Proceed to Phase 2"* confirmation, fired auto inside `submitDCS` (~1681, try/catch
   failsafe) with a `?parentID=` deep-link into PIA.
+- **🚨 There is NO certificate template file — don't go looking for one.** The Certificate of Approval
+  is built as an **HTML string in source** and converted in one line:
+  `Utilities.newBlob(html, MimeType.HTML, name).getAs(MimeType.PDF)`
+  (`Phase 2/pia_code.js:8596`; same technique in `Admin/admin_code.js:2698` resend and `:3122` download,
+  which base64s the blob back to the browser). No Google Docs template, no `DriveApp.makeCopy`, no
+  `DocumentApp`, no `{{token}}` replacement — data is interpolated inline as `${escapeHtml(...)}` across
+  the ~200-line cert body at `pia_code.js:8400–8590`. **Consequences to respect when editing it:**
+  (a) the layout IS the source, so redesigns are normal code edits (good: diffable, no template-ID SPOF);
+  (b) the converter is Google's **legacy HTML→PDF engine** — table-based HTML + inline CSS only. No
+  flexbox/grid, no page-break control, no headers/footers/page numbers. Don't "modernize" the cert CSS;
+  it will silently render wrong in the PDF while looking fine in the email;
+  (c) the PDF is built from the *email* HTML with the remote logo `<img>` string-replaced out
+  (`pia_code.js:8591`) because the converter won't reliably fetch remote images. One body, two renderings —
+  edit the shared HTML, not one copy;
+  (d) **the PDF is never archived.** It lives in memory, gets attached, and is discarded. Re-issuance works
+  by *regenerating from the DB* (`apiAdmin_DownloadCertificate`, `admin_code.js:2973`). There is no cert
+  Drive folder and no issuance-log sheet. A cert therefore reflects the DB *now*, not at signing time.
 
 ---
 
@@ -353,7 +399,7 @@ member picks `EscalateToDivisionHead` (`apiPhase3_ProcessISMDecision` ~7154):
 - The Division Head decides (`processDivHeadDecision` ~3910):
   - **Approve** → the escalated ISM step is marked `Approved`. If that makes **all** ISM rows
     Approved → **finalize** (certificate + route + DCS Complete). If not (e.g. the other ISM
-    member hasn't acted) → **resume the ISM chain at the next step** (`apiPhase3_NotifyISMember`
+    member hasn't acted) → **resume the ISM chain at the next step** (`notifyISMember_`
     ~3999) — i.e. it comes *back down* to the remaining reviewer.
   - **Deny** → app `Denied` (terminal). **Return** → app `Returned` to applicant (+DCS if DCS
     flags) → full restart on resubmit.
@@ -386,6 +432,150 @@ Consequences (see §3b for the full URL-property map + golden rule):
   sent**. Updating a property fixes **future** emails only — ones already in inboxes stay dead.
 - Test with a **fresh** transaction (re-trigger), and only with **freshly generated** links
   (tokens expire in 14 days).
+
+**🔒 The F-02 guard convention — every state-mutating function guards ITSELF.** In Apps Script,
+**every top-level function in a project is callable from the browser via `google.script.run`**,
+regardless of what the UI exposes buttons for. So authorization living only in the outer handler the
+UI happens to call is not authorization. The convention here: each mutator re-resolves the caller
+server-side and compares it to the email it was passed —
+
+```js
+// SECURITY (F-02): authorize the actual caller server-side.
+const _me = getNormalizedEmail(Session.getActiveUser().getEmail());
+if (_me !== getNormalizedEmail(approverEmail)) {
+  return { success: false, error: 'Access denied: you may only submit your own decision.' };
+}
+```
+
+Present in all three decision fns: `processApprovalDecision` (~4544), `processDivHeadDecision`
+(~4291), `apiPhase3_ProcessISMDecision` (~7760). The "still actionable?" half of the check is
+**structural**, not a separate branch: every row search requires `STATUS === 'Pending'`, so
+re-deciding a resolved request returns "record not found." `submitApplication` re-checks ownership
+*inside* the lock (~4128, TOCTOU-aware, logs `SECURITY ALERT`). **Never add a mutator without this
+guard, and never rely on the caller having gone through a handler.**
+
+**🔒 The second half of the convention: the trailing underscore is a security boundary.** The
+guard above covers functions that *receive* a caller email to compare against. Functions that don't
+take one (formatters, mailers, the finalizer) can't use it, so they are made **private instead** —
+in Apps Script a trailing-underscore name is unreachable from `google.script.run`.
+
+> **🚩 2026-08-11 — the convention is now applied project-wide, not case by case.** Before this
+> sweep the repo exposed **178 of its 229** top-level functions, including `getSystemSecret` (which
+> returned the HMAC signing key as a string to any domain caller), `getApplicationData` (full PII
+> record for any sequential, guessable session id), 16 unguarded `admin*` config mutators/email
+> cancellers, and two unauthenticated ISM workflow mutators. After the sweep: **82 public, none of
+> them unguarded.** Run `node docs/tools/surface.js` before every deploy.
+>
+> **The rule for any NEW backend function — pick exactly one:**
+> 1. **Internal helper → give it a trailing underscore.** This is the default. Choose it unless you
+>    can name the frontend line that calls the function.
+> 2. **Genuinely called by the frontend → keep the bare name AND guard the body.** Not the wrapper:
+>    *the body*. See the F-05 lesson below.
+> 3. **Trigger handler or editor-run helper → keep the bare name and guard with `isOwnerContext_()`.**
+>    These cannot take an underscore: a time-driven trigger binds its handler by **name string**
+>    (`ScriptApp.newTrigger('sendDailyReminders')`), so renaming one silently orphans the installed
+>    trigger. `isOwnerContext_()` compares `getEffectiveUser()` to `getActiveUser()` — equal only for
+>    the owner or a trigger run. It exists in all three projects; keep the copies identical.
+>    `sendDailyReminders` and `setupReminderTrigger` use a **thin public guarded wrapper over a
+>    private `_` implementation**, because they also have internal callers that must bypass the gate.
+>
+> **🔴 The F-05 lesson — guard the primitive, not the wrapper.** `docs/Security - Review Findings.md`
+> recorded F-05 (`getApplicationData` IDOR) as ✅ Fixed. What was actually fixed was
+> `apiGetApplicationData`, the *wrapper*. `getApplicationData` itself stayed public and unguarded, so
+> `google.script.run.getApplicationData('PIA-000123')` still returned the whole record. **A finding
+> is not closed until the primitive is closed.** The primitive is now `getApplicationData_`.
+>
+> **⚠️ Rename FUNCTIONS only, never DTO property keys.** The sibling COC repo ran this same sweep and
+> renamed `isAdmin` → `isAdmin_` on a *return-value key* as well as the function; `state.user.isAdmin`
+> became `undefined` and its entire admin console went dark. A call-graph checker cannot catch that:
+> the name still resolves, it is the object property that broke.
+
+Five functions in `pia_code.js` were private for this reason before the sweep and **must stay that
+way** (they are now part of a much larger private set, but these are the highest-impact):
+
+| Private fn | Was | Why it must not be public |
+|---|---|---|
+| `routeApprovedRequest_` | `apiPhase3_RouteApprovedRequest` | Builds the Certificate of Approval and emails it to the live DCOPS/TechServe inboxes (`[CERTIFICATE OF APPROVAL] Implementation Required`); also calls `getAndShareDCSFiles`, flipping uploaded DCS docs to `DOMAIN_WITH_LINK` |
+| `updateDCSStatus_` | `updateDCSStatus` | Writes status into any `Data_Collection` row (now also whitelisted to `'Complete'`/`'Returned'`) |
+| `notifyISMember_` | `apiPhase3_NotifyISMember` | Send-amplifier |
+| `notifyApprover_` | `notifyApprover` | Send-amplifier |
+| `notifyApplicant_` | `notifyApplicant` | Send-amplifier |
+
+`routeApprovedRequest_` additionally gates on `appData.status === 'Approved by ISM'` (defense in
+depth behind the rename), reusing the `getApplicationData` call already at `~8178`. Both legitimate
+callers stamp that status immediately before invoking it (ISM `~7862`→`~7871`, DivHead proxy
+`~4372`→`~4379`), so the gate is transparent on the normal paths.
+
+> ⚠️ **Don't "tidy" these names.** Dropping an underscore re-opens a live hole — session IDs are
+> sequential (`~3780`) hence guessable, so a public finalizer lets any domain user email a forged
+> implementation certificate for any request. The original F-02 sweep missed exactly this function.
+> **The generalizable lesson: the function that gets missed is the one that doesn't *look* like an
+> auth decision (a formatter/mailer), which is also the highest-impact one.**
+>
+> ⚠️ **Admin has its own separate copies** of `notifyApprover` / `notifyApplicant` /
+> `apiPhase3_NotifyISMember` (`admin_code.js`). These were previously documented here as
+> "deliberately not renamed" on the grounds that Admin is a separate GAS project. **That reasoning
+> was wrong and has been corrected (2026-08-11): being a separate project explains why PIA's rename
+> did not *force* Admin's, not why Admin's copies had to stay public.** They were send-amplifiers
+> reachable from any domain browser console. All three are now `notifyApprover_` /
+> `notifyApplicant_` / `apiPhase3_NotifyISMember_`, reached only from the checkAccess_-guarded
+> `adminResendEmail`. The names still need not match PIA's — only the privacy does.
+>
+> ✅ **Closed (2026-08-11), same class:** `adminResendEmail` and the 15 sibling `admin*` functions in
+> `pia_code.js` are now private. All 16 are dispatched internally by `handleAdminApiRequest_` (itself
+> behind `doPost` + `ADMIN_API_KEY`), so nothing lost a caller.
+>
+> ✅ **Also closed (2026-08-11), found during the sweep and NOT in the original F-01 list:**
+> `getAdminData` / `getAuditLogs` / `exportToSheet` / `debugSheets` / `ping` / `getAdminDataDebug` /
+> `adminGetEmailLog` / `adminGetFailedEmails` in `admin_code.js` were frontend-callable with **no**
+> authorization check at all — `getAdminData` alone returned every request in the system, with all
+> PII, to any domain caller. F-01 guarded the `adminApi_*` / `apiAdmin_*` families and missed these.
+> They now carry the standard `checkAccess_` guard. Two unauthenticated ISM workflow mutators
+> (`apiPhase3_InitializeISMWorkflow`, `apiPhase3_RetryISMWorkflow`) were closed the same day by
+> privatization.
+>
+> ℹ️ **`include` in `admin_code.js` is deliberately left public.** `adminView.html` contains zero
+> `<? ?>` scriptlets so it is currently dead code, but `doGet` uses `createTemplateFromFile`, and
+> breaking scriptlet resolution would mean no page renders at all. Low severity (it returns project
+> HTML, not user data) against a high blast radius. Same call, for the same reason, as COC's.
+
+**🗒 History is NOT append-only — it's destructive-with-snapshot.** On resubmit, `submitApplication_`
+**deletes all rows** for the session from `Approval_Workflow`, `ISM_Approval_Workflow`, and
+`DivisionHead_Approval_Workflow` and clears `Approver_Flags`. The trail survives only because
+`writeRevisionHistorySnapshot_` copies actioned rows into the append-only `Revision_History` sheet
+*first*.
+
+> **🚩 2026-08-11 — the resubmit path also OVERWRITES the answers, and that half is now snapshotted
+> too.** `Applications.PIA_1_Data … PIA_5_Data` are `setValue`'d over in place. `Revision_History`
+> stores the **decisions** of a round ("X approved, here is the comment") but never stored the
+> **submission** those decisions were made against, so "what exactly did the Department Head approve
+> in round 1?" had no answer anywhere in the system. For a Privacy Impact Assessment that is a
+> compliance gap, not a nice-to-have.
+>
+> New sheet **`Application_Snapshots`** (`APPLICATION_SNAPSHOT_COLS`), written by
+> `writeApplicationSnapshot_` immediately before the overwrite, inside the same lock, keyed by the
+> same `(SessionID, RoundNumber)` pair as `Revision_History`. **Read the two together.**
+>
+> It is a separate tab on purpose: `REVISION_HISTORY_COLS` is **mirrored in `Phase 1/Code.js`
+> (`getRevisionHistoryRows_`)**, so widening that sheet would be a cross-app contract break of
+> exactly the kind §2 forbids.
+>
+> Its failure path is the point: still non-blocking (a history failure must never block a resubmit),
+> but a failure now writes a **`Snapshot Failed` row into `Risk_Audit`** instead of vanishing into a
+> `Logger.log`. Silent loss was the defect; blocking the user was never the fix.
+
+Respect these properties when editing the resubmit path:
+- The snapshot is **best-effort and explicitly non-blocking** ("a history-write failure must NEVER
+  block a resubmit"). If it throws, that round's *decisions* are gone. Don't add work inside it that
+  can fail. (The newer `writeApplicationSnapshot_` at least self-reports into `Risk_Audit`.)
+- `RoundNumber` is **derived** by scanning max-prior-round + 1 (~3048), safe only because it runs inside
+  `submitApplication`'s lock. Don't call it from an unlocked context.
+- Only **non-Pending** rows are snapshotted (~3072) — a round where nobody acted leaves no trace.
+- The **current** round is never in `Revision_History`; read paths must union it with the live workflow
+  sheets (`collectCurrentRoundDecisions_`). Any new history reader has to do the same union.
+
+`Risk_Audit` (`logDCSAuditTrail`, `Phase 1/Code.js:2018`) *is* genuinely append-only, but it logs
+risk/action events, not the approval timeline. Don't confuse the two.
 
 ---
 
