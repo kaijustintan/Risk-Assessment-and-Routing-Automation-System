@@ -469,6 +469,23 @@ in Apps Script a trailing-underscore name is unreachable from `google.script.run
 > cancellers, and two unauthenticated ISM workflow mutators. After the sweep: **82 public, none of
 > them unguarded.** Run `node docs/tools/surface.js` before every deploy.
 >
+> 🔴 **Also run `node docs/tools/calls.js`, and understand why it exists.** Privatizing a function
+> means renaming every caller too, and `c4bb11d` missed one: `generateAuthToken_` kept calling
+> `getSystemSecret()` after the definition became `getSystemSecret_()`. That call signs **every
+> approver review link**, so the first deploy would have broken the whole approval workflow. It
+> survived `node --check` (a call to a missing function is syntactically perfect), `surface.js`
+> (which audits *which names are public*, not whether calls resolve), and three review passes. It
+> surfaced only when `testAppendOnlyRounds()` was finally run against a live sheet, as a
+> `FAILSAFE:` line inside a passing test, because the email send is wrapped in try/catch.
+> **In Apps Script a missing function is a runtime ReferenceError on whatever path reaches it,
+> so "it parses" and "it deploys" both prove nothing.**
+>
+> `calls.js` is deliberately narrow: for every `foo_` defined, does anything still call bare `foo`
+> (unless `foo` is also defined, which is the legitimate public-wrapper pattern)? A first attempt
+> at a general undefined-call detector needed a real JS tokenizer, fell over on regex literals
+> containing quotes and on nested template literals, and produced hundreds of false positives. A
+> checker nobody trusts gets ignored; this one answers the question that actually caused an outage.
+>
 > **The rule for any NEW backend function, pick exactly one:**
 > 1. **Internal helper → give it a trailing underscore.** This is the default. Choose it unless you
 >    can name the frontend line that calls the function.

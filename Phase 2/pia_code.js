@@ -37,7 +37,7 @@
     - getDCSWebAppUrl_()                      read DCS web-app URL (fallback to PIA URL)
     - getAllowedDomain_()                     read the single allowed email domain
     - isAuthorizedDomain_(email)              true if email is on the allowed domain
-    - getSystemSecret()                      read HMAC secret (throws if unset)
+    - getSystemSecret_()                     read HMAC secret (throws if unset)
     - getNormalizedEmail_(email)              strip +alias and lowercase an address
     - getWorkflowInfoForType_(type)           map an email-queue type to its workflow sheet
     - getAdminNotificationConfig_()           read admin-notification settings row
@@ -229,7 +229,7 @@ function isAuthorizedDomain_(email) {
 }
 
 /*
-  Function: getSystemSecret
+  Function: getSystemSecret_
   LAYMAN:    Gets the private signing key used to make tamper-proof email approve/deny links.
   TECHNICAL: Reads SYSTEM_SECRET Script Property. Throws (fail-closed) if missing, tokens must
              never be signed with an empty key.
@@ -597,7 +597,7 @@ function generateAuthToken_(sessionId, email, timestamp, action = '') {
   // CRITICAL FIX: Include action in token to prevent CSRF via action modification
   const normalizedEmail = getNormalizedEmail_(email);
   const message = sessionId + normalizedEmail + timestamp + action;
-  const signature = Utilities.computeHmacSha256Signature(message, getSystemSecret()); 
+  const signature = Utilities.computeHmacSha256Signature(message, getSystemSecret_());
   return signature.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
 }
 
