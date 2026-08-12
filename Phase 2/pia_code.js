@@ -1087,54 +1087,99 @@ function getDelegationsSheet_() {
   CREATES a sheet, so an existing deployment never picks up a column added later, the cell
   gets written by setValue (extending the sheet) with a blank header above it.
 
-  Fixes the drift found on 2026-08-12:
-    - ActedBy missing from Approval_Workflow / ISM_Approval_Workflow / DivisionHead_Approval_Workflow
-    - Data_Collection col 11 headed 'Remarks' by PIA but 'Metadata_Agency' by Phase 1 (its owner);
-      Admin resolves that column BY NAME, so the wrong header made agency metadata invisible there.
+  🚩 DERIVED FROM PIA_SCHEMA, not hand-listed. The first version enumerated four fixes by hand
+  and was wrong on the live database: it repaired ActedBy but not RoundNumber / FlaggedFields,
+  because it assumed those had already shipped. They had not, the deploy never happened, so the
+  live workflow sheets were three columns short and assertSheetSchema_ threw on the FIRST of the
+  three. Hand-listing the repair reintroduced exactly the duplicate-source-of-truth problem this
+  whole change exists to remove. It now walks PIA_SCHEMA, so any column added later is healable
+  with no edit here.
 
-  🚩 Only ever writes to row 1, and only when a cell is blank or holds the known-wrong value.
+  Two failure shapes are repaired:
+    - BLANK cell (the column was appended by setValue with no header written above it)
+    - a KNOWN-WRONG value, listed in RENAMES below, where two apps disagreed on the name
+
+  Confirmed against the live export on 2026-08-12 (11 cells across 5 sheets):
+    - Approval_Workflow 13 -> 16 cols        (RoundNumber, FlaggedFields, ActedBy)
+    - ISM_Approval_Workflow 16 -> 19 cols    (RoundNumber, FlaggedFields, ActedBy)
+    - DivisionHead_Approval_Workflow 11 -> 14 (RoundNumber, FlaggedFields, ActedBy)
+    - Data_Collection col 11 'Remarks' -> 'Metadata_Agency'  (Phase 1 owns this sheet and writes
+      the latter; Admin resolves it BY NAME, so the wrong header hid agency metadata there)
+    - InfoSec_Email_Config col 6 'jobPos' -> 'JobPos'  (case-only, but assertSheetSchema_ compares
+      exactly. Nothing reads this column by name, only by the derived index, so the rename is safe)
+
+  🚩 Only ever writes to row 1, and only when a cell is blank or holds a listed known-wrong value.
   It will not touch a header someone deliberately renamed to something else, and it never
-  reorders or inserts columns, a header repair must not be able to shift data.
+  reorders or deletes columns, a header repair must not be able to shift data. It DOES grow the
+  grid when a schema column falls past getMaxColumns(), which appends empty columns only.
 
   PARAMS:    (none)
   RETURNS:   { repaired: [ 'Sheet.Column', ... ] }, empty when nothing needed fixing.
 
   EXAMPLE
     healSheetHeaders_()
-    → { repaired: ['Approval_Workflow.ActedBy', 'Data_Collection.Metadata_Agency'] }
+    → { repaired: ['Approval_Workflow.RoundNumber', 'Data_Collection.Metadata_Agency'] }
     → { repaired: [] }   on an already-correct database
 */
 function healSheetHeaders_() {
   const repaired = [];
 
-  // [sheetName, 1-based column, expected header, the wrong value we are allowed to overwrite]
-  const FIXES = [
-    [DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS.ACTED_BY,        'ActedBy',          ''],
-    [DB_SHEET_NAMES.ISM_WORKFLOW,      ISM_WORKFLOW_COLS.ACTED_BY,    'ActedBy',          ''],
-    [DB_SHEET_NAMES.DIV_HEAD_CONFIG,   DIV_HEAD_CONFIG_COLS.ACTED_BY, 'ActedBy',          ''],
-    [DB_SHEET_NAMES.DATA_COLLECTION,   DCS_COLS.METADATA_AGENCY,      'Metadata_Agency',  'Remarks']
-  ];
+  // Historical wrong values we are allowed to OVERWRITE, keyed 'SheetName|1-basedCol'.
+  // A blank cell is always overwritable and needs no entry here. Anything else is left alone,
+  // so a deliberate rename can never be clobbered.
+  const RENAMES = {
+    'Data_Collection|11':      'Remarks',   // Phase 1 owns this sheet and calls it Metadata_Agency
+    'InfoSec_Email_Config|6':  'jobPos'     // case-only drift; assertSheetSchema_ compares exactly
+  };
 
-  FIXES.forEach(function (fix) {
-    const sheetName = fix[0], col = fix[1], want = fix[2], replaceable = fix[3];
+  Object.keys(PIA_SCHEMA).forEach(function (sheetName) {
+    const expected = PIA_SCHEMA[sheetName];
+    let sheet;
     try {
-      const sheet = getDatabaseSheet_(sheetName, false);
-      if (!sheet || sheet.getLastRow() === 0) return;
+      // Go through the raw spreadsheet handle on purpose. getDatabaseSheet_ runs
+      // assertSheetSchema_, which would throw on the very drift this function exists to fix,
+      // and creating a missing sheet is initializeDatabase_'s job, not the repair's.
+      const ss = getDatabaseSpreadsheet_(false);
+      if (!ss) { Logger.log('healSheetHeaders_: database spreadsheet unavailable'); return; }
+      sheet = ss.getSheetByName(sheetName);
+    } catch (e) {
+      Logger.log('healSheetHeaders_: cannot open ' + sheetName + ': ' + e);
+      return;
+    }
+    if (!sheet || sheet.getLastRow() === 0) return;   // absent or brand new: nothing to repair
 
-      const current = (col <= sheet.getLastColumn())
-        ? String(sheet.getRange(1, col).getValue() || '').trim()
-        : '';
+    // Grow the grid only if a schema column falls past the sheet's allocated width.
+    try {
+      const maxCols = sheet.getMaxColumns();
+      if (expected.length > maxCols) sheet.insertColumnsAfter(maxCols, expected.length - maxCols);
+    } catch (e) {
+      Logger.log('healSheetHeaders_: could not widen ' + sheetName + ': ' + e);
+      return;
+    }
 
-      if (current === want) return;                                   // already correct
-      if (current !== '' && current !== replaceable) {                // someone renamed it on purpose
+    const width = Math.max(sheet.getLastColumn(), expected.length);
+    let actual;
+    try { actual = sheet.getRange(1, 1, 1, width).getValues()[0]; }
+    catch (e) { Logger.log('healSheetHeaders_: could not read header of ' + sheetName + ': ' + e); return; }
+
+    for (let i = 0; i < expected.length; i++) {
+      const col = i + 1;
+      const want = expected[i];
+      const current = String(actual[i] || '').trim();
+      if (current === want) continue;                                  // already correct
+
+      const allowed = RENAMES[sheetName + '|' + col];
+      if (current !== '' && current !== allowed) {                     // deliberate rename: hands off
         Logger.log('healSheetHeaders_: ' + sheetName + ' col ' + col +
                    ' holds "' + current + '", expected "' + want + '", left alone.');
-        return;
+        continue;
       }
-      sheet.getRange(1, col).setValue(want);
-      repaired.push(sheetName + '.' + want);
-    } catch (e) {
-      Logger.log('healSheetHeaders_: could not repair ' + sheetName + ' col ' + col + ': ' + e);
+      try {
+        sheet.getRange(1, col).setValue(want);
+        repaired.push(sheetName + '.' + want);
+      } catch (e) {
+        Logger.log('healSheetHeaders_: could not write ' + sheetName + ' col ' + col + ': ' + e);
+      }
     }
   });
 
@@ -12687,10 +12732,22 @@ function testHeaderSchema() {
   }
 
   // (a) live header row matches the schema, per sheet
+  //
+  // 🚩 Resolve the sheet through the RAW spreadsheet handle, never getDatabaseSheet_.
+  // The first version of this test called getDatabaseSheet_, which runs assertSheetSchema_ and
+  // THROWS on drift; the throw left `sh` null and the next line reported the sheet as
+  // "SKIP (absent or empty)" without counting a failure. On a database that was three columns
+  // short on all three workflow sheets, this test printed "19 passed, 0 failed". A test for
+  // silent drift that fails silently is worse than no test, so drift is now an explicit FAIL and
+  // SKIP means genuinely absent.
+  const ssForCheck = (function () {
+    try { return getDatabaseSpreadsheet_(false); } catch (e) { return null; }
+  })();
   Object.keys(PIA_SCHEMA).forEach(function (sheetName) {
     const expected = PIA_SCHEMA[sheetName];
     let sh = null;
-    try { sh = getDatabaseSheet_(sheetName, false); } catch (e) { /* drift throws, caught below */ }
+    try { sh = ssForCheck ? ssForCheck.getSheetByName(sheetName) : null; }
+    catch (e) { check('could read sheet: ' + sheetName, false, String(e)); return; }
     if (!sh || sh.getLastRow() === 0) { details.push('SKIP  ' + sheetName + ' (absent or empty)'); return; }
     const actual = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), expected.length)).getValues()[0];
     const bad = [];

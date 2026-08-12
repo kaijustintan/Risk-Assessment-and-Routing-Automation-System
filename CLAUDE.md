@@ -855,15 +855,29 @@ const APPROVAL_COLS = colsOf_('Approval_Workflow', {   // derived, never hand-nu
   a missing sheet**, creation is `initializeDatabase_`'s job and several callers legitimately probe.
 - ⛔ **Never "fix" a drift error by reordering `PIA_SCHEMA` to match a mangled sheet.** The error
   message says so. Reordering makes every historical row read wrong.
-- `healSheetHeaders_()` repairs the four known-bad headers on an existing database, run once from
-  `doGet` behind `HEADER_HEAL_FLAG_PROP`. It **only writes a cell that is blank or holds the exact
-  known-wrong value**; anything else is logged and left alone, so it can never clobber a deliberate
-  rename. `repairSheetHeaders()` is the owner-gated editor wrapper. Delete the script property to
-  force a re-run.
+- `healSheetHeaders_()` repairs an existing database, run once from `doGet` behind
+  `HEADER_HEAL_FLAG_PROP`. It **walks `PIA_SCHEMA`** rather than a hand-listed set, and only writes
+  a cell that is **blank** or holds a value listed in its small `RENAMES` map; anything else is
+  logged and left alone, so it can never clobber a deliberate rename. It reads through the raw
+  spreadsheet handle, never `getDatabaseSheet_`, which would run `assertSheetSchema_` and throw on
+  the very drift being repaired. `repairSheetHeaders()` is the owner-gated editor wrapper. Delete
+  the script property to force a re-run.
+  - 🔴 **The first version was hand-listed and was wrong on the live database.** It repaired
+    `ActedBy` but not `RoundNumber` / `FlaggedFields`, because it assumed those had shipped on
+    2026-08-11. They had not: that batch was committed but never deployed, so the live workflow
+    sheets were **three** columns short, not one. Hand-listing the repair reintroduced the exact
+    duplicate-source-of-truth problem this section exists to remove. Deriving it from `PIA_SCHEMA`
+    means a column added later is healable with no edit.
 - Regression test: **`testHeaderSchema()`** deliberately renames a column, asserts the check throws,
   and restores it in a `finally`.
+  - 🔴 **This test also shipped broken, and the failure is worth remembering.** It resolved each
+    sheet via `getDatabaseSheet_`, which **throws** on drift; the throw left the handle null and the
+    next branch reported `SKIP (absent or empty)` without counting a failure. Against a live
+    database missing 11 header cells across 5 sheets it printed **"19 passed, 0 failed."** A test
+    for silent drift that itself fails silently is worse than no test. It now resolves through the
+    raw spreadsheet handle, so drift is an explicit **FAIL** and `SKIP` means genuinely absent.
 
-### 🚩 The six defects, and the one thing they had in common
+### 🚩 The seven defects, and the one thing they had in common
 
 | Defect | Symptom | Origin |
 |---|---|---|
@@ -873,10 +887,18 @@ const APPROVAL_COLS = colsOf_('Approval_Workflow', {   // derived, never hand-nu
 | `Code.js` read `freshData[5]`/`[6]` on a range starting at **column 2** | every revision clobbered `oldMetadata`, resetting `revisionCount` to 1 and **dropping the superseded-document trail** | pre-existing |
 | `INFOSEC_CONFIG` `expectedCols` stale | init reports a valid sheet as invalid | pre-existing |
 | `Drafts` header is `SavedTimestamp`, documented as `SavedAt` | found while deriving; no map existed in either project | pre-existing |
+| `InfoSec_Email_Config` col 6 is `jobPos` live, `JobPos` in the schema | case-only, but `assertSheetSchema_` compares **exactly**, so it throws on a core routing sheet. Found only by reading the live export, not by any test | pre-existing |
 
 **Not one of them threw.** Every single one returned plausible wrong data. That is the argument for
 the whole change: converting silent misreads into loud failures is worth more than any individual
 fix above.
+
+🚩 **And the meta-lesson, learned twice in one session.** Both the repair (`healSheetHeaders_`) and
+the test (`testHeaderSchema`) shipped wrong, in the same direction: each was written against what
+the schema *said* rather than what the live database *held*, and each failed quietly. The live
+export settled in one read what two rounds of reasoning had guessed at. **Before trusting a schema
+migration, dump the live header rows and diff them.** Row 1 of every sheet is enough, and it
+carries no personal data.
 
 ### Also in this pass
 
