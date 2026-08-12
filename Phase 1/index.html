@@ -1727,12 +1727,12 @@ const state = {
 
   LAYMAN:
   We only know the user's email, never their display name. This guesses their surname from
-  the email so the greeting can say "Hello, Bisquera!". Best-effort, it can be wrong for
+  the email so the greeting can say "Hello, Delacruz!". Best-effort, it can be wrong for
   oddly-formatted addresses, in which case it falls back to "there".
 
   TECHNICAL:
-  Megaworld locals follow <initials><surname>[.suffix] (e.g. "ctpaulican.global@..." ->
-  "Paulican", "drbisquera@..." -> "Bisquera"). Lowercases the local-part, strips the 2
+  Megaworld locals follow <initials><surname>[.suffix] (e.g. "abcruz.global@..." ->
+  "Cruz", "xydelacruz@..." -> "Delacruz"). Lowercases the local-part, strips the 2
   leading initials (only when length > 3), takes everything up to the first separator
   ([._+-]), then title-cases it.
 

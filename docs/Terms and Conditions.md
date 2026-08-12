@@ -1,11 +1,11 @@
-# Terms and Conditions — Megaworld Data Collection System (DCS)
+# Terms and Conditions: Megaworld Data Collection System (DCS)
 
 > **How to use this file:** This is the full Terms & Conditions text for the system. Paste it into the
 > Google Doc that the `LINK_TC_PAGE` Script Property points to (the doc embedded in the T&C modal's
 > iframe). The DCS guide screen also shows a short 4-point summary card; this document is the complete
 > version a requester reads before ticking **"I Have Read and Agree."**
 >
-> *This is a practical, system-specific draft written from how RARS works. It is not legal advice —
+> *This is a practical, system-specific draft written from how RARS works. It is not legal advice,
 > have Legal / the Data Protection Officer review and adapt the bracketed items before publishing.*
 
 **Effective date:** [DATE] · **Owner:** Information Security & Management (ISM) / Data Protection Officer
@@ -20,18 +20,18 @@ company data**, including personal information protected under the law. By submi
 the DCS, you ("**Requester**") confirm that you have read, understood, and agree to be bound by these
 Terms and Conditions. **If you do not agree, do not submit a request.**
 
-These Terms apply in addition to — and do not replace — Megaworld's Acceptable Use Policy, Information
+These Terms apply in addition to, and do not replace: Megaworld's Acceptable Use Policy, Information
 Security Policy, Data Privacy Policy, the Code of Conduct, and any agreement you sign (NDA, DPA, DSA, or
 Confidentiality Undertaking).
 
 ## 2. Definitions
 
-- **Personal Information / Sensitive Personal Information** — as defined under the **Data Privacy Act of
+- **Personal Information / Sensitive Personal Information**, as defined under the **Data Privacy Act of
   2012 (Republic Act No. 10173, "DPA")** and its IRR.
-- **Data Subject** — the individual to whom personal information relates.
-- **Processing** — any operation on data: collection, recording, storage, use, sharing, or disposal.
-- **ISM** — the Information Security & Management team that oversees RARS and the approval workflow.
-- **Approval Ladder** — the sequence of reviewers a request passes through (Immediate Head → Department
+- **Data Subject**, the individual to whom personal information relates.
+- **Processing**, any operation on data: collection, recording, storage, use, sharing, or disposal.
+- **ISM**, the Information Security & Management team that oversees RARS and the approval workflow.
+- **Approval Ladder**, the sequence of reviewers a request passes through (Immediate Head → Department
   Head → Information Security reviewers → and, where escalated, the Division Head).
 
 ## 3. Eligibility and Scope
@@ -50,12 +50,12 @@ for personal curiosity, personal benefit, or any purpose unrelated to your dutie
 
 By submitting, you warrant that:
 
-4.1 **All information you provide is true, complete, and accurate** — including your identity, your
+4.1 **All information you provide is true, complete, and accurate**, including your identity, your
 department, the data requested, the purpose, the accountable persons, and the reporting line (Immediate
 Head, Department Head, and where applicable, Division Head) you nominate.
 
 4.2 You will provide **legally valid and properly executed supporting documents** as required for your
-request type — Non-Disclosure Agreement (NDA), Data Protection Agreement (DPA), Data Sharing Agreement
+request type: Non-Disclosure Agreement (NDA), Data Protection Agreement (DPA), Data Sharing Agreement
 (DSA), Confidentiality Undertaking (CU), and/or an Endorsement Letter for agency personnel or OJTs.
 Uploaded files must be genuine, unaltered, and in the accepted formats (PDF, DOC, DOCX).
 
@@ -63,8 +63,8 @@ Uploaded files must be genuine, unaltered, and in the accepted formats (PDF, DOC
 
 4.4 You have the authority to make the request and to bind yourself to these Terms.
 
-4.5 Misrepresenting your identity, your reporting line, or your purpose — including nominating an
-approver who is not your legitimate reviewer — is a serious violation.
+4.5 Misrepresenting your identity, your reporting line, or your purpose, including nominating an
+approver who is not your legitimate reviewer, is a serious violation.
 
 ## 5. Data Privacy Compliance
 
@@ -118,8 +118,8 @@ free-text fields beyond what is needed.
 
 ## 10. Monitoring, Logging, and Audit
 
-10.1 You acknowledge that **all activity in RARS is logged and may be monitored and audited** —
-including submissions, approvals, edits, and access events — for security, compliance, and
+10.1 You acknowledge that **all activity in RARS is logged and may be monitored and audited**,
+including submissions, approvals, edits, and access events, for security, compliance, and
 investigation purposes.
 
 10.2 The system automatically flags potential integrity risks (for example, conflict-of-interest

@@ -1,6 +1,12 @@
-# Database exports — contain REAL @megaworldcorp.com names/emails (PII). Reference only.
+# Database exports, contain REAL @megaworldcorp.com names/emails (PII). Reference only.
 DPS_DB*.xlsx
 *.xlsx
+
+# Local-only companions to sanitized tracked files. The tracked copy carries generalized
+# placeholders (<owner-account>, role names, fictional example emails); the .local counterpart
+# holds the real values. SENSITIVE-MAPPING.local.md is the key. Never commit these.
+*.local.md
+*.local.txt
 _dbtmp/
 _dbparse*.js
 _parsexlsx.js

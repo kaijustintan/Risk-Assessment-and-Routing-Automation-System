@@ -541,6 +541,28 @@ Note DCS already has the hardest prerequisite: `RoundNumber` derivation exists
 
 ### III.2 A single accessor seam over the database
 
+🟡 **PARTLY DONE 2026-08-12. Step 1 of the 3 below shipped; steps 2 and 3 deliberately did not.**
+
+What landed is the *schema* half, and it went further than "log loudly on mismatch":
+**`PIA_SCHEMA`** is one ordered header list per sheet (12 sheets), all 11 column maps are **derived**
+from it via `colsOf_()` rather than hand-numbered beside it, and `assertSheetSchema_()` **throws** on
+drift at first sheet access instead of logging. `healSheetHeaders_()` repairs known-bad headers on
+live databases once, automatically. Regression test: `testHeaderSchema()`.
+
+The prediction in this section was correct, and expensive: scoping it turned up **six** live
+column-drift defects of exactly the `'B:B'` class quoted below, four of them user-visible (Admin's
+Flags tab stuck at zero, agency metadata invisible in Admin, the superseded-document trail dropped on
+every DCS revision, and delegated decisions written under a blank header). One had been introduced by
+the previous commit in this same review's batch.
+
+**Steps 2 and 3 (an `Accessors.js` wrapping every read/write, and routing the reads through it) were
+assessed and NOT done.** Deriving the maps removes the drift at its source, which is what the six
+defects actually needed; rewriting 440 positional call sites is a separate, much riskier change whose
+failure mode is the silent misread being fixed. Admin already has no column maps at all
+(`sheetToObjects_` ×33) and Phase 1 already resolves by header name where it matters, so PIA was the
+whole remaining problem and it is now schema-checked. Revisit the accessor layer only if a concrete
+defect survives that `assertSheetSchema_` would not have caught.
+
 **Adopt by: DCS.** Effort: high. Impact: high.
 
 **Evidence this is already costing DCS money.** Commit `7590b7c`, shipped:
@@ -871,33 +893,33 @@ string into source next to `ENABLED_DOMAIN_CHECK`, since they are one control sp
 > ⚠️ **Three claims in the table above were checked against the code on 2026-08-12 and were
 > wrong or stale. Corrected here rather than deleted, so the same mistakes are not re-made:**
 >
-> 1. **"Emoji as UI icons … throughout" — overstated.** The cited `📄 View Endorsement Letter` at
+> 1. **"Emoji as UI icons … throughout", overstated.** The cited `📄 View Endorsement Letter` at
 >    `pia_index.html:3558` no longer existed. Actual count across all three frontends was **7**,
 >    all `⚠`/`✓`/`✗` semantic glyphs, now inline SVG via `icon()`. The ~127 emoji in `pia_code.js`
->    are inside `Logger.log` — developer-facing, useful as grep anchors, and left alone.
-> 2. **"Three separate copies" of the palette — there were SIX.** Each backend also emits its own
+>    are inside `Logger.log`, developer-facing, useful as grep anchors, and left alone.
+> 2. **"Three separate copies" of the palette, there were SIX.** Each backend also emits its own
 >    `:root` in `getStyledHtmlWrapper_`, and those used a *different navy* (`#1a3a5c` vs the
 >    canonical `#1e3a5f`). That is the page an approver lands on from an email link, so it was the
 >    most visible drift and the one nobody had noticed.
-> 3. **"One `:root` block" implies the three were otherwise identical — they were not.** Effective
+> 3. **"One `:root` block" implies the three were otherwise identical, they were not.** Effective
 >    `--radius` was 4px (DCS), 6px (PIA) and 10px (Admin), the last because Admin re-declared it
 >    further down its own block, silently overriding the shared token above it.
 
 **Recommendation for DCS, in order:**
 1. Add a `callServer(fnName, ...args)` promise bridge and migrate call sites opportunistically. Cheap,
    immediately useful, and it is the prerequisite for uniform loading/error states.
-2. ✅ **DONE 2026-08-12** — `docs/design-tokens.css` is now that canonical copy, pasted into **six**
+2. ✅ **DONE 2026-08-12**, `docs/design-tokens.css` is now that canonical copy, pasted into **six**
    targets (three frontends + the `getStyledHtmlWrapper_` block in each backend), each marked
    `GENERATED from docs/design-tokens.css`. Runtime sharing is impossible not only across projects
    but even *within* Phase 1: its `doGet` uses `createHtmlOutputFromFile`, which does not process
    scriptlets at all, so an `include()` partial would emit as literal text.
    ~~Extract the `:root` token block into a single canonical copy in this repo and treat the three
    in-file copies as generated.~~
-3. ✅ **DONE 2026-08-12** — `icon(name, size)` added to `index.html` and `adminView.html`, Lucide
+3. ✅ **DONE 2026-08-12**, `icon(name, size)` added to `index.html` and `adminView.html`, Lucide
    paths on `currentColor`, zero network requests, exactly as COC's `renderIcon` does it. Only 7
    glyphs needed replacing (see the correction note above). One constraint worth recording: the
    helper returns HTML, so it works only where the sink is `innerHTML`. Through `textContent` or
-   `summaryRow()` (which HTML-escapes its value) it renders as literal markup — in those places the
+   `summaryRow()` (which HTML-escapes its value) it renders as literal markup, in those places the
    glyph was **dropped** rather than substituted, because a tick inside a sentence is punctuation,
    not an icon. Switching those sinks to `innerHTML` would have introduced an XSS surface, since the
    interpolated value is a user-supplied filename.
@@ -940,7 +962,7 @@ first. Auto-repair only after you have seen a month of clean reports.
 
 ### IV.2 Delegation and out-of-office
 
-✅ **DONE 2026-08-12.** Implemented for DCS/PIA as an **admin-managed** `Delegations` sheet + `ActedBy` on each workflow row. Approvers cannot appoint their own stand-in. Single-hop, no chaining. The hard part was not the table: the review token is HMAC-signed over the approver's email, so the delegate is resolved at **notify** time and the token minted over *their* address — see `recipientFor_` / `canActAs_` in `pia_code.js`.
+✅ **DONE 2026-08-12.** Implemented for DCS/PIA as an **admin-managed** `Delegations` sheet + `ActedBy` on each workflow row. Approvers cannot appoint their own stand-in. Single-hop, no chaining. The hard part was not the table: the review token is HMAC-signed over the approver's email, so the delegate is resolved at **notify** time and the token minted over *their* address, see `recipientFor_` / `canActAs_` in `pia_code.js`.
 
 **Both.** Neither system handles an approver being on leave. COC's only remedy is an admin editing the
 chain, which changes it for every in-flight request in that group at once. DCS's is worse: the head
@@ -959,7 +981,13 @@ Terminal status `Withdrawn`, owner-only, only from a pending state, notifies the
 
 ### IV.4 Error-code vocabulary and no raw exception text to the client
 
-✅ **DONE 2026-08-12.** For DCS. All **89** sites (not the 58 estimated — see the F-06 note) now use `safeError_`, and the `code` vocabulary landed as `ERR.*`. Shipped as a **dual-key** envelope (`{ok, code, message}` + legacy `{success, error}`) for one release, because the three GAS projects deploy independently. COC unchanged.
+✅ **DONE 2026-08-12.** For DCS. All **110** sites (not the 58 estimated, and not the 89 first reported, see the F-06 note) now use `safeError_`, and the `code` vocabulary landed as `ERR.*`. It shipped as a **dual-key** envelope (`{ok, code, message}` + legacy `{success, error}`) for exactly one release, because the three GAS projects deploy independently; the legacy pair was **removed the same day** across all three backends and all three frontends, so the contract is now single-key `{ok, code, message, ref}`. COC unchanged.
+
+⚠️ **Read the F-06 note before doing this on COC.** The first sweep matched only values *starting*
+with the exception identifier and reported the job done at 89 sites; 21 leaks of the form
+`error: 'Loading failed: ' + e.message` survived, including every `getAdminData` handler and both
+cross-app `doPost` handlers. Match the **concatenated** form too, and re-grep with a
+differently-shaped second pattern before recording the finding closed.
 
 **Both.** COC §12.11: mutations variously return `{success:false, error}` or `{success:false, message}`,
 and there is no error-code vocabulary, so the UI cannot branch on failure *type* without string
@@ -976,7 +1004,7 @@ Generalize that one function's discipline to every handler in both systems.
 
 ### IV.5 SLA/aging metrics and bottleneck reporting
 
-✅ **DONE 2026-08-12.** For DCS, in Admin → Analytics: days-waiting buckets plus a most-stuck list. Confirmed the raw material was already there — `NotifiedDate` on all three workflow sheets, **zero new columns**. Round-scoped, since this asks "who acts next". COC unchanged.
+✅ **DONE 2026-08-12.** For DCS, in Admin → Analytics: days-waiting buckets plus a most-stuck list. Confirmed the raw material was already there, `NotifiedDate` on all three workflow sheets, **zero new columns**. Round-scoped, since this asks "who acts next". COC unchanged.
 
 **Both.** DCS has an analytics tab; COC has stat cards. Neither answers the question management will
 ask within a month of go-live: *where do requests get stuck, and for how long?*
@@ -1026,7 +1054,7 @@ storing `status` and `step` separately rather than encoding the step into the st
 
 ### IV.9 Retention, purge, and PII hygiene
 
-✅ **DONE 2026-08-12.** For DCS — **built but shipped inert.** The blocker noted below ("needs a policy decision from ISM") is real, so the engine is complete and switched OFF: it reports what would go and deletes nothing until ISM sets `RETENTION_MONTHS` and turns off dry-run. Lives in Admin because Phase 1 has neither `script.scriptapp` nor a purge path. Also took over the DCS draft purge, which had been written for a trigger that was never installed. COC unchanged.
+✅ **DONE 2026-08-12.** For DCS: **built but shipped inert.** The blocker noted below ("needs a policy decision from ISM") is real, so the engine is complete and switched OFF: it reports what would go and deletes nothing until ISM sets `RETENTION_MONTHS` and turns off dry-run. Lives in Admin because Phase 1 has neither `script.scriptapp` nor a purge path. Also took over the DCS draft purge, which had been written for a trigger that was never installed. COC unchanged.
 
 **Both.** Both store real personal data in Google Sheets indefinitely. DCS additionally logs email
 addresses into `Risk_Audit` on every action, and its own recommendations doc flags "PII sa logs" as
@@ -1066,7 +1094,7 @@ Effort is calibrated to this project: **Low** ≈ under a day, **Medium** ≈ 1-
 
 ---
 
-### 🟢 High impact, low effort — do these first
+### 🟢 High impact, low effort, do these first
 
 | # | Item | Adopt | Why it matters | Trade-off | § |
 |---|---|---|---|---|---|
@@ -1109,7 +1137,7 @@ Effort is calibrated to this project: **Low** ≈ under a day, **Medium** ≈ 1-
 
 ---
 
-### 🔴 High impact, high effort — plan, do not rush
+### 🔴 High impact, high effort, plan, do not rush
 
 | # | Item | Adopt | Why it matters | Trade-off | § |
 |---|---|---|---|---|---|

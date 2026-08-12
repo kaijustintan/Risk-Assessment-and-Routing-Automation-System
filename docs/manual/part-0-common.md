@@ -1,4 +1,4 @@
-# Part 0 — Common Reference (RARS)
+# Part 0: Common Reference (RARS)
 
 > **Read this first.** Everything that is true across all three apps lives here and
 > **only** here. The per-phase Parts (1 = DCS, 2 = PIA, 3 = Admin) link back to these
@@ -9,7 +9,7 @@
 
 ---
 
-## §0.1 — RARS overview
+## §0.1: RARS overview
 
 **Layman:** RARS (Risk Assessment & Routing System) is Megaworld's online pipeline for
 requesting access to company data. You apply, the right people approve it up a ladder, and
@@ -25,7 +25,7 @@ stored deployment URLs (see §0.4).
 |-------|-----|--------------|---------------|
 | **Phase 1** | **DCS** (Data Collection System) | The request form. Apply, attach NDA/DPA/DSA, track status. | `Phase 1/` |
 | **Phase 2** | **PIA** (Privacy Impact Assessment) | The privacy questionnaire after DCS clears; runs the whole approval ladder. | `Phase 2/` |
-| **Phase 3** | **Admin** | ISM control tower — dashboard, analytics, certificate routing, settings, email failover. Restricted to ISM personnel + accounts in `Admin_Notification_Config`. | `Admin/` |
+| **Phase 3** | **Admin** | ISM control tower, dashboard, analytics, certificate routing, settings, email failover. Restricted to ISM personnel + accounts in `Admin_Notification_Config`. | `Admin/` |
 
 **The end-to-end flow (one product, three apps):**
 
@@ -34,12 +34,12 @@ stored deployment URLs (see §0.4).
    Phase 1 ────────────────┘   handoff    └──────────── Phase 2 ───────────────┘
                                                               │
                                 Phase 3 (Admin) oversees everything: dashboard,
-                                routing, config, email resend — read/writes the whole DB.
+                                routing, config, email resend: read/writes the whole DB.
 ```
 
 **Why three apps instead of one?** Each phase was built and is deployed independently, so a
 change to one ships without redeploying the others. The price of that independence is the
-**cross-app contract** (§0.2, §0.4) — the shared sheet and the stored URLs — which is the
+**cross-app contract** (§0.2, §0.4), the shared sheet and the stored URLs, which is the
 single most fragile part of the system.
 
 ### V2 vs V1 (what improved)
@@ -50,7 +50,7 @@ progress timeline, and an admin dashboard with certificate routing.
 
 ---
 
-## §0.2 — Architecture & data model
+## §0.2: Architecture & data model
 
 ### The three layers
 1. **Application layer (GAS):** each app = a frontend HTML file (CSS + screens + client JS,
@@ -77,8 +77,8 @@ URL.** A change in one app silently breaks another that reads the same sheet.
 
 | Sheet | Owner (writer) | Holds | Key columns |
 |-------|----------------|-------|-------------|
-| `Data_Collection` | DCS | One row per DCS request | LogID, **ReqID**, UserEmail, **Status**, ImmediateHeadEmail, DeptHeadEmail, DivHeadEmail, FileID, Metadata_JSON, Timestamp, Metadata_Agency, Remarks |
-| `Applications` | PIA | One row per PIA submission | **SessionID**, ApplicantEmail, Status, PIA_1_Data … PIA_5_Data (JSON), **Linked_ReqID**, ApproverFlags |
+| `Data_Collection` | DCS | One row per DCS request | LogID, **ReqID**, UserEmail, **Status**, ImmediateHeadEmail, DeptHeadEmail, DivHeadEmail, FileID, Metadata_JSON, Timestamp, Metadata_Agency |
+| `Applications` | PIA | One row per PIA submission | **SessionID**, ApplicantEmail, Status, PIA_1_Data … PIA_5_Data (JSON), AdminExportID, SubmissionDate, IsFlagged, Notes, **Linked_ReqID**, Approver_Flags |
 | `Approval_Workflow` | PIA | Stage A head decisions, **one set per round** | ApprovalID, SessionID, CurrentStep, ApproverName, ApproverEmail, Decision, Comments, DecisionDate, Status, **RoundNumber**, **FlaggedFields**, **ActedBy** |
 | `ISM_Approval_Workflow` | PIA | Stage B InfoSec decisions, **one set per round** | ISM_Approval_ID, SessionID, CurrentStep, ISM_Member_Name, ISM_Member_Email, Decision, Comments, DecisionDate, Status, Requires_DivHead, Routing_Destination, **RoundNumber**, **FlaggedFields**, **ActedBy** |
 | `DivisionHead_Approval_Workflow` | PIA | Stage D escalation decisions, **one set per round** | Escalation_ID, SessionID, DivHead_Email, Decision, Comments, DecisionDate, Status, **RoundNumber**, **FlaggedFields**, **ActedBy** |
@@ -87,17 +87,17 @@ URL.** A change in one app silently breaks another that reads the same sheet.
 | `InfoSec_Email_Config` | Admin | ISM members + DCOPS/TechServe routing emails (TechServe is **per-site**) | Member_ID, Member_Name, Member_Email, Role, IsActive, JobPos, **Site** |
 | `Admin_Notification_Config` | Admin | Extra accounts granted Admin access, beyond ISM personnel | Config_ID + an email column (matched case-insensitively) |
 | `System_Configuration` | Admin/DCS | Key-value settings (template links, etc.) | Configuration_Key, Value, Description |
-| `Drafts` | DCS + PIA (shared) | Auto-saved form state, 7-day TTL | DraftID, UserEmail, SessionID, Type, StateJSON, SavedAt/SavedTimestamp, ExpiresAt |
+| `Drafts` | DCS + PIA (shared) | Auto-saved form state, 7-day TTL | DraftID, UserEmail, SessionID, Type, StateJSON, **SavedTimestamp**, ExpiresAt |
 | `Delegations` | Admin (edits) / PIA (reads) | Out-of-office cover: who acts while an approver is away. **Empty is the normal state.** | Delegation_ID, From_Email, To_Email, Start_Date, End_Date, Reason, Is_Active, Created_By, Created_At |
 | `Email_Queue` | PIA | Outgoing mail, incl. the **fully rendered body** of every notification | Queue_ID, SessionID, Recipient, Subject, Body_Plain, Body_HTML, Type, Status, Attempts, Last_Error, Created_At, Sent_At |
 
 > **Note on `Risk_Audit`:** the old PIA manual called this the "Paranormal event log." That
-> is a typo/hallucination — it is the **anomalous event** audit trail (normal actions are
+> is a typo/hallucination, it is the **anomalous event** audit trail (normal actions are
 > `Logger.log`-ged; the sheet records genuinely anomalous events + key actions like deletes).
 
 > 🚩 **`RoundNumber` (added 2026-08-11).** Every workflow row now declares which resubmission round
 > it belongs to. A blank value means round 1 (rows written before the change). This is what lets the
-> system keep every round's approvals instead of deleting them — and it is why any code asking
+> system keep every round's approvals instead of deleting them, and it is why any code asking
 > *"who approves next?"* must filter to the current round, while anything showing *"what happened?"*
 > must not. A retired `Revision_History` tab may still be present in the spreadsheet; nothing reads
 > or writes it any more and it can be deleted.
@@ -108,23 +108,37 @@ URL.** A change in one app silently breaks another that reads the same sheet.
 > someone approved their own request while on leave. Read it as "approved by *ActedBy* on behalf of
 > *ApproverEmail*."
 
+> 🚩 **This table is enforced, not just documented (since 2026-08-12).** The column order above is
+> mirrored by `PIA_SCHEMA` in `Phase 2/pia_code.js`, which is the single place PIA writes a column
+> order down: the sheets are *created* from it and every column position is *derived* from it. On
+> first access to a sheet, the live header row is compared against it and a mismatch **throws**.
+> Consequences for anyone editing the spreadsheet by hand:
+> - **Adding a column at the far right is safe** and will be ignored (the check is a prefix check).
+> - **Renaming, reordering or deleting a column takes the app down** with an explicit error naming
+>   the sheet and column, by design. Six live bugs came from silent column drift; a loud failure is
+>   the fix. Undo the spreadsheet edit, or update `PIA_SCHEMA` if the sheet is genuinely the newer
+>   shape. ⛔ Never reorder `PIA_SCHEMA` to make the error go away: every historical row would then
+>   read from the wrong column.
+> - A **missing** header (as opposed to a renamed one) is repaired automatically, once, on the first
+>   page load after deploy. `repairSheetHeaders()` in the Apps Script editor forces it.
+
 > 🚩 **Where the personal data actually is** (matters for retention). Ranked by sensitivity per row:
 > `Applications` and `Application_Snapshots` hold the full assessment answers; `Email_Queue` holds
 > **entire rendered email bodies** including names and request details; `Data_Collection`'s
 > `Metadata_JSON` is the richest single blob; `Risk_Audit` records an email address on every action;
 > and the Drive folder (`ADMIN_FOLDER_ID`, plus its `Archive` subfolder) holds the signed NDA / DPA /
-> DSA files. Nothing purged any of it until the retention sweep was added — see §0.6.
+> DSA files. Nothing purged any of it until the retention sweep was added, see §0.6.
 
 ### Secrets & config (never in code)
 Stored in each project's **Script Properties** (see §0.4 for the URL ones). Notably:
 `DB_ID`/`SPREADSHEET_ID`/`PIA_DB_SPREADSHEET_ID` (the spreadsheet), `ADMIN_FOLDER_ID` (Drive),
-`DOMAIN`/`ALLOWED_DOMAIN`, and `SYSTEM_SECRET` (token signing — **PIA project only**, see §0.6).
+`DOMAIN`/`ALLOWED_DOMAIN`, and `SYSTEM_SECRET` (token signing, **PIA project only**, see §0.6).
 
 ---
 
-## §0.3 — The approval ladder & progress timeline
+## §0.3: The approval ladder & progress timeline
 
-DCS itself has **no** approval gate — a DCS request is effectively complete on submit and
+DCS itself has **no** approval gate, a DCS request is effectively complete on submit and
 hands off to PIA. **The entire approval ladder lives in PIA.**
 
 ### The ladder (top to bottom)
@@ -145,7 +159,7 @@ Final: all ISM approve → 'Approved by ISM' → applicant notified, DCS marked 
 
 **Who fills each role (hybrid by design):** fixed org-wide roles (the two InfoSec reviewers,
 DCOPS/TechServe) are **admin-configured** in `InfoSec_Email_Config`. **TechServe is resolved per
-Office/Site** — one row per (site, email) via the `Site` column, so a site may have several
+Office/Site**, one row per (site, email) via the `Site` column, so a site may have several
 recipients; the request's Office/Site (AGT/GDP/EGP/TWS) selects the row(s), while **DCOPS stays a
 single address**. Per-applicant roles (Immediate / Dept / Division Head) are **filled by the
 applicant in PIA1** because they are that person's own reporting line. Integrity is *mitigated*
@@ -160,7 +174,7 @@ named in PIA1 is emailed a review link.
 
 ### Return = full restart of the ladder (not resume) 🚩
 A **Return** from *any* approver (head, ISM, or DivHead) always bounces to the **applicant**,
-never to a previous approver. On resubmit, PIA starts the ladder again from **Stage A, Step 1** —
+never to a previous approver. On resubmit, PIA starts the ladder again from **Stage A, Step 1**,
 everyone must approve again, nothing resumes mid-chain.
 
 **But nothing is erased.** Each resubmission is recorded as a new **round**: the previous round's
@@ -177,7 +191,7 @@ approvals, comments and flagged items stay in the workflow sheets permanently, t
 
 ### The 5-stage progress timeline
 The "Overall Progress Timeline" the requester sees has **5 stages** (verified in
-`Phase 1/index.html`; the old DCS manual's "4 stages" is outdated — "Heads Approval" was
+`Phase 1/index.html`; the old DCS manual's "4 stages" is outdated, "Heads Approval" was
 split out from "PIA Assessment" in Wave 2):
 
 ```
@@ -190,12 +204,12 @@ denied.
 The values written to `Data_Collection.Status` are a **small fixed set**:
 `PENDING`, `READY_FOR_PIA`, `COMPLETE`, `REJECTED`, `RETURNED`.
 The richer badges the UI shows ("Pending Immediate Head", "Escalated", "Processing", etc.)
-are **computed in the frontend** from the workflow sheets — they are **not** stored strings.
+are **computed in the frontend** from the workflow sheets, they are **not** stored strings.
 **Do not assume a badge maps 1:1 to a column.** (Full vocabulary: §0.7.)
 
 ---
 
-## §0.4 — Operations runbook (deployment & cross-app URLs) 🚩
+## §0.4: Operations runbook (deployment & cross-app URLs) 🚩
 
 > This section is the #1 source of "everything broke." Read it before touching any
 > deployment. (Background: this cost a multi-hour debug once.)
@@ -203,12 +217,12 @@ are **computed in the frontend** from the workflow sheets — they are **not** s
 ### How shipping actually works
 We edit files **in this repo**. Shipping to live is **manual, per phase**: copy-paste the
 edited file into the **matching** GAS project, then **redeploy that project**. Each phase
-deploys **independently** — a change to PIA does nothing until the PIA project is redeployed.
+deploys **independently**, a change to PIA does nothing until the PIA project is redeployed.
 
 > ⚠️ The old manuals describe a `clasp` workflow. That is **not** how we ship. `clasp`,
 > domain config, and migration are **not** our responsibility. Don't add deploy scripts.
 
-### THE GOLDEN RULE — one deployment per app, forever
+### THE GOLDEN RULE: one deployment per app, forever
 A deployment's `/exec` URL is like a phone number; Script Properties are contacts saving that
 number. Nothing auto-updates.
 
@@ -220,17 +234,24 @@ number. Nothing auto-updates.
 
 Path: `Deploy → Manage deployments → ✏️ Edit the one deployment → Version → "New version" → Deploy`.
 
-- 🚩 **Always deploy as the owner account (`ismaiapps@megaworldcorp.com`).** The web apps run with
+> 🚩 **After the 2026-08-12 deploy, one extra step, once.** The header self-repair
+> (`healSheetHeaders_`) runs automatically on the first page load and is safe to leave alone. If you
+> want to confirm it rather than wait, open the **PIA** project in the Apps Script editor and run
+> **`repairSheetHeaders()`**; it reports either which headers it fixed or that all are already
+> correct, and it is safe to run repeatedly. It only ever writes a header cell that is **blank or
+> holds the exact known-wrong value**, so it cannot overwrite a deliberate rename.
+
+- 🚩 **Always deploy as the owner account (`<owner-account>@megaworldcorp.com`).** The web apps run with
   `executeAs = USER_DEPLOYING` (see §0.6), so the backend accesses the shared spreadsheet as
-  *whoever clicked Deploy*. If a **non-owner** deploys, the live app runs as that person — who
-  lacks access to the DB — and **every** `SpreadsheetApp.openById(DB_ID)` call throws *"You do not
+  *whoever clicked Deploy*. If a **non-owner** deploys, the live app runs as that person, who
+  lacks access to the DB: and **every** `SpreadsheetApp.openById(DB_ID)` call throws *"You do not
   have permission to access the requested document"* for other users (blank T&Cs, "error loading
   requests", dead Proceed button). Fix: re-deploy from the owner account. *(This actually happened
-  once — a stray deploy from a non-owner account took the whole app down mid-day.)*
+  once, a stray deploy from a non-owner account took the whole app down mid-day.)*
 
 ### The Script-Property URL map (set ONCE if you follow the golden rule)
 Each value = that app's live `/exec` URL. ⚠️ `DCS_WEB_APP_URL` exists in **both** DCS and PIA
-projects — the **PIA** copy is the one the email code reads.
+projects, the **PIA** copy is the one the email code reads.
 
 | Project | Property | Must hold | Used by |
 |---------|----------|-----------|---------|
@@ -247,7 +268,7 @@ link is about to break.
 ### Why it's manual at all
 The three apps are separate GAS projects that can't discover each other's URLs. An app's
 *own* URL is auto-derivable (`ScriptApp.getService().getUrl()`), but **cross-app URLs must be
-stored** — that's the glue. "Set once" (one stable deployment) beats "set every deploy."
+stored**, that's the glue. "Set once" (one stable deployment) beats "set every deploy."
 
 ### Email-link gotchas
 - **Emails freeze their links at send time.** Updating a property fixes **future** emails
@@ -263,17 +284,19 @@ Only add an OAuth scope (`*_appsscript.json`) when the code genuinely needs it (
 
 ---
 
-## §0.5 — Known gotchas & debugging 🚩
+## §0.5: Known gotchas & debugging 🚩
 
 | Gotcha | What happens / what to do |
 |--------|---------------------------|
-| **GAS serve-time template-literal corruption** | A string-building helper written as a **template literal** (backticks) can blank the whole page with a parse error (`Unexpected identifier 'style'` at `document.write(s(g))`) — **even though `node --check` passes**, because `node --check` validates the file on disk, not GAS's serve-time serialization. **Fix:** rebuild the helper with plain ASCII string concatenation (`'a' + x + 'b'`). To get ground truth, read the served **VM** file at the console error's `VM##:line` — that's the actual served (corrupted) code, not your disk file. |
-| **Screens are rendered by JS** | Screen `<div>`s are empty in the HTML; JS fills them via `render*()` at runtime. Ctrl+F for on-screen text will miss it — search the matching render function. |
+| **GAS serve-time template-literal corruption** | A string-building helper written as a **template literal** (backticks) can blank the whole page with a parse error (`Unexpected identifier 'style'` at `document.write(s(g))`), **even though `node --check` passes**, because `node --check` validates the file on disk, not GAS's serve-time serialization. **Fix:** rebuild the helper with plain ASCII string concatenation (`'a' + x + 'b'`). To get ground truth, read the served **VM** file at the console error's `VM##:line`, that's the actual served (corrupted) code, not your disk file. |
+| **Screens are rendered by JS** | Screen `<div>`s are empty in the HTML; JS fills them via `render*()` at runtime. Ctrl+F for on-screen text will miss it, search the matching render function. |
 | **Drafts don't store files** | Only text autosaves (server-side, 7-day TTL). Resuming a draft requires re-uploading files. This is **intended**, not a bug. |
 | **`localStorage` is intentionally disabled** | Avoids client/server state mismatch. Don't "re-enable" it. |
-| **Favicon override** | A MutationObserver + setInterval re-applies the favicon (GAS injects its own). Not dead code — don't remove. |
+| **Favicon override** | A MutationObserver + setInterval re-applies the favicon (GAS injects its own). Not dead code, don't remove. |
 | **`<? … ?>` inside comments in a templated HTML file** | The GAS template engine parses scriptlets even inside comments → a stray one throws during `template.evaluate()`. Never write literal scriptlet tags in comments in `index`. |
 | **"Returned" ≠ "Denied"** | Returned is a fixable loop; denied/rejected is terminal. |
+| **`Schema drift in "<Sheet>" col N: expected "X", found "Y"`** | Someone renamed, reordered or deleted a column in the spreadsheet. This is a **deliberate** hard stop (see §0.2), not a crash to work around. Undo the spreadsheet edit, or update `PIA_SCHEMA` if the sheet is genuinely the newer shape. ⛔ **Never reorder `PIA_SCHEMA` to silence it**, every historical row would then be read from the wrong column. A merely *missing* header self-repairs on next load, or run `repairSheetHeaders()` in the editor. |
+| **A column index bug that produces wrong data instead of an error** | The class of defect that motivated the schema check. If you are adding a positional read, ask what the range's **starting column** is: `getRange(row, 2, 1, n)` means index 0 is column 2, and that off-by-one silently dropped the superseded-document trail on every DCS revision for months. |
 
 **General debugging:** frontend → browser DevTools Console/Network (watch `google.script.run`
 calls). Backend → GAS editor **Executions** + `Logger.log` / Stackdriver. Audit → the
@@ -281,13 +304,13 @@ calls). Backend → GAS editor **Executions** + `Logger.log` / Stackdriver. Audi
 
 ---
 
-## §0.6 — Security model
+## §0.6: Security model
 
 ### Access control
 - **Domain gate (all three apps):** `doGet` blocks non-corporate accounts before serving any
-  HTML. The master switch is **on in all three** — `ENABLED_DOMAIN_CHECK = true` (DCS
+  HTML. The master switch is **on in all three**, `ENABLED_DOMAIN_CHECK = true` (DCS
   `Code.js:268`, Admin `admin_code.js:145`) / `ENABLE_DOMAIN_CHECK = true` (PIA
-  `pia_code.js:185`). *(The old PIA manual said this defaulted to `false` — that is no longer
+  `pia_code.js:185`). *(The old PIA manual said this defaulted to `false`, that is no longer
   true.)*
 - **Admin access (role-based + config sheet):** Admin's `checkAccess_` allows accounts that are
   either (a) an **active InfoSec-role** member in `InfoSec_Email_Config` (matched by **Role**, not
@@ -312,7 +335,7 @@ exactly one of these three:
 | Situation | What to do |
 |---|---|
 | Internal helper (the default) | Name it `myFunction_` |
-| Genuinely called by the frontend | Keep the bare name **and** guard the body — not the wrapper |
+| Genuinely called by the frontend | Keep the bare name **and** guard the body, not the wrapper |
 | Trigger handler / editor-run helper | Keep the bare name and guard with `isOwnerContext_()` |
 
 The third case exists because a time-driven trigger binds its handler by **name string**
@@ -320,7 +343,7 @@ The third case exists because a time-driven trigger binds its handler by **name 
 trigger. `isOwnerContext_()` compares `getEffectiveUser()` with `getActiveUser()`; they are equal
 only for the script owner or a trigger run.
 
-Before the sweep, **178 of 229** functions were publicly callable. After it, **82 — none of them
+Before the sweep, **178 of 229** functions were publicly callable. After it, **82, none of them
 unguarded.** Verify any time with:
 
 ```bash
@@ -339,7 +362,7 @@ Users and approvers now open documents through **`apiDownloadDcsFile`**, which r
 caller is party to that request, confirms the requested file actually belongs to it, and returns the
 bytes to the browser. No Drive URL ever reaches the page.
 
-**Clicking "View" opens the document on the page** *(changed 2026-08-12)* — it no longer forces a
+**Clicking "View" opens the document on the page** *(changed 2026-08-12)*, it no longer forces a
 download into the user's Downloads folder. The point of View is to check what was submitted, not to
 scatter copies of signed contracts across people's laptops, so PDFs and images render in an overlay
 and a Download button sits next to them for when a copy is genuinely wanted. Word and Excel files
@@ -347,9 +370,9 @@ cannot be rendered by a browser, so those show a short notice and the Download b
 
 > ⚠️ For maintainers: the viewer must render into the **current page**, never `window.open()`. The
 > apps run inside Apps Script's sandboxed iframe, where popups are blocked and a blob URL is not
-> reliably navigable as a top-level document. The same viewer exists in **three** places — both
+> reliably navigable as a top-level document. The same viewer exists in **three** places, both
 > frontends and `getStyledHtmlWrapper_` in `pia_code.js` (the page an approver reaches from an email
-> link) — and they must be edited together.
+> link), and they must be edited together.
 
 **One deliberate exception:** the Certificate of Approval email and PDF sent to DCOPS / TechServe
 carry real links, because an email client cannot call back into the app. Those files are elevated to
@@ -366,7 +389,7 @@ request. See `getAndShareDCSFiles_` in `pia_code.js`.
   email + specific action (Approve, Deny, Return, Review, ISMReview), with a **14-day TTL**.
 - The signing secret is **`SYSTEM_SECRET`, and it lives in the PIA project** (read by
   `getSystemSecret()`).
-  🚩 **The name "HMAC_SECRET" in the old DCS manual/comments is a misnomer** — there is no
+  🚩 **The name "HMAC_SECRET" in the old DCS manual/comments is a misnomer**, there is no
   functional `HMAC_SECRET`; DCS does not sign tokens. When auditing token security, check
   **`SYSTEM_SECRET` in the PIA project.**
 - Email normalization strips `+aliases` to prevent alias-bypass of authorization.
@@ -387,7 +410,7 @@ request. See `getAndShareDCSFiles_` in `pia_code.js`.
 - **PIA (`pia_code.js`):** F-05 + identity guards on ISM / approval / DivHead decisions.
 - **Admin (`admin_code.js`):** 17 `checkAccess_` guards added across API entry points.
 
-**Round 2 (2026-08-11)** — prompted by a cross-repository review against the sibling COC portal
+**Round 2 (2026-08-11)**, prompted by a cross-repository review against the sibling COC portal
 (`docs/Cross-Repo Review - DCS vs COC.md`):
 - **The approval workflow is now append-only.** A resubmit appends a new round instead of deleting
   the previous one, so approval history can no longer be lost. Two columns (`RoundNumber`,
@@ -399,15 +422,15 @@ request. See `getAndShareDCSFiles_` in `pia_code.js`.
   `getAdminData` had been returning every request in the system with all PII.
 - **F-05 re-opened and properly closed.** Round 1 guarded `apiGetApplicationData` (the wrapper) but
   left `getApplicationData` (the primitive) public. 🚩 **Lesson worth keeping: guard the primitive,
-  not the wrapper — a finding is not closed until the primitive is closed.**
+  not the wrapper, a finding is not closed until the primitive is closed.**
 - **Uploaded documents made private** (F-10) with the `apiDownloadDcsFile` proxy.
 - **Answer snapshots** added (`Application_Snapshots`) so a resubmit no longer destroys the version
   of the assessment that approvers actually signed off on.
 - **Daily reminders now fail loudly.** A failed pre-filter read used to produce a silent
   zero-reminder run; it now aborts with a logged reason and an `{aborted:true}` return.
 
-**Round 3 (2026-08-12)** — the remaining items from the same cross-repository review:
-- **F-06 closed: no raw exception text ever reaches a browser again.** 89 catch blocks were
+**Round 3 (2026-08-12)**, the remaining items from the same cross-repository review:
+- **F-06 closed: no raw exception text ever reaches a browser again.** 110 catch blocks were
   returning Google's own error message, which quotes the spreadsheet ID and Drive folder ID. They
   now go through `safeError_`, which logs the real exception and returns a plain message plus a
   short **reference code**. If a user reports an error, ask for that code and search the
@@ -422,40 +445,66 @@ request. See `getAndShareDCSFiles_` in `pia_code.js`.
   an approver on leave; review emails, reminders and the approval link all route to the delegate,
   and the decision is recorded as made on the original approver's behalf. Approvers **cannot** set
   their own delegate. Regression test: `testDelegationResolution()`.
-- **Retention & purge — built, and shipped switched OFF.** Nothing in the system had ever deleted
+- **Retention & purge, built, and shipped switched OFF.** Nothing in the system had ever deleted
   personal data. The sweep is complete but inert: it reports what *would* go and deletes nothing
   until ISM sets a retention period and turns off dry-run. 🚩 **A purge cannot be undone. Run the
   preview and review it with ISM first.** It also takes over the DCS draft purge, which had been
   written for a daily trigger that was never installed.
 - **"Where do requests get stuck" dashboard** (Admin → Analytics). Days-waiting buckets plus a
-  most-stuck list, computed from data that already existed — no new columns.
+  most-stuck list, computed from data that already existed, no new columns.
 - **Performance.** All ~150 whole-sheet reads now go through one reader with an opt-in
   per-request cache, and the database file is opened once per run instead of up to 13 times.
   Regression test: `testSheetReadCache()`.
-- **One canonical design-token file** (`docs/design-tokens.css`) replacing six drifting copies —
+- **One canonical design-token file** (`docs/design-tokens.css`) replacing six drifting copies,
   including the two backend copies that rendered the approver-facing decision page in the *wrong
   navy* for months.
+
+**Round 4 (2026-08-12)**, closing the open items left by Round 3. This round is mostly *integrity*
+rather than access control: the defects it fixes were all cases of the system reading the wrong
+thing and **not complaining**.
+
+- **Six silent column-drift defects fixed.** Each was a column index or a header name disagreeing
+  with the actual sheet, producing wrong data rather than an error. The user-visible ones:
+  - Admin's **Flags tab always showed zero**, because the frontend asked for `ApproverFlags` and
+    the column is `Approver_Flags`.
+  - **Agency details could be invisible in Admin.** PIA and DCS each created `Data_Collection`
+    column 11 with a *different* header (`Remarks` vs `Metadata_Agency`), so whichever app made
+    the sheet first decided whether Admin's by-name lookup found it.
+  - **Revising a DCS request dropped its superseded-document trail** and reset the revision count
+    to 1, because two reads were off by one against a range that starts at column 2.
+  - **Delegated decisions wrote to a column with no header** (`ActedBy`, introduced in Round 3),
+    so Admin could not report who actually acted.
+- **The schema is now self-describing and self-checking.** Each PIA sheet has exactly one ordered
+  header list (`PIA_SCHEMA`); the column maps are *derived* from it instead of hand-numbered
+  beside it. A sheet whose live header row disagrees now **throws on first access** instead of
+  reading the wrong column silently. Live databases repair their own missing/renamed headers once,
+  automatically, on first load after deploy. Regression test: `testHeaderSchema()`.
+- **The dual-key error envelope transition is complete.** Responses are now `{ok, code, message, ref}`
+  only; the legacy `{success, error}` pair that shipped for one release is gone from all three
+  backends and all three frontends.
+- 🚩 **F-06 was reported closed too early and is now genuinely closed.** See the F-06 note above:
+  21 further leaks survived the first sweep, including every `getAdminData` handler.
 
 Full detail: `docs/Security - Review Findings.md` and `docs/Security - Recommendations.md`
 (reproduced in Appendix, see `appendices.md`).
 
 ---
 
-## §0.7 — Glossary & conventions
+## §0.7: Glossary & conventions
 
 | Term | Meaning |
 |------|---------|
-| **RARS** | Risk Assessment & Routing System — the whole 3-app product. |
+| **RARS** | Risk Assessment & Routing System, the whole 3-app product. |
 | **DCS / PIA / Admin** | Phase 1 / Phase 2 / Phase 3 apps. |
 | **ReqID** | DCS request identifier (e.g. `DCS-000042`). Lives in `Data_Collection`. |
 | **SessionID** | PIA application identifier (e.g. `PIA-000042`, with `-V2` etc. on revisions). Lives in `Applications`. |
-| **Linked_ReqID** | The `Applications` column that stores the parent DCS `ReqID` — the cross-app join key. |
+| **Linked_ReqID** | The `Applications` column that stores the parent DCS `ReqID`, the cross-app join key. |
 | **parentID** | URL parameter (`?parentID=<ReqID>`) that deep-links DCS → PIA for a specific request. |
 | **Stage A / B / C / D** | Heads / ISM / Routing / Division-Head escalation (see §0.3). |
 | **Return** | Bounce to applicant; full ladder restart on resubmit (≠ Deny). |
 | **Escalate** | ISM kicks the decision up to the Division Head, then comes back down. |
 | **Stored status** | One of `PENDING`, `READY_FOR_PIA`, `COMPLETE`, `REJECTED`, `RETURNED` (in `Data_Collection.Status`). |
-| **Computed badge** | The richer label shown in the UI, derived from the workflow sheets — not a stored value. |
+| **Computed badge** | The richer label shown in the UI, derived from the workflow sheets, not a stored value. |
 | **ISM / InfoSec** | The two-person information-security review team (the active InfoSec-role rows in `InfoSec_Email_Config`; currently `INFOSEC-ALL-1` / `INFOSEC-ALL-2`). |
 | **DCOPS / TechServe** | Implementation teams that receive the final certificate. **DCOPS** is one address; **TechServe** is resolved **per Office/Site** (the request's site → that site's TechServe row(s)). |
 
@@ -463,13 +512,13 @@ Full detail: `docs/Security - Review Findings.md` and `docs/Security - Recommend
 
 **Stored (`Data_Collection.Status`):** `PENDING` · `READY_FOR_PIA` · `COMPLETE` · `REJECTED` · `RETURNED`
 
-**Computed UI badges (examples — see per-phase parts for the full lists):**
+**Computed UI badges (examples, see per-phase parts for the full lists):**
 
 | Badge | Color | Meaning |
 |-------|-------|---------|
 | Pending | Blue | Awaiting initial Immediate-Head review |
 | Approved | Green | Approved at the current step |
-| Returned | Yellow/Orange | Needs revision — edit & resubmit |
+| Returned | Yellow/Orange | Needs revision, edit & resubmit |
 | Denied / Rejected | Red | Terminal rejection |
 | Escalated | Light blue | Sent to Division Head |
 | Processing / Ready for Phase 2 | Purple | DCS cleared; proceed to PIA |
@@ -477,5 +526,5 @@ Full detail: `docs/Security - Review Findings.md` and `docs/Security - Recommend
 
 ---
 
-*Part 0 ends here. Continue to Part 1 (DCS), Part 2 (PIA), or Part 3 (Admin) — each links
+*Part 0 ends here. Continue to Part 1 (DCS), Part 2 (PIA), or Part 3 (Admin), each links
 back to these sections rather than repeating them.*

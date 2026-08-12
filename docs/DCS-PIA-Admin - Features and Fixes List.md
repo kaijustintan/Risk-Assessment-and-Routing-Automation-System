@@ -1,4 +1,4 @@
-# DCS / PIA / Admin (RARS) — Features & Fixes List
+# DCS / PIA / Admin (RARS): Features & Fixes List
 
 **Scope:** DCS + PIA + Admin only (COC and the campaigns excluded).
 **Total: 94 items** in feature format, covering June 8 to July 17, 2026.
@@ -46,9 +46,9 @@ Grounded in the daily logs; several backend items were also cross-checked agains
 **Where to see / How to test:** Submit a DCS request and check the requester's inbox: the confirmation email is styled and includes a working "Proceed to Phase 2" button.
 
 **Feature:** Greeting changed to surname + fixed surname extraction
-**Brief Description:** The greeting now reads **"Hello, <Surname>!"** and the surname parsing was corrected (`ctpaulican.global` wrongly gave "Global", now correctly "Paulican").
+**Brief Description:** The greeting now reads **"Hello, <Surname>!"** and the surname parsing was corrected (`abcruz.global` wrongly gave "Global", now correctly "Cruz").
 **How it was implemented:** In `index.html`, rewrote `deriveFirstName` into `deriveSurname` and updated `greetingLine()`, changing wording from "Hi …," to "Hello, …!"; `deriveSurname` strips the two leading initials, then takes the surname up to any separator (`.` `/` `_` `+` `-`).
-**Where to see / How to test:** Log in as a user like `ctpaulican.global` and view any main screen: greeting shows "Hello, Paulican!" (not "Global").
+**Where to see / How to test:** Log in as a user like `abcruz.global` and view any main screen: greeting shows "Hello, Cruz!" (not "Global").
 
 **Feature:** Rename OJT downloadable to "OJT Confidentiality Undertaking"
 **Brief Description:** The **"OJT NDA"** download was renamed to **"OJT Confidentiality Undertaking."**
@@ -147,7 +147,7 @@ Grounded in the daily logs; several backend items were also cross-checked agains
 
 ---
 
-## June 23 to June 24 — Security hardening + feedback wave (19 items)
+## June 23 to June 24: Security hardening + feedback wave (19 items)
 
 **Feature:** Admin privilege lockdown (F-01 / F-03)
 **Brief Description:** Closed the hole where **any employee** could delete records, tamper with config, or **self-promote to admin** by calling server functions directly. Every privileged Admin function now requires an **INFOSEC member**.
@@ -181,7 +181,7 @@ Grounded in the daily logs; several backend items were also cross-checked agains
 
 **Feature:** Downloadable file permission fix
 **Brief Description:** Fixed access to the downloadable template files so **all Megaworld Corp** can view (and download), while **editing is limited to specific people**.
-**How it was implemented:** Changed the Drive file permissions on the downloadables (OJT CU, Agency CU, and all DPA forms) to view-all for Megaworld Corp; editor rights kept to Sir Darwin, Miss Tine, and Miss Libao only, with everyone else view-only but able to download.
+**How it was implemented:** Changed the Drive file permissions on the downloadables (OJT CU, Agency CU, and all DPA forms) to view-all for Megaworld Corp; editor rights kept to the DCS supervisor, the ISM coordinator, and the document custodian only, with everyone else view-only but able to download.
 **Where to see / How to test:** As a general Megaworld Corp account, open each downloadable from the DCS guide list: you should be able to view and download but not edit.
 
 **Feature:** Single merged final-approval email
@@ -246,7 +246,7 @@ Grounded in the daily logs; several backend items were also cross-checked agains
 
 ---
 
-## July 6 — Post-ISM-demo feedback (24 items)
+## July 6: Post-ISM-demo feedback (24 items)
 
 **Feature:** Required iHelp Ticket Number and Office/Site
 **Brief Description:** The DCS intake form now **requires** the **iHelp ticket number** and the **Office/Site** field before a request can be submitted.
@@ -370,7 +370,7 @@ Grounded in the daily logs; several backend items were also cross-checked agains
 
 ---
 
-## July 15 to July 17 — Round-4 and round-5 batch (24 items)
+## July 15 to July 17: Round-4 and round-5 batch (24 items)
 
 **Feature:** Supplementary files no longer lost on draft resume
 **Brief Description:** Resuming a draft used to show a false **"3 files selected"** over an empty input, so people submitted thinking their supporting files were attached when they were not.

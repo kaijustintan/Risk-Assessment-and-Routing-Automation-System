@@ -1,4 +1,4 @@
-# 05 · PIA (Phase 2) Reference — the approval engine
+# 05 · PIA (Phase 2) Reference, the approval engine
 
 > The privacy assessment **and** the entire multi-level approval workflow. Files:
 > `Phase 2/pia_index.html` (frontend wizard) + `Phase 2/pia_code.js` (backend, ~9,000 lines) +
@@ -8,10 +8,10 @@
 
 ## ⚠️ Templating gotcha (pia_index.html only)
 
-PIA's `pia_index.html` **is** a GAS template — `doGet` calls `createTemplateFromFile('index').evaluate()`
+PIA's `pia_index.html` **is** a GAS template, `doGet` calls `createTemplateFromFile('index').evaluate()`
 on the `?parentID=` path. So the `<?…?>` scriptlet engine is active and **parses `<?…?>` even inside
 comments**. Never put a literal `<?…?>` example in a comment here (it caused the "Proceed to Phase 2"
-crash). The one real scriptlet is `const parentId = <?!= … ?>` (~line 4044) — leave it; VS Code's
+crash). The one real scriptlet is `const parentId = <?!= … ?>` (~line 4044), leave it; VS Code's
 "problems" on it are false positives.
 
 ## The approval ladder (top to bottom)
@@ -35,11 +35,11 @@ Key functions: `buildApproversFromAppData` (seeds Stage A), `initializeApprovalW
 `getISMReviewerStep` (1=Person1, 2=Person2), `processDivHeadDecision` (Stage D),
 `apiPhase3_RouteApprovedRequest` (finalize: certificate + route + DCS Complete).
 
-## Who fills each approver (hybrid — deliberate)
+## Who fills each approver (hybrid, deliberate)
 
 - **Fixed, org-wide roles are admin-configured:** the InfoSec reviewers + DCOPS/TechServe destinations
   live in `InfoSec_Email_Config` (active=YES); `PRIVACY_OFFICER_EMAIL` is the head fallback.
-- **Per-applicant roles are applicant-filled in PIA1:** Immediate / Dept / **Division** Head — because
+- **Per-applicant roles are applicant-filled in PIA1:** Immediate / Dept / **Division** Head, because
   they're that person's own reporting line, which varies per request and would be unmaintainable as a
   central org chart.
 - Integrity risk (naming yourself/a friend) is **mitigated, not prevented**, by `analyzeApplicationRisk`
@@ -54,13 +54,13 @@ When an InfoSec member picks `EscalateToDivisionHead`:
   and the Division Head named in PIA1 (`divHeadEmail`) is emailed a review link.
 - Division Head decides (`processDivHeadDecision`):
   - **Approve** → the escalated ISM step is marked Approved. If that makes **all** ISM rows Approved →
-    finalize. If not → **resume the ISM chain at the next step** (`apiPhase3_NotifyISMember`) — i.e. it
+    finalize. If not → **resume the ISM chain at the next step** (`apiPhase3_NotifyISMember`), i.e. it
     comes back *down* to the remaining reviewer.
   - **Deny** → app Denied (terminal). **Return** → app Returned to applicant → full restart.
 
 ## Return = FULL restart, not resume
 
-A "Return" from **any** approver (head, InfoSec, or DivHead) always bounces to the **applicant** —
+A "Return" from **any** approver (head, InfoSec, or DivHead) always bounces to the **applicant**,
 never to a previous approver. On resubmit, `submitApplication` **deletes all** `Approval_Workflow` +
 `ISM_Approval_Workflow` + `DivisionHead_Approval_Workflow` rows for that session and **rebuilds from
 Stage A, Step 1 (Immediate Head)**. All prior approvals are wiped; nothing resumes. Lineage is kept
@@ -74,9 +74,9 @@ Inline decision panel (replaced the old "Review & Submit Decision" modal): the r
 (DCOPS/TechServe/Both) + all 4 actions (Approve/Escalate/Return/Deny) are shown directly on the page,
 with a "Submitting your decision…" overlay. **`submitWithRouting` (client) enforces 50-char remarks on
 every decision + a routing destination on Approve/Escalate.** ⚠️ The **server** enforces the 50-char
-minimum only for **Deny/Return** — so the client gate is what covers Approve/Escalate. The final
+minimum only for **Deny/Return**, so the client gate is what covers Approve/Escalate. The final
 reviewer's routing choice **binds**; Step 1's routing is a recommendation shown to Step 2.
-> Tech debt note from history: an old hidden "Decision Modal" HTML block was later **deleted** — if you
+> Tech debt note from history: an old hidden "Decision Modal" HTML block was later **deleted**, if you
 > see references to a decision modal in old notes, it's gone.
 
 ## Certificate & finalization
@@ -94,8 +94,8 @@ Identity checks on `apiPhase3_ProcessISMDecision`, `processApprovalDecision`, `p
 
 ## Other PIA facts
 - **All PIA email is queued** (`Email_Queue` + `processEmailQueue` trigger). **Reminders live here**
-  (`sendDailyReminders`, ~line 4671) — not in Admin. See `08-emails-and-notifications.md`.
+  (`sendDailyReminders`, ~line 4671), not in Admin. See `08-emails-and-notifications.md`.
 - PIA reads the DCS row via `parentID` / `Linked_ReqID`. PIA1 answers are stored on `Applications`
   (e.g. `PIA_1_DATA`). The PIA3 stakeholder section hides external fields when the DCS access type is
-  Internal (and vice versa) — frontend-only in `pia_index.html` `renderPIA3`.
+  Internal (and vice versa), frontend-only in `pia_index.html` `renderPIA3`.
 - `SYSTEM_SECRET` (this project) signs the HMAC review tokens (14-day TTL).

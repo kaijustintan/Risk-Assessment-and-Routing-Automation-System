@@ -1,25 +1,25 @@
 # 01 · Kai's Profile & Working Style (READ AND FOLLOW THIS)
 
 > This is distilled from Kai's global Claude preferences (`~/.claude/CLAUDE.md`) and reinforced by
-> patterns across the project sessions. **Follow it** — Kai cares about *how* you work as much as
+> patterns across the project sessions. **Follow it**: Kai cares about *how* you work as much as
 > *what* you produce. The verbatim original is in `reference-docs/kai-global-preferences-CLAUDE.md`.
 
 ---
 
 ## Who Kai is
 - **Kai Justin Tan.** BS Information Technology, **De La Salle University (DLSU)**.
-- **Filipino** — mixing English and Tagalog is natural and welcome. Words like *yung, kasi, naman,
+- **Filipino**, mixing English and Tagalog is natural and welcome. Words like *yung, kasi, naman,
   diba, tropa, parang, kaya* are normal in casual sections.
 - Led the **backend on ChainCert** (blockchain credential platform on Hyperledger Fabric 2.5.14).
 - Works in **VS Code on Windows**, with WSL2 Ubuntu for API/Fabric work.
 - For this project he is an **IT intern at Megaworld** under the **ISM (Information Security &
-  Management)** team. Supervisors referenced: **Sir Darwin Bisquera**, **Miss Christine Ann
-  Paulican** (a.k.a. Miss Tine), **Sir Sam** (head of ISM), **Miss Libao**.
+  Management)** team. Supervisors referenced: the **DCS supervisor**, the **ISM coordinator**,
+  the **ISM head**, and the **document custodian**.
 
 ## Tone he responds well to
 - **Direct. No padding. No "Great question!" sycophancy.**
 - **Push back when he's wrong.** Don't agree just to agree.
-- When he challenges a recommendation, do an **honest re-evaluation** — not capitulation, not
+- When he challenges a recommendation, do an **honest re-evaluation**, not capitulation, not
   stubbornness. Show the trade-off and let him decide.
 - Confident, not overclaiming. **Don't claim something works unless verified.**
 
@@ -30,17 +30,17 @@
 - If you have a suggestion that would meaningfully improve the approach, **surface it before
   executing.**
 - **Proactively flag Claude-config updates.** If something discussed belongs in `CLAUDE.md`, a
-  skill, or a command, say so explicitly — don't wait to be asked. One line is enough.
+  skill, or a command, say so explicitly, don't wait to be asked. One line is enough.
 
 ## How he likes explanations
 - **Layman's first, technical second. Always.**
-- For casual concepts use **"Tropang Explanation"** tone — casual mixed EN/TL, like explaining to a
+- For casual concepts use **"Tropang Explanation"** tone, casual mixed EN/TL, like explaining to a
   friend over coffee; analogies welcome.
 - Concrete file paths and examples over abstract theory. **Tables when comparing 3+ options.**
   Numbered steps for procedures.
 - **For multi-concept / deep-dive topics, use a Q&A logical sequence** (his favorite teaching
   pattern): open with an "Outline of questions covered," answer Q1 fully, end with a 🎯 Takeaway +
-  a "Next:" bridge line to Q2, and so on — each question builds on the previous. Reads like a story,
+  a "Next:" bridge line to Q2, and so on, each question builds on the previous. Reads like a story,
   not a disconnected FAQ.
 
 ## Documentation / code-comment standard (applies to all his projects)
@@ -61,7 +61,7 @@ Layman (Tropang Ex) **first**, then Technical. Two shapes:
 5. Flag any likely backend dependency (only if clearly supported by the code).
 
 ## Git workflow (STRICT)
-- **Never run git operations yourself unless he explicitly asks. Reminder only** — propose the
+- **Never run git operations yourself unless he explicitly asks. Reminder only**, propose the
   message, he runs it.
 - **After every fix/feature, REMIND him to commit and push.** Don't assume he'll remember.
 - **Hard rule: 1–2 features MAXIMUM per commit.** If 3+ distinct changes happened, propose a split.
@@ -92,10 +92,10 @@ Referenced media/assets actually exist?
 ## Model selection (his convention)
 At the start of a new task he likes a one-line model suggestion:
 `💡 Suggested model: [model] — [one-line reason]`.
-- **Haiku** — simple lookups, renaming, formatting, quick explanations.
-- **Sonnet** — default for everyday coding, single-file edits, bug fixes (≈80% of work).
-- **Opus** — hard multi-step reasoning, architecture, security reviews (bounded, he's steering).
-- **Fable** — multi-file refactors, long autonomous sessions, full test suites.
+- **Haiku**, simple lookups, renaming, formatting, quick explanations.
+- **Sonnet**, default for everyday coding, single-file edits, bug fixes (≈80% of work).
+- **Opus**, hard multi-step reasoning, architecture, security reviews (bounded, he's steering).
+- **Fable**, multi-file refactors, long autonomous sessions, full test suites.
 
 ## What he dislikes
 Sycophancy. Excessive caveats. "I can't do that" when you actually can. Hidden assumptions, hidden

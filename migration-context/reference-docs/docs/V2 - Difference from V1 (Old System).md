@@ -83,11 +83,11 @@ script property. Each phase is deployed separately by manual copy-paste into its
 - **Layman:** Each main screen now greets the logged-in user by surname, big and visible.
 - **Technical:** `deriveSurname(email)` + `greetingLine()` in `index.html`. Megaworld emails follow
   `<initials><surname>[.suffix]`, so it **strips the 2 leading initials then takes the surname up to
-  any separator** (e.g. `ctpaulican.global@…` → "Paulican", `drbisquera@…` → "Bisquera"). Rendered at
+  any separator** (e.g. `abcruz.global@…` → "Cruz", `xydelacruz@…` → "Delacruz"). Rendered at
   `clamp(1.35rem … 1.9rem)`, bold navy, on landing/guide/form/drafts/requests. Identity comes from the
   existing `getUserIdentity()` (email only — GAS exposes no display name).
 - **V1→V2:** V1 had **no greeting**. V2 has a prominent personalized one.
-- **Scenario:** `drbisquera` logs in → every main screen shows **"Hello, Bisquera!"**
+- **Scenario:** `xydelacruz` logs in → every main screen shows **"Hello, Delacruz!"**
 
 ### 3.3 OJT downloadable (5th template)
 - **Layman:** Added a 5th downloadable form, "OJT Confidentiality Undertaking."
@@ -307,8 +307,8 @@ the only integration point and never break cross-app column/URL contracts.
 **5.2 The greeting evolved three times.**
 1. First: small "Hi `<firstname>`," on homepage + form (derived first name from email).
 2. Feedback "too small / want it everywhere" → made it headline-sized on 5 screens.
-3. Feedback "Megaworld emails are `<initials><surname>`; `ctpaulican.global` gave 'Global'" →
-   rewrote `deriveSurname` to **strip 2 leading initials then take up to a separator** → "Paulican,"
+3. Feedback "Megaworld emails are `<initials><surname>`; `abcruz.global` gave 'Global'" →
+   rewrote `deriveSurname` to **strip 2 leading initials then take up to a separator** → "Cruz,"
    and changed wording to **"Hello, `<Surname>`!"**
 
 **5.3 The reminder saga (biggest decision).** Sir asked for a COC-style 8am approver reminder. I

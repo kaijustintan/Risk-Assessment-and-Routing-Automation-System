@@ -1,15 +1,15 @@
-# Part 2 — PIA (Phase 2, Privacy Impact Assessment)
+# Part 2: PIA (Phase 2, Privacy Impact Assessment)
 
 > The privacy questionnaire and the **entire approval ladder**. Shared concepts
 > (architecture, schema, deployment, security, glossary, the ladder itself) live in
-> **[Part 0 — Common Reference](part-0-common.md)** — this file covers only PIA specifics.
+> **[Part 0: Common Reference](part-0-common.md)**, this file covers only PIA specifics.
 >
 > Source files: `Phase 2/pia_index.html` (frontend), `Phase 2/pia_code.js` (backend,
 > ~9,000 lines), `Phase 2/*_appsscript.json` (manifest).
 
 ---
 
-## §2.1 — End-user guide 🧑
+## §2.1: End-user guide 🧑
 
 ### Accessing the system
 PIA is reached through a **DCS link that carries a `parentID`** (the DCS Request ID):
@@ -29,20 +29,20 @@ A sidebar progress tracker follows you through:
 | 1 | Instructions & Compliance | Read guidelines, consent, proceed |
 | 2 | Privacy Compliance Checklist (PIA 5) | 8 questions answered YES / NO / N/A |
 | 3 | Program Information (PIA 1) | Program details; many fields **auto-populated read-only from DCS** (department, drafter, head names/emails); you add phone numbers, description, purpose, benefits, scope, end-user |
-| 4 | PII Inventory (PIA 2) | For 21 PII types pick YES/NO — **≥3 YES required**; "Others" needs a custom entry |
+| 4 | PII Inventory (PIA 2) | For 21 PII types pick YES/NO, **≥3 YES required**; "Others" needs a custom entry |
 | 5 | Stakeholders (PIA 3) | Up to 5 internal + 5 external, optional emails/descriptions |
 | 6 | Information Flow (PIA 4) | Describe Collect / Use / Retain / Disclose / Dispose |
 | 7 | Review Summary | Review all answers + the DCS Request Details card; flagged fields (from a prior revision) show red flag icons; **Confirm & Submit** |
 
 ### After submission
 You get a confirmation with your **Application ID** (`PIA-XXXXXX`) and an email. The
-application then climbs the ladder — Immediate Head → Department Head → ISM Members → (optional
+application then climbs the ladder: Immediate Head → Department Head → ISM Members → (optional
 Division Head). You receive email updates at each stage (progressing / returned / denied /
 fully approved). Full ladder mechanics:
 [§0.3](part-0-common.md#03--the-approval-ladder--progress-timeline).
 
 ### Tracking
-Track via your email inbox — each status email has a **"View DCS Submission"** or **"Review &
+Track via your email inbox: each status email has a **"View DCS Submission"** or **"Review &
 Update PIA"** button. Auto-save runs as you fill the form ("Saved" indicator, bottom-right);
 you can close and resume later via the **same DCS link**.
 
@@ -50,8 +50,8 @@ you can close and resume later via the **same DCS link**.
 1. Check your email for approver feedback and flagged fields (red flag icons).
 2. Click **Review & Update PIA** → the system loads your submission in **Revision Mode**.
 3. Update flagged + any other fields; review and resubmit.
-4. 🚩 **If DCS fields were flagged, you must fix the DCS request first** — then use the new
-   DCS link to revise the PIA. (Return = full restart — see
+4. 🚩 **If DCS fields were flagged, you must fix the DCS request first**, then use the new
+   DCS link to revise the PIA. (Return = full restart, see
    [§0.3](part-0-common.md#03--the-approval-ladder--progress-timeline).)
 
 ### PIA status indicators
@@ -67,21 +67,21 @@ you can close and resume later via the **same DCS link**.
 
 ---
 
-## §2.2 — Maintenance 🛠
+## §2.2: Maintenance 🛠
 
 ### Script Properties (PIA project)
-*(Deploy via the golden rule — [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls). Never "New deployment.")*
+*(Deploy via the golden rule: [§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls). Never "New deployment.")*
 
 | Property | Required | Holds |
 |----------|----------|-------|
 | `WEB_APP_URL` | Yes | Live **PIA** `/exec` (approver review, ISM/approval forms, reminders) |
 | `DCS_WEB_APP_URL` | Yes | Live **DCS** `/exec` (applicant "View DCS Submission" link) |
-| `SYSTEM_SECRET` | Yes | HMAC token signing secret (64+ char random) — **the real signing secret for all of RARS** ([§0.6](part-0-common.md#06--security-model)) |
+| `SYSTEM_SECRET` | Yes | HMAC token signing secret (64+ char random), **the real signing secret for all of RARS** ([§0.6](part-0-common.md#06--security-model)) |
 | `PIA_DB_SPREADSHEET_ID` | Auto-set | Database spreadsheet ID |
 | `ALLOWED_DOMAIN` | Yes | Corporate domain (e.g. `megaworldcorp.com`) |
 | `ADMIN_API_KEY` | Yes | Shared key for Admin email-tracking; must match the Admin side |
 
-**Selected code constants** (`pia_code.js`): `ENABLE_DOMAIN_CHECK = true` (line ~185 — domain
+**Selected code constants** (`pia_code.js`): `ENABLE_DOMAIN_CHECK = true` (line ~185, domain
 gate is **on**), `TOKEN_VALIDITY_MS = 14 days`, `MAX_USER_DRAFTS = 5`, `DRAFT_EXPIRY_DAYS =
 7`, `RISK_FLAG_THRESHOLD = 18` (PII count), comment length min/max constants,
 `LOCK_TIMEOUT_MS = 30000`.
@@ -103,21 +103,21 @@ The approval **reminder engine is in PIA, not Admin.** `sendDailyReminders()` /
 The two ISM reviewers and the DCOPS/TechServe routing emails come from the `InfoSec_Email_Config`
 sheet (rows with `IsActive = YES`). The ISM workflow requires **exactly 2 active InfoSec members.**
 **TechServe is per Office/Site:** one row per (site, email) tagged with the `Site` column
-(AGT/GDP/EGP/TWS) — a site may have several recipients; `resolveTechserveForSite_` matches the
+(AGT/GDP/EGP/TWS), a site may have several recipients; `resolveTechserveForSite_` matches the
 request's site and falls back to **DCOPS-only** (with a logged warning) if a site has no TechServe
 row, so a request is never blasted to the wrong team. **DCOPS stays a single address.**
 `PRIVACY_OFFICER_EMAIL` is the head fallback when a PIA1 head email is invalid.
 
 ### Recovery / utility functions (run from the GAS editor)
-- `apiPhase3_RetryISMWorkflow(sessionId)` — for an app stuck in "Approved (ISM Pending)".
-- `testPhase3DatabaseInitialization()` — if the ISM workflow sheets are missing.
-- `reinitializePhase3Database()` — to reset the Phase-3 schema.
-- `cleanupExpiredDrafts()` — purge drafts older than 7 days.
-- `seedSessionCounterFromDatabase()` — re-sync the session counter if duplicate IDs appear.
+- `apiPhase3_RetryISMWorkflow(sessionId)`, for an app stuck in "Approved (ISM Pending)".
+- `testPhase3DatabaseInitialization()`, if the ISM workflow sheets are missing.
+- `reinitializePhase3Database()`, to reset the Phase-3 schema.
+- `cleanupExpiredDrafts()`, purge drafts older than 7 days.
+- `seedSessionCounterFromDatabase()`, re-sync the session counter if duplicate IDs appear.
 
 ---
 
-## §2.3 — Developer handover 👨‍💻
+## §2.3: Developer handover 👨‍💻
 
 ### Frontend (`pia_index.html`)
 Single HTML SPA, vanilla JS, navy DM-Sans design tokens. Global `state` object holds all PIA
@@ -127,7 +127,7 @@ Validation via `validatePIA1`, `syncPIA*State` functions. Submit flow:
 Drafts via debounced `apiSaveDraft()`. The DCS-link screen (`renderDCSCheck`) calls
 `apiGetDCSContext` for identity verification.
 
-### Backend (`pia_code.js`, ~9,000 lines) — module map
+### Backend (`pia_code.js`, ~9,000 lines), module map
 - **Entry points:** `doGet()`, `doPost()` (route to SPA or email-action handler)
 - **Security:** `generateAuthToken()`, `isTokenValid()`, `getNormalizedEmail()`,
   `sanitizeInput()`, `escapeHtml()`, `validateApplicationData()`, `isValidEmail()`,
@@ -149,7 +149,7 @@ Drafts via debounced `apiSaveDraft()`. The DCS-link screen (`renderDCSCheck`) ca
 
 > 🔒 **The trailing underscore on five of these is deliberate and load-bearing.**
 > `routeApprovedRequest_`, `updateDCSStatus_`, `notifyISMember_`, `notifyApprover_`, and
-> `notifyApplicant_` are **private** — in Apps Script a trailing-underscore name cannot be called
+> `notifyApplicant_` are **private**, in Apps Script a trailing-underscore name cannot be called
 > from the browser via `google.script.run`. They were renamed from public `apiPhase3_*` / bare names
 > precisely to remove that surface (a public finalizer let any domain user email a forged Certificate
 > of Approval for any guessable session ID). Do not rename them back. Full rationale in
@@ -165,7 +165,7 @@ Drafts via debounced `apiSaveDraft()`. The DCS-link screen (`renderDCSCheck`) ca
 `routeApprovedRequest_` generates the Certificate PDF (now including each approver's
 **comments**) and emails the site's TechServe / DCOPS team; `notifyApplicant_` updates the applicant
 throughout and, on the **FULLY APPROVED** email, **attaches the certificate** plus a "being
-processed — contact TechServe" block (named per-site contacts). **All four approver notification
+processed, contact TechServe" block (named per-site contacts). **All four approver notification
 emails now carry a "Review Status" block** (`generateEmailDecisionsHTML`) so the current approver
 sees who decided before them.
 
@@ -174,23 +174,23 @@ Single `Code.gs` file (GAS has no ES modules); serialized JSON columns for PIA d
 schema); HMAC tokens (no server session needed); debounced auto-save (quota friendly);
 sequential two-person ISM review (no single member can unilaterally approve); script locks on
 concurrent ops; `Risk_Audit` reserved for **anomalous** events only (normal actions are
-`Logger.log`-ged — *not* the "Paranormal" wording from the old manual).
+`Logger.log`-ged, *not* the "Paranormal" wording from the old manual).
 
 ---
 
-## §2.4 — Troubleshooting
+## §2.4: Troubleshooting
 
 ### For end users
 | Problem | Solution |
 |---------|----------|
 | "Strictly Access Denied" | Sign in with your corporate account (incognito helps). |
 | "Invalid Access" / "Link Required" | You must enter PIA via a valid DCS link with `?parentID=`. |
-| "Could not verify context" | The DCS Request ID is invalid/doesn't exist — verify the URL and that the DCS request was submitted. |
+| "Could not verify context" | The DCS Request ID is invalid/doesn't exist, verify the URL and that the DCS request was submitted. |
 | "Not authorized to access this context" | The DCS request belongs to another user; you can only access your own. |
 | Data not saving | Wait for the "Saved" indicator; if "Save failed", refresh to restore the last saved state. |
 | Can't pass PII Inventory | Need ≥3 YES, and every standard PII field set to YES/NO. |
 | "Returned" + DCS was flagged | Fix the DCS request first, then use the new DCS link to revise the PIA. |
-| Stuck in "Pending" | The approver may not have seen the email — contact them to check. |
+| Stuck in "Pending" | The approver may not have seen the email, contact them to check. |
 | Email not received | Check spam; confirm the correct corporate inbox. |
 
 ### For administrators
@@ -200,10 +200,10 @@ concurrent ops; `Risk_Audit` reserved for **anomalous** events only (normal acti
 | "WEB_APP_URL not configured" | Set `WEB_APP_URL` to the current PIA deployment ([§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls)). |
 | ISM workflow not starting | Ensure `InfoSec_Email_Config` has ≥2 active members, then run `apiPhase3_RetryISMWorkflow(sessionId)`. |
 | Email quota exceeded | `sendEmailWithRetry` retries with backoff; check the Gmail/Workspace daily limit. |
-| Approval link "Access Denied" | Token expired (14-day TTL) or email mismatch — generate fresh links by having the requestor resubmit ([§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls)). |
+| Approval link "Access Denied" | Token expired (14-day TTL) or email mismatch, generate fresh links by having the requestor resubmit ([§0.4](part-0-common.md#04--operations-runbook-deployment--cross-app-urls)). |
 | Drafts accumulating | Run `cleanupExpiredDrafts()`; consider a weekly trigger. |
 | Page blank / parse error | Suspect GAS template-literal serve corruption ([§0.5](part-0-common.md#05--known-gotchas--debugging)). |
 
 ---
 
-*← [Part 1 — DCS](part-1-dcs.md) · Next: [Part 3 — Admin](part-3-admin.md) →*
+*← [Part 1: DCS](part-1-dcs.md) · Next: [Part 3: Admin](part-3-admin.md) →*
