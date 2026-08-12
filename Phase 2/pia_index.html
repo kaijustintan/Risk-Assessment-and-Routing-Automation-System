@@ -131,6 +131,9 @@
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+  /* GENERATED from docs/design-tokens.css — edit there, then paste into all 6 targets.
+     The other five: Phase 1/index.html, Admin/adminView.html, and the
+     getStyledHtmlWrapper_ block in each of the three backends. */
   :root {
     /* Pass-through system tokens */
     --bg:      var(--color-background-primary,    #ffffff);
@@ -141,20 +144,20 @@
     --text3:   var(--color-text-tertiary,         #9ca3af);
     --border:  var(--color-border-tertiary,       #e5e7eb);
     --border2: var(--color-border-secondary,      #d1d5db);
-    --radius:  var(--border-radius-md,            6px);
-    --radius-lg: var(--border-radius-lg,          12px);
+    --radius:  var(--border-radius-md,            4px);
+    --radius-lg: var(--border-radius-lg,          9px);
     --font:    var(--font-sans,                   'DM Sans', system-ui, sans-serif);
     --font-mono: var(--font-mono,                 'DM Mono', monospace);
 
     /* success/warning/danger */
     --success:      var(--color-background-success,  #ecfdf5);
-    --success-text: var(--color-text-success,         #065f46);
-    --danger:       var(--color-background-danger,    #fef2f2);
-    --danger-text:  #dc2626;
-    --warn:         var(--color-background-warning,   #fffbeb);
-    --warn-text:    var(--color-text-warning,         #92400e);
+    --success-text: var(--color-text-success,        #065f46);
+    --danger:       var(--color-background-danger,   #fef2f2);
+    --danger-text:  var(--color-text-danger,         #991b1b);
+    --warn:         var(--color-background-warning,  #fffbeb);
+    --warn-text:    var(--color-text-warning,        #92400e);
 
-    /* Navy blue palette */
+    /* Navy blue palette (Megaworld Corp.) */
     --navy:         #1e3a5f;
     --navy-mid:     #2a5285;
     --navy-bright:  #3b76c4;
@@ -1318,7 +1321,7 @@
 
 <script type="text/javascript">
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// � PERFORMANCE OPTIMIZATION: DOM Cache & Memoization
+// PERFORMANCE OPTIMIZATION: DOM Cache & Memoization
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const domCache = {};
 const escapeHtmlCache = new Map();
@@ -1401,7 +1404,7 @@ function escapeHtmlMemo(str) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// �📋 STATE
+// STATE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
@@ -1759,7 +1762,7 @@ function asyncRestoreDraft(sessionId) {
   google.script.run
     .withSuccessHandler(result => {
       hideLoading();
-      if (result && result.success && result.state) {
+      if (result && result.ok && result.state) {
         const s = result.state;
         state.parentID = s.parentID || '';
         state.currentScreen = s.currentScreen || state.currentScreen;
@@ -2108,7 +2111,7 @@ function createNewApplicationSession() {
         renderPIA5Survey();
         persistState();
       } else {
-        showError('Failed to create session: ' + (result?.error || 'Unknown error'));
+        showError('Failed to create session: ' + (result?.message || 'Unknown error'));
       }
     })
     .withFailureHandler(err => {
@@ -2292,7 +2295,7 @@ function loadApprovalHistory(sessionId) {
       .withSuccessHandler(function (res) {
         try {
           var el = document.getElementById('approval-history-container');
-          if (el && res && res.success && res.rounds && res.rounds.length) {
+          if (el && res && res.ok && res.rounds && res.rounds.length) {
             el.innerHTML = renderApprovalTimeline(res.rounds);
           }
         } catch (e) {}
@@ -2371,7 +2374,7 @@ function renderDCSCheck() {
       const alertEl = document.getElementById('dcs-alert-container');
       const proceedBtn = document.getElementById('proceed-to-guide-btn');
 
-      if (result && result.success) {
+      if (result && result.ok) {
         state.dcsData = result.context;
         state.dcsData.reqId = parentId;
         // Store approver comments for use later
@@ -2564,11 +2567,11 @@ function renderDCSCheck() {
           <div class="card-title">Your Status</div>
           <div class="alert alert-danger" style="margin: 1rem 0 0 0; display: block;">
             <strong>Link Failed.</strong> Could not verify context for DCS Request <strong>${escapeHtml(parentId)}</strong>.
-            <br><small>${escapeHtml(result.error || 'Context not found or unauthorized.')}</small>
+            <br><small>${escapeHtml(result.message || 'Context not found or unauthorized.')}</small>
           </div>
         `;
         proceedBtn.textContent = "Verification Failed";
-        showError('Error linking DCS: ' + (result.error || 'Context not found or unauthorized.'));
+        showError('Error linking DCS: ' + (result.message || 'Context not found or unauthorized.'));
       }
     })
     .withFailureHandler(err => {
@@ -3559,7 +3562,7 @@ function renderSummary() {
           // because DCS uploads were published with ANYONE_WITH_LINK. Documents are private now and
           // are fetched through apiDownloadDcsFile, which re-checks that the caller is party to this
           // application. Also dropped the emoji icon (interface icons should not be emoji).
-          window._endorsementFileHtml = `<button type="button" class="btn btn-sm" style="color: var(--navy-bright); border-color: var(--navy-bright); margin-right: 8px;" title="${escapeHtmlMemo(agency.endorsementLetter.name || 'Endorsement Letter')}" onclick="downloadDcsFile('${safeIdAttr(state.sessionId)}','${safeIdAttr(agency.endorsementLetter.id)}',this)">View Endorsement Letter</button>`;
+          window._endorsementFileHtml = `<button type="button" class="btn btn-sm" style="color: var(--navy-bright); border-color: var(--navy-bright); margin-right: 8px;" title="${escapeHtmlMemo(agency.endorsementLetter.name || 'Endorsement Letter')}" onclick="viewDcsFile('${safeIdAttr(state.sessionId)}','${safeIdAttr(agency.endorsementLetter.id)}',this)">View Endorsement Letter</button>`;
         }
         // Dynamically render all fields
         Object.keys(agency).forEach(key => {
@@ -3755,7 +3758,7 @@ function renderCertificate() {
     </div>
     <div class="btn-row">
       <button class="btn" onclick="show('confirmation'); renderConfirmation()">View Receipt</button>
-      <button class="btn btn-primary" onclick="window.top.close()">Done ✓</button>
+      <button class="btn btn-primary" onclick="window.top.close()">Done</button>
     </div>
   `;
 }
@@ -3866,22 +3869,173 @@ function safeIdAttr(v) {
   return String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '');
 }
 
+/* ── Secure document viewer ──────────────────────────────────────────────────────────
+   Deliberate triplicate of the block in Phase 1/index.html and in pia_code.js's
+   getStyledHtmlWrapper_. The three GAS projects cannot share code, and the server-rendered
+   approver page is not even the same document as this one — so the same viewer exists three
+   times. 🚩 Edit all three together.
+
+   🚩 WHY A MODAL AND NOT window.open(blobUrl). Served inside Apps Script's sandboxed iframe,
+   popups are blocked and a blob: URL minted in that frame is not reliably navigable as a
+   top-level document. Rendering into the CURRENT document is what works.
+
+   🚩 THE BLOB URL MUST OUTLIVE THE CALL — the <iframe>/<img> reads it for as long as it is on
+   screen, so it is revoked in closeFilePreview(), not right after creation. Every exit route
+   funnels through there; miss one and the blob leaks for the life of the page.
+────────────────────────────────────────────────────────────────────────────────────── */
+
+// Live blob URL while the preview is open. Exactly one at a time; see closeFilePreview.
+var __filePreviewUrl = null;
+
 /*
-  Function Name: downloadDcsFile
-  LAYMAN: Binubuksan yung DCS na dokumentong naka-attach sa application mo. Dati direktang Drive
-          link ito, at yung link na yun ay bukas sa kahit sino sa internet. Ngayon hinihingi natin
-          sa server, tinitingnan muna niya kung kasama ka ba sa request na to, tsaka niya ibibigay
-          yung file mismo para ma-download mo.
-  TECHNICAL: Calls apiDownloadDcsFile(sessionId, fileId); on success base64-decodes into a Blob and
-             triggers a synthetic <a download> click, then revokes the object URL. Same pattern as
-             the twin in Phase 1/index.html and in the server-rendered review form.
+  Function Name: filePreviewEscHandler
+  LAYMAN: Isinasara ang preview kapag pinindot mo ang Esc.
+  TECHNICAL: Named (not anonymous) so removeEventListener can actually detach it — an anonymous
+             handler would stack one listener per preview opened.
+  PARAMS: - e — the keydown event.   RETURNS: Nothing.
+*/
+function filePreviewEscHandler(e) {
+  if (e.key === 'Escape') closeFilePreview();
+}
+
+/*
+  Function Name: closeFilePreview
+  LAYMAN: Isinasara ang preview at binabalik ang memory na ginamit ng dokumento.
+  TECHNICAL: Removes the overlay, revokes the object URL, detaches the Esc listener. Safe to
+             call when nothing is open — showFilePreview calls it first so only one preview
+             (and one live blob) can exist at a time.
+  PARAMS: (none)   RETURNS: Nothing.
+*/
+function closeFilePreview() {
+  var host = document.getElementById('filePreviewOverlay');
+  if (host && host.parentNode) host.parentNode.removeChild(host);
+  if (__filePreviewUrl) { URL.revokeObjectURL(__filePreviewUrl); __filePreviewUrl = null; }
+  document.removeEventListener('keydown', filePreviewEscHandler);
+}
+
+/*
+  Function Name: showFilePreview
+  LAYMAN: Ipinapakita yung dokumento dito mismo sa page, hindi na dina-download. Kasi ang punto
+          ng "View" ay para makita mo kung ano ang isinumite, hindi para mangolekta ng files sa
+          laptop mo. PDF at litrato, direktang lalabas. Word/Excel, hindi kayang ipakita ng
+          browser — may Download button na lang at malinaw na paliwanag.
+  TECHNICAL: base64 -> Blob -> object URL, then builds the overlay with createElement and sets
+             the filename via textContent. Deliberately NOT innerHTML with the name interpolated:
+             the filename is user-supplied and this block is pasted into a document where the
+             local escape helper differs, so textContent is the portable safe choice. Download is
+             ALWAYS offered even on a successful inline render, as the escape hatch for a browser
+             that refuses the type.
+  PARAMS:
+  - data — { base64, mimeType, filename } exactly as apiDownloadDcsFile returns it.
+  RETURNS: Nothing (mutates the DOM).
+*/
+function showFilePreview(data) {
+  closeFilePreview();   // never stack two previews, never leak the previous blob
+
+  var mime = String((data && data.mimeType) || 'application/octet-stream');
+  var name = String((data && data.filename) || 'document');
+
+  var byteChars = atob(data.base64);
+  var byteNums = new Array(byteChars.length);
+  for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+  __filePreviewUrl = URL.createObjectURL(new Blob([new Uint8Array(byteNums)], { type: mime }));
+
+  var isPdf = mime.indexOf('pdf') !== -1;
+  var isImg = mime.indexOf('image/') === 0;
+
+  var ov = document.createElement('div');
+  ov.id = 'filePreviewOverlay';
+  ov.setAttribute('role', 'dialog');
+  ov.setAttribute('aria-modal', 'true');
+  ov.setAttribute('aria-label', 'Document preview');
+  ov.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(17,24,39,0.6);' +
+    'z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:16px;';
+
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:9px;width:100%;max-width:900px;height:90vh;' +
+    'display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25);';
+
+  var head = document.createElement('div');
+  head.style.cssText = 'display:flex;align-items:center;gap:10px;padding:11px 14px;' +
+    'border-bottom:1px solid #e5e7eb;flex-shrink:0;';
+
+  var title = document.createElement('div');
+  title.textContent = name;   // user-supplied — never parsed as HTML
+  title.style.cssText = 'font-weight:600;font-size:13.5px;color:#111827;flex:1;min-width:0;' +
+    'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+  var dl = document.createElement('button');
+  dl.type = 'button';
+  dl.textContent = 'Download';
+  dl.style.cssText = 'padding:6px 14px;font-size:12.5px;font-weight:500;cursor:pointer;' +
+    'border:1px solid #d1d5db;border-radius:4px;background:#fff;color:#111827;flex-shrink:0;';
+  dl.onclick = function () {
+    var a = document.createElement('a');
+    a.href = __filePreviewUrl;      // reuse the open blob — no second server round trip
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  var x = document.createElement('button');
+  x.type = 'button';
+  x.setAttribute('aria-label', 'Close preview');
+  x.innerHTML = '&times;';
+  x.style.cssText = 'border:none;background:none;font-size:22px;line-height:1;cursor:pointer;' +
+    'color:#6b7280;padding:0 4px;flex-shrink:0;';
+  x.onclick = closeFilePreview;
+
+  head.appendChild(title);
+  head.appendChild(dl);
+  head.appendChild(x);
+
+  var pane = document.createElement('div');
+  pane.style.cssText = 'flex:1;min-height:0;background:#f7f8fa;' +
+    (isImg ? 'display:flex;align-items:center;justify-content:center;padding:12px;' : '');
+
+  if (isPdf) {
+    var frame = document.createElement('iframe');
+    frame.src = __filePreviewUrl;
+    frame.title = name;
+    frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+    pane.appendChild(frame);
+  } else if (isImg) {
+    var img = document.createElement('img');
+    img.src = __filePreviewUrl;
+    img.alt = name;
+    img.style.cssText = 'max-width:100%;max-height:100%;display:block;';
+    pane.appendChild(img);
+  } else {
+    var note = document.createElement('div');
+    note.style.cssText = 'padding:36px 24px;text-align:center;color:#4b5563;font-size:13px;line-height:1.7;';
+    note.textContent = 'This file type cannot be displayed in the browser. ' +
+      'Use Download to open it in the right application.';
+    pane.appendChild(note);
+  }
+
+  box.appendChild(head);
+  box.appendChild(pane);
+  ov.appendChild(box);
+  ov.addEventListener('click', function (e) { if (e.target === ov) closeFilePreview(); });
+  document.body.appendChild(ov);
+  document.addEventListener('keydown', filePreviewEscHandler);
+}
+
+/*
+  Function Name: viewDcsFile
+  LAYMAN: Binubuksan yung DCS na dokumentong naka-attach sa application. Tinitingnan muna ng
+          server kung kasama ka ba sa request na ito bago niya ibigay.
+  TECHNICAL: Calls apiDownloadDcsFile(sessionId, fileId) — the server endpoint keeps its name,
+             it genuinely returns the bytes; only the client presentation changed from a forced
+             download to an inline preview.
   PARAMS:
   - sessionId — PIA session id that owns the linked DCS request.
   - fileId    — Drive file id (validated server-side against the request).
   - btn       — the clicked element, for a per-button loading state.
-  RETURNS: Nothing (async; triggers a browser download or an error toast).
+  RETURNS: Nothing (async; opens the preview overlay or shows an error toast).
 */
-function downloadDcsFile(sessionId, fileId, btn) {
+function viewDcsFile(sessionId, fileId, btn) {
   var originalHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.innerHTML = 'Opening...'; }
   function restore() {
@@ -3890,25 +4044,14 @@ function downloadDcsFile(sessionId, fileId, btn) {
   google.script.run
     .withSuccessHandler(function (res) {
       restore();
-      if (!res || !res.success) {
-        showError((res && res.error) ? res.error : 'Could not open this document.');
+      if (!res || !res.ok) {
+        showError((res && res.message) ? res.message : 'Could not open this document.');
         return;
       }
       try {
-        var byteChars = atob(res.data.base64);
-        var byteNums = new Array(byteChars.length);
-        for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
-        var blob = new Blob([new Uint8Array(byteNums)], { type: res.data.mimeType });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = res.data.filename || 'document';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        showFilePreview(res.data);
       } catch (err) {
-        showError('Could not prepare the download. Please try again.');
+        showError('Could not display this document. Please try again.');
       }
     })
     .withFailureHandler(function () {
@@ -4029,7 +4172,7 @@ function submitToBackend() {
   LAYMAN: Runs when the server accepts the submission. Records the new Application ID, marks
     the app as finished (no more autosave), tells the server to retire the draft, and shows
     the receipt screen.
-  TECHNICAL: Clears the safety timeout. On result.success: sets submittedAt/status/appId,
+  TECHNICAL: Clears the safety timeout. On result.ok: sets submittedAt/status/appId,
     isIncomplete=false, draftStatus='completed', resets approvers, fires
     apiMarkDraftComplete, persists, then show('confirmation'). On !success: re-enables and
     shows the error.
@@ -4037,7 +4180,7 @@ function submitToBackend() {
 */
 function onSubmitSuccess(result) {
   clearTimeout(window._submitTimeoutId);
-  if (result.success) {
+  if (result.ok) {
     state.submittedAt = result.timestamp;
     state.status = 'Pending';
     state.appId = result.appId;  // appId only set AFTER submission
@@ -4063,7 +4206,7 @@ function onSubmitSuccess(result) {
   } else {
     state.isSubmitting = false;
     hideLoading();
-    showError('Submission failed: ' + (result.errors?.join(', ') || result.error));
+    showError('Submission failed: ' + (result.errors?.join(', ') || result.message));
   }
 }
 

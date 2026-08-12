@@ -65,9 +65,6 @@
   CATEGORY: REQUEST DATA & APPROVERS
     - getRequestDataBatch_(ss,req,piaSid) Loads PIA record + all approval-workflow rows in one pass.
     - getPIARecordByDCSId_(ss, dcsReqId)  Finds the PIA record linked to a DCS request.
-    - getApproversList_(ss,req,sid,meta)  Builds the DCS approver list from metadata + workflow.
-    - getISMApproversList_(ss, piaSid)    Builds the InfoSec (ISM) approver list.
-    - getDivHeadApproversList_(ss, piaSid) Builds the Division Head approver list.
     - apiGetRequestData(reqId)            Full request payload (form + files + timelines + flags).
     - apiListUserRequests()               Lists the current user's DCS requests (newest first).
     - apiGetReturnedApplication(reqId)    Validates + returns a request eligible for edit/resubmit.
@@ -196,6 +193,170 @@ function getCachedSpreadsheet_(spreadsheetId) {
 }
 
 /*
+  ━━━ THE SHEET-VALUE READ CACHE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  LAYMAN (Tropang Ex):
+  Kapag may tinanong sa database, ang ginagawa dati ay "i-download muna yung BUONG tab,
+  tapos hanapin dun." Ito yung maliit na notepad na buhay lang habang tumatakbo yung isang
+  request: kung hihingin ulit yung parehong tab, dun na kukuha. Pagkatapos, burado agad.
+
+  🚩 PATAY ito by default. Kailangang sadyang buksan gamit ang withSheetCache_().
+
+  TECHNICAL: Execution-scoped memo of getDataRange().getValues(), keyed by sheet name.
+    1. __SHEET_CACHE is null (OFF) by default, so readSheetValues_ degrades to exactly the
+       call it replaced — converting every read site is therefore a behaviour-preserving
+       no-op on its own and cannot regress anything.
+    2. Enabled ONLY around READ-ONLY entry points, never on a path that writes, which makes
+       write-then-stale-read structurally impossible instead of a discipline problem.
+    3. A cache hit returns the SAME array reference, not a copy. Never mutate a cached read.
+    Nesting composes — the outermost withSheetCache_ owns the lifetime.
+    Distinct from CACHE.spreadsheets above: that memoizes a live handle (always safe), this
+    memoizes VALUES (safe only under rules 1-3).
+    Phase 1 only has 3 read sites, so the win here is small; the copy exists so the three
+    projects stay identical. They cannot share code — edit all three together.
+*/
+let __SHEET_CACHE = null;
+
+/*
+  Function: withSheetCache_
+  LAYMAN:    Turn the cache on for the duration of one function, then turn it off again.
+  TECHNICAL: Restores the previous state in a finally block so a throw cannot leave caching
+             switched on. Re-entrant: a nested call yields lifetime ownership to the outer one.
+  PARAMS:    - fn — zero-arg function to run with caching enabled.
+  RETURNS:   Whatever fn returns (exceptions propagate untouched).
+*/
+function withSheetCache_(fn) {
+  const outer = __SHEET_CACHE;
+  if (!outer) __SHEET_CACHE = {};
+  try {
+    return fn();
+  } finally {
+    if (!outer) __SHEET_CACHE = null;
+  }
+}
+
+/*
+  Function: readSheetValues_
+  LAYMAN:    Read every row of a tab, reusing the copy from earlier in this same run if the
+             cache happens to be on.
+  TECHNICAL: Drop-in replacement for `sheet.getDataRange().getValues()`.
+             🚩 A null sheet THROWS, deliberately — the call this replaced threw a TypeError
+             in that case, and returning [] instead would quietly turn a fail-loud path into
+             a fail-silent one. Same control flow as before, just a readable message.
+  PARAMS:    - sheet — a Sheet object.
+  RETURNS:   2-D array of cell values. Shared reference on a cache hit — do not mutate.
+*/
+function readSheetValues_(sheet) {
+  if (!sheet) throw new Error('readSheetValues_: sheet is null (the tab could not be opened or created).');
+  if (!__SHEET_CACHE) return sheet.getDataRange().getValues();
+  const key = sheet.getName();
+  if (!Object.prototype.hasOwnProperty.call(__SHEET_CACHE, key)) {
+    __SHEET_CACHE[key] = sheet.getDataRange().getValues();
+  }
+  return __SHEET_CACHE[key];
+}
+
+/*
+  Function: invalidateSheetCache_
+  LAYMAN:    Forget the stored copy of a tab so the next read is fresh.
+  TECHNICAL: No-op when the cache is off. Drops one entry by Sheet or name, or clears all.
+  PARAMS:    - sheetOrName — a Sheet, a tab-name string, or nothing (clear everything).
+  RETURNS:   undefined.
+*/
+function invalidateSheetCache_(sheetOrName) {
+  if (!__SHEET_CACHE) return;
+  if (!sheetOrName) { __SHEET_CACHE = {}; return; }
+  const key = (typeof sheetOrName === 'string') ? sheetOrName : sheetOrName.getName();
+  delete __SHEET_CACHE[key];
+}
+
+/*
+  ━━━ THE ERROR CONTRACT (F-06) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  LAYMAN (Tropang Ex):
+  Dati, kapag may pumalpak, yung EKSAKTONG error ng Google ang ipinapakita sa browser —
+  at kasama dun yung ID ng spreadsheet at ng Drive folder natin. Ngayon: yung totoong
+  error, sa LOG lang; yung user, malinis na mensahe + maikling "Reference" code. Sabihin
+  lang sa'yo ng user yung code, hahanapin mo yun sa Executions log.
+
+  TECHNICAL: Closes F-06 (CWE-200). 89 catch blocks across the three projects returned
+             `error: e.message` / `e.toString()`; GAS exceptions echo the offending
+             resource ID.
+
+  🚩 THE ENVELOPE IS DUAL-KEY, ON PURPOSE, FOR ONE RELEASE:
+       { ok:false, code:'NOT_FOUND', message:'…', ref:'7f3a91',
+         success:false, error:'…' }        <- legacy pair, delete next release
+     `ok`/`code`/`message` is the contract going forward; `success`/`error` are kept so an
+     unmigrated frontend call site keeps working instead of rendering "undefined" at a
+     user. The three GAS projects deploy independently, so backend/frontend version skew
+     is the normal case. Drop the legacy pair from all three in the same change.
+
+  ⚠️ The real exception goes to Logger.log ONLY — deliberately not to Risk_Audit. An audit
+     row per error is the log-bloat pattern this repo avoids elsewhere, and a sheet write
+     inside an error handler is a second failure waiting to happen.
+
+  Kept deliberately identical to the copies in Phase 2/pia_code.js and Admin/admin_code.js.
+*/
+const ERR = {
+  UNAUTHORIZED:     'UNAUTHORIZED',      // not signed in, or not on the allowed domain
+  FORBIDDEN:        'FORBIDDEN',         // signed in, but not permitted on this record
+  NOT_FOUND:        'NOT_FOUND',
+  VALIDATION:       'VALIDATION',        // the caller sent something malformed
+  CONFLICT:         'CONFLICT',          // someone else changed it first
+  ALREADY_ACTIONED: 'ALREADY_ACTIONED',  // already processed / no longer pending
+  BUSY:             'BUSY',              // could not acquire the lock in time
+  INTERNAL:         'INTERNAL'           // anything we did not anticipate
+};
+
+const ERR_MESSAGES = {
+  UNAUTHORIZED:     'You are not signed in with an authorized account.',
+  FORBIDDEN:        'You do not have access to this record.',
+  NOT_FOUND:        'That record could not be found.',
+  VALIDATION:       'Some of the information submitted was not valid.',
+  CONFLICT:         'Someone else updated this record. Please reload and try again.',
+  ALREADY_ACTIONED: 'This request has already been processed.',
+  BUSY:             'The system is busy right now. Please try again in a moment.',
+  INTERNAL:         'Something went wrong on our end.'
+};
+
+/*
+  Function: fail_
+  LAYMAN:    Builds the one standard "it did not work" reply used everywhere.
+  TECHNICAL: Unknown codes degrade to INTERNAL rather than emitting a code the frontend
+             cannot interpret.
+  PARAMS:    - code — one of ERR.*.   - message — optional wording override.
+  RETURNS:   { ok:false, code, message, success:false, error }.
+*/
+function fail_(code, message) {
+  const c = Object.prototype.hasOwnProperty.call(ERR_MESSAGES, code) ? code : ERR.INTERNAL;
+  const m = message || ERR_MESSAGES[c];
+  return { ok: false, code: c, message: m, success: false, error: m };
+}
+
+/*
+  Function: safeError_
+  LAYMAN:    Tawagin ito sa loob ng catch. Yung totoong error (pati stack) sa log; yung user,
+             malinis na mensahe + reference code.
+  TECHNICAL: Logs `[ref] CODE :: stack`, then returns fail_() with the ref appended to the
+             public message. NEVER put e.message/e.toString() into the returned object.
+  PARAMS:    - e — the caught exception.  - code — one of ERR.* (default INTERNAL).
+             - publicMessage — optional user-facing override.
+  RETURNS:   The dual-key failure envelope, plus a `ref` field.
+  EXAMPLE
+    } catch (e) { return safeError_(e, ERR.INTERNAL); }
+*/
+function safeError_(e, code, publicMessage) {
+  const ref = Utilities.getUuid().slice(0, 8);
+  const detail = (e && e.stack) ? e.stack : String(e);
+  Logger.log('[' + ref + '] ' + (code || ERR.INTERNAL) + ' :: ' + detail);
+  const out = fail_(code || ERR.INTERNAL, publicMessage);
+  out.ref = ref;
+  out.message = out.message + ' Reference: ' + ref;
+  out.error = out.message;   // legacy key mirrors the new one for the transition window
+  return out;
+}
+
+/*
   Function: apiGetSystemConfig
   LAYMAN:    Reads the admin-managed settings sheet (template download links, T&C page URL, etc.)
              and returns them to the frontend as one tidy key→value bag, with the corporate
@@ -213,10 +374,10 @@ function apiGetSystemConfig() {
     /* Step 1 — Open DB and locate the config sheet; absent sheet is non-fatal (empty config). */
     const ss = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName('System_Configuration');
-    if (!sheet) return { success: true, config: {} };
+    if (!sheet) return { ok: true, success: true, config: {} };
 
     /* Step 2 — Walk every non-header row, building key→value pairs (blank keys skipped). */
-    const data = sheet.getDataRange().getValues();
+    const data = readSheetValues_(sheet);
     const config = {};
     // Start from i=1 to skip headers
     for (let i = 1; i < data.length; i++) {
@@ -236,10 +397,10 @@ function apiGetSystemConfig() {
       config['DOMAIN'] = '';
     }
 
-    return { success: true, config: config };
+    return { ok: true, success: true, config: config };
   } catch (e) {
     console.error('apiGetSystemConfig error:', e.message);
-    return { success: false, error: e.message };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -347,6 +508,10 @@ function getStyledHtmlWrapper_(header, content) {
       <title>DCS Approval</title>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
       <style>
+        /* GENERATED from docs/design-tokens.css — this is the block an APPROVER sees on the
+           page they land on from an email link. It drifted to navy #1a3a5c and radius 6/12 for
+           months because nobody thinks of the backend as having a stylesheet. Edit the canonical
+           file, then paste into all 6 targets. */
         :root {
           --bg:      #ffffff;
           --bg2:     #f7f8fa;
@@ -356,15 +521,15 @@ function getStyledHtmlWrapper_(header, content) {
           --text3:   #9ca3af;
           --border:  #e5e7eb;
           --border2: #d1d5db;
-          --radius:  6px;
-          --radius-lg: 12px;
+          --radius:  4px;
+          --radius-lg: 9px;
           --font:    'DM Sans', system-ui, sans-serif;
-          --navy:    #1a3a5c;
-          --navy-mid: #1e4976;
-          --navy-bright: #185FA5;
-          --navy-glow: rgba(26, 58, 92, 0.12);
-          --navy-tint: #eef4fb;
-          --navy-border: rgba(26, 58, 92, 0.18);
+          --navy:    #1e3a5f;
+          --navy-mid: #2a5285;
+          --navy-bright: #3b76c4;
+          --navy-glow: rgba(30, 58, 95, 0.12);
+          --navy-tint: #f4f7fb;
+          --navy-border: rgba(30, 58, 95, 0.18);
           --danger:  #fef2f2;
           --danger-text: #991b1b;
           --warn:    #fffbeb;
@@ -712,16 +877,16 @@ function apiMarkDraftComplete_(sessionId) {
     const email = Session.getActiveUser().getEmail();
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName(DRAFTS_SHEET_NAME);
-    if (!sheet) return { success: false, error: 'Drafts sheet not found' };
+    if (!sheet) return { ok: false, success: false, error: 'Drafts sheet not found' };
 
     /* Step 3 — Delete the matching draft row(s) via the lock-free helper. */
     cleanupDraftsForUser_(sessionId, sheet, email);
     
     try { logDCSAuditTrail_(sessionId || 'all', 'DCS Draft Completed', false); } catch (e) {}
-    return { success: true };
+    return { ok: true, success: true };
   } catch (err) {
     console.error('apiMarkDraftComplete_ error:', err.message);
-    return { success: false, error: err.message };
+    return safeError_(err, ERR.INTERNAL);
   } finally {
     lock.releaseLock();
   }
@@ -791,7 +956,7 @@ function apiSaveDraft(sessionId, stateData) {
     const stateStr = JSON.stringify(stateData);
 
     if (stateStr.length > 50000) {
-      return { success: false, error: 'Draft size exceeds storage limit (50,000 characters). Cannot store large base64 files in StateJSON.' };
+      return { ok: false, success: false, error: 'Draft size exceeds storage limit (50,000 characters). Cannot store large base64 files in StateJSON.' };
     }
     
     /* Step 2 — Find an existing draft row owned by this user for this session (update target). */
@@ -835,7 +1000,7 @@ function apiSaveDraft(sessionId, stateData) {
 
     // Enforce limit only when creating a new draft
     if (existingRow < 0 && userDraftCount >= 5) {
-      return { success: false, error: 'Maximum limit of 5 drafts reached. Please delete or submit existing drafts.' };
+      return { ok: false, success: false, error: 'Maximum limit of 5 drafts reached. Please delete or submit existing drafts.' };
     }
     
     /* Step 4 — Upsert: overwrite the existing row's state/timestamps, or append a new UUID-keyed row. */
@@ -858,10 +1023,10 @@ function apiSaveDraft(sessionId, stateData) {
       ]);
     }
     
-    return { success: true, draftId: draftId };
+    return { ok: true, success: true, draftId: draftId };
   } catch (err) {
     console.error('apiSaveDraft error:', err.message);
-    return { success: false, error: err.message };
+    return safeError_(err, ERR.INTERNAL);
   } finally {
     lock.releaseLock();
   }
@@ -914,7 +1079,7 @@ function apiRestoreDraft(sessionId) {
     return { found: false, state: null };
   } catch (err) {
     console.error('apiRestoreDraft error:', err.message);
-    return { found: false, state: null, error: err.message };
+    return Object.assign({ found: false, state: null }, safeError_(err, ERR.INTERNAL));
   }
 }
 
@@ -978,7 +1143,7 @@ function apiListUserDrafts() {
     return { drafts: drafts };
   } catch (err) {
     console.error('apiListUserDrafts error:', err.message);
-    return { drafts: [], error: err.message };
+    return Object.assign({ drafts: [] }, safeError_(err, ERR.INTERNAL));
   }
 }
 
@@ -1027,7 +1192,7 @@ function apiLoadDraft_(draftId) {
     return { found: true, sessionId: sessionId, state: parsed };
   } catch (err) {
     console.error('apiLoadDraft_ error:', err.message);
-    return { found: false, sessionId: '', state: null, error: err.message };
+    return Object.assign({ found: false, sessionId: '', state: null }, safeError_(err, ERR.INTERNAL));
   }
 }
 
@@ -1044,7 +1209,7 @@ function apiLoadDraft_(draftId) {
 */
 function apiDeleteDraft(draftId) {
   try {
-    if (!draftId) return { success: false, error: 'No ID provided' };
+    if (!draftId) return { ok: false, success: false, error: 'No ID provided' };
 
     const email = Session.getActiveUser().getEmail();
     const ss = getCachedSpreadsheet_(getProp_('DB_ID'));
@@ -1063,7 +1228,7 @@ function apiDeleteDraft(draftId) {
       if (String(rowEmail).toLowerCase() === email.toLowerCase()) {
         sheet.deleteRow(row);
         try { logDCSAuditTrail_(draftId, 'DCS Draft Deleted', false); } catch (e) {}
-        return { success: true };
+        return { ok: true, success: true };
       }
     }
 
@@ -1080,14 +1245,14 @@ function apiDeleteDraft(draftId) {
       if (String(rowEmail).toLowerCase() === email.toLowerCase()) {
         sheet.deleteRow(row);
         try { logDCSAuditTrail_(draftId, 'DCS Draft Deleted', false); } catch (e) {}
-        return { success: true };
+        return { ok: true, success: true };
       }
     }
     
-    return { success: true };
+    return { ok: true, success: true };
   } catch (err) {
     console.error('apiDeleteDraft error:', err.message);
-    return { success: false, error: err.message };
+    return safeError_(err, ERR.INTERNAL);
   }
 }
 
@@ -1394,11 +1559,11 @@ function submitDCS(payload, sessionId = '') {
   // --- Re-validate identity on backend (Defense-in-Depth Layer 2) ---
   const email = Session.getActiveUser().getEmail();
   if (!isAuthorizedDomain_(email)) {
-    return { success: false, error: 'Unauthorized domain. Access denied.' };
+    return { ok: false, success: false, error: 'Unauthorized domain. Access denied.' };
   }
 
   if (!payload || !payload.formData) {
-    return { success: false, error: 'Invalid payload.' };
+    return { ok: false, success: false, error: 'Invalid payload.' };
   }
 
   const form = payload.formData;
@@ -1407,24 +1572,24 @@ function submitDCS(payload, sessionId = '') {
   const requiredFields = ['name', 'location', 'dept', 'access', 'ihelp', 'immHeadEmail', 'immHeadName', 'deptHeadName', 'deptHeadEmail'];
   for (const field of requiredFields) {
     if (!form[field] || String(form[field]).trim() === '') {
-      return { success: false, error: `Missing required field: ${field}` };
+      return { ok: false, success: false, error: `Missing required field: ${field}` };
     }
   }
   
   // HIGH: Email validation on backend
   if (!isValidEmail_(form.immHeadEmail)) {
-    return { success: false, error: 'Invalid Immediate Head email address.' };
+    return { ok: false, success: false, error: 'Invalid Immediate Head email address.' };
   }
   if (!isValidEmail_(form.deptHeadEmail)) {
-    return { success: false, error: 'Invalid Department Head email address.' };
+    return { ok: false, success: false, error: 'Invalid Department Head email address.' };
   }
   if (form.divHeadEmail && form.divHeadEmail.trim() && !isValidEmail_(form.divHeadEmail)) {
-    return { success: false, error: 'Invalid Division Head email address.' };
+    return { ok: false, success: false, error: 'Invalid Division Head email address.' };
   }
 
   // MEDIUM: iHelp reference must be numeric if provided
   if (form.ihelp && String(form.ihelp).trim() !== '' && !/^\d+$/.test(String(form.ihelp).trim())) {
-    return { success: false, error: 'iHelp Reference must contain only numbers.' };
+    return { ok: false, success: false, error: 'iHelp Reference must contain only numbers.' };
   }
 
   // HIGH: At least 1 Accountable Person/Entity is required (both name and email must be filled)
@@ -1443,7 +1608,7 @@ function submitDCS(payload, sessionId = '') {
     }
   }
   if (!hasValidAccountable) {
-    return { success: false, error: 'At least 1 Accountable Person/Entity is required (with both name and email).' };
+    return { ok: false, success: false, error: 'At least 1 Accountable Person/Entity is required (with both name and email).' };
   }
 
   /* Step 2 — Resolve DB/sheet and pick the ReqID (reuse the DCS-prefixed sessionId, else mint a new one). */
@@ -1476,7 +1641,7 @@ function submitDCS(payload, sessionId = '') {
         try { oldMetadata = JSON.parse(metadataVal || '{}'); } catch(e) {}
         isRevision = true;
       } else {
-        return { success: false, error: 'Unauthorized revision attempt.' };
+        return { ok: false, success: false, error: 'Unauthorized revision attempt.' };
       }
     }
   }
@@ -1523,9 +1688,15 @@ function submitDCS(payload, sessionId = '') {
     if (isRevision && Array.isArray(payload.supplementaryFiles) && payload.supplementaryFiles.some(function (f) { return f && f.base64; })) {
       try {
         const piaRec = getPIARecordByDCSId_(ss, reqId);
-        // Two independent sources so the gate fires even if one is empty at this stage:
-        // (1) the now-corrected Applications read, (2) the flags PIA mirrors into DCS metadata
-        // on return (oldMetadata is the current DCS row's parsed Metadata_JSON, used above).
+        // DELIBERATE dual-source read — reviewed 2026-08-11 and KEPT (not a leftover workaround).
+        // These two are authoritative at different points in the DCS↔PIA resubmit sequence:
+        //   (1) Applications.Approver_Flags — live until the PIA itself is resubmitted, at which
+        //       point submitApplication_ clears it;
+        //   (2) the copy PIA mirrors into this DCS row's Metadata_JSON on return (updateDCSStatus_).
+        // A DCS resubmit can legitimately land on either side of that clear, so checking one only
+        // would silently skip archiving a flagged supplementary document. It was originally added
+        // to paper over the getPIARecordByDCSId_ 'B:B' column bug; that root cause is fixed, but
+        // the fallback earns its place on timing grounds alone.
         const flags = (piaRec && piaRec.approverFlags) ? piaRec.approverFlags : (oldMetadata.approverFlags || {});
         const hasSuppFlag = Object.keys(flags).some(function (k) { return k.indexOf('DCS - Additional Supporting Document:') === 0; });
         if (hasSuppFlag) {
@@ -1545,7 +1716,7 @@ function submitDCS(payload, sessionId = '') {
       }
     }
   } catch (err) {
-    return { success: false, error: 'File upload failed: ' + err.message };
+    return { ok: false, success: false, error: 'File upload failed: ' + err.message };
   }
 
   // Store as JSON string so multiple file IDs fit in one cell
@@ -1563,33 +1734,33 @@ function submitDCS(payload, sessionId = '') {
 
       // OJT requires External access (defense-in-depth; the form also forces this).
       if (involvementType === 'OJT' && String(form.access || '').trim() !== 'External') {
-        return { success: false, error: 'OJT requests require External access type.' };
+        return { ok: false, success: false, error: 'OJT requests require External access type.' };
       }
 
       if (involvementType !== 'OJT') {
         // Validate required agency fields
         if (!ad.agencyName || String(ad.agencyName).trim() === '') {
-          return { success: false, error: 'Agency Name is required.' };
+          return { ok: false, success: false, error: 'Agency Name is required.' };
         }
         if (!ad.agencyPersonnel || String(ad.agencyPersonnel).trim() === '') {
-          return { success: false, error: 'Agency Personnel is required.' };
+          return { ok: false, success: false, error: 'Agency Personnel is required.' };
         }
         // Network Drive is required for agency requests (server-side parity with the form).
         if (!ad.networkDrive || String(ad.networkDrive).trim() === '') {
-          return { success: false, error: 'Network Drive to Access is required for agency requests.' };
+          return { ok: false, success: false, error: 'Network Drive to Access is required for agency requests.' };
         }
         // Replacement requests must identify the person being replaced (for DCOPS).
         if (String(ad.agencyRequestType || '') === 'Replacement') {
           if (!ad.replacementFullName || String(ad.replacementFullName).trim() === '') {
-            return { success: false, error: 'Full name of the person being replaced is required.' };
+            return { ok: false, success: false, error: 'Full name of the person being replaced is required.' };
           }
           if (!ad.replacementEmail || String(ad.replacementEmail).trim() === '' ||
               (String(ad.replacementEmail).trim() !== 'N/A' && !isValidEmail_(ad.replacementEmail))) {
-            return { success: false, error: 'A valid email of the person being replaced is required (or "N/A" if none).' };
+            return { ok: false, success: false, error: 'A valid email of the person being replaced is required (or "N/A" if none).' };
           }
         }
         if (ad.immHeadRecoveryEmail && !isValidEmail_(ad.immHeadRecoveryEmail)) {
-          return { success: false, error: 'Invalid Immediate Head Recovery Email.' };
+          return { ok: false, success: false, error: 'Invalid Immediate Head Recovery Email.' };
         }
       }
 
@@ -1625,14 +1796,14 @@ function submitDCS(payload, sessionId = '') {
       }
     }
   } catch (err) {
-    return { success: false, error: 'Agency file upload failed: ' + err.message };
+    return { ok: false, success: false, error: 'Agency file upload failed: ' + err.message };
   }
   const finalCombinedFileId = (payload.agencyData && uploadedIds.length > 0) ? JSON.stringify(uploadedIds) : combinedFileId;
 
   // Defense-in-depth: a submission must carry at least one supporting document (newly uploaded or
   // retained from a prior revision). The frontend enforces this; this is the server-side backstop.
   if (!uploadedIds || uploadedIds.length === 0) {
-    return { success: false, error: 'At least one supporting document is required.' };
+    return { ok: false, success: false, error: 'At least one supporting document is required.' };
   }
 
   // --- STEP 3: NOW ACQUIRE LOCK (only for critical DB write section) ---
@@ -1665,7 +1836,7 @@ function submitDCS(payload, sessionId = '') {
       } else {
         // Row exists but belongs to another user — abort
         lock.releaseLock();
-        return { success: false, error: 'Unauthorized revision attempt.' };
+        return { ok: false, success: false, error: 'Unauthorized revision attempt.' };
       }
     } else {
       // Row was deleted between pre-lock check and now — treat as new submission
@@ -1781,7 +1952,7 @@ function submitDCS(payload, sessionId = '') {
     }    
     
     result = {
-      success: true,
+      ok: true, success: true,
       reqId: reqId,
       sessionId: reqId,
       timestamp: now.toISOString(),
@@ -1791,7 +1962,7 @@ function submitDCS(payload, sessionId = '') {
   } catch (err) {
     console.error('submitDCS error:', err.message, err.stack);
     try { logDCSAuditTrail_(reqId || 'unknown', 'DCS Request Failed: ' + err.message, false); } catch (e) {}
-    return { success: false, error: err.message };
+    return safeError_(err, ERR.INTERNAL);
   } finally {
     lock.releaseLock();
   }
@@ -2214,6 +2385,38 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     return map;
   }
 
+  /*
+    Function: readRound_ (nested helper)
+    LAYMAN:    Anong round ba itong row na 'to? Kapag walang laman (lumang data bago pa may
+               RoundNumber), round 1 yan.
+    TECHNICAL: Reads RoundNumber by header name; blank/0/non-numeric normalize to 1 so rows
+               written before the append-only change still group correctly.
+  */
+  function readRound_(rowArr, colMap) {
+    if (!colMap || colMap['RoundNumber'] === undefined) return 1;
+    const raw = Number(rowArr[colMap['RoundNumber']]);
+    return (isFinite(raw) && raw >= 1) ? Math.floor(raw) : 1;
+  }
+
+  /*
+    Function: keepCurrentRound_ (nested helper)
+
+    LAYMAN (Tropang Ex):
+    Ang tracker sa DCS ay dapat magpakita ng ISANG malinis na hanay ng approvers — yung
+    kasalukuyang round. Ngayong hindi na binubura ng PIA ang lumang rounds, kung hindi natin ito
+    sasalain, magkakadoble-doble ang mga pangalan sa screen (isang set kada round).
+    Yung buong kasaysayan ay nasa `revisionHistory` na hiwalay.
+
+    TECHNICAL: Filters a collected array to its highest round. Mirrors PIA's split, where
+               appData.approvers is the current ladder and getUnifiedHistory_ carries all rounds.
+  */
+  function keepCurrentRound_(arr) {
+    if (!arr || arr.length === 0) return arr;
+    let maxRound = 1;
+    arr.forEach(function (a) { if (a.round > maxRound) maxRound = a.round; });
+    return arr.filter(function (a) { return a.round === maxRound; });
+  }
+
   /* Step 1 — Applications sheet: find the row linked to this DCS ReqID; capture PIA status/flags/comments and the PIA session ID. */
   // --- Process PIA record from Applications sheet (TextFinder) ---
   const appSheet = ss.getSheetByName('Applications');
@@ -2305,7 +2508,8 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
           decision: aDec,
           comment: aCom,
           date: aDate,
-          role: decisionCol !== undefined ? (aDec ? 'Approver' : 'Reviewer') : 'Reviewer'
+          role: decisionCol !== undefined ? (aDec ? 'Approver' : 'Reviewer') : 'Reviewer',
+          round: readRound_(d, awCols)
         });
       });
     }
@@ -2348,7 +2552,8 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
               status: statusCol !== undefined ? d[statusCol] : '',
               comment: commentCol !== undefined ? d[commentCol] : '',
               date: aDate,
-              role: 'InfoSec Member'
+              role: 'InfoSec Member',
+              round: readRound_(d, ismCols)
             });
           });
         }
@@ -2389,13 +2594,21 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
               status: statusCol !== undefined ? d[statusCol] : '',
               comment: commentCol !== undefined ? d[commentCol] : '',
               date: aDate,
-              role: 'Division Head'
+              role: 'Division Head',
+              round: readRound_(d, dhCols)
             });
           });
         }
       }
     }
   }
+
+  // Append-only workflow: PIA no longer deletes prior rounds' rows, so the collections above can
+  // contain one set per round. The trackers want the CURRENT ladder only; the full multi-round
+  // story is returned separately as `revisionHistory` (see getApprovalHistoryRounds_).
+  batch.approvals = keepCurrentRound_(batch.approvals);
+  batch.ismApprovals = keepCurrentRound_(batch.ismApprovals);
+  batch.divHeadApprovals = keepCurrentRound_(batch.divHeadApprovals);
 
   return batch;
 }
@@ -2513,166 +2726,8 @@ function getPIARecordByDCSId_(ss, dcsReqId) {
   return null;
 }
 
-/*
-  Function: getApproversList_
-  LAYMAN:    Builds the list of approvers for a request — seeded from the form's Immediate Head and
-             Department Head, then enriched with any actual decisions/comments recorded in the workflow.
-  TECHNICAL: Starts with the Immediate Head and Department Head from metadata (decision 'Pending'),
-             then scans Approval_Workflow (matched by reqId or piaSessionId via header-resolved columns).
-             Existing approvers are updated in place by email match; unknown decision-makers are appended
-             as 'Reviewer'. Loads the workflow via getDataRange (full scan). Read-only.
-  PARAMS:
-    - ss           — the database Spreadsheet object.
-    - reqId        — the DCS Request ID.
-    - piaSessionId — optional PIA session ID to also match on.
-    - metadata     — DCS metadata containing the Immediate Head and Department Head name/email.
-  RETURNS:   Array of { name, email, decision, comment, date, role } approver objects.
-*/
-function getApproversList_(ss, reqId, piaSessionId, metadata) {
-  const approvers = [];
-  if (metadata.immHeadName) approvers.push({ name: metadata.immHeadName, email: metadata.immHeadEmail, decision: 'Pending', comment: '', role: 'Immediate Head', date: '' });
-  if (metadata.deptHeadName) approvers.push({ name: metadata.deptHeadName, email: metadata.deptHeadEmail, decision: 'Pending', comment: '', role: 'Department Head', date: '' });
 
-  const awSheet = ss.getSheetByName('Approval_Workflow');
-  if (awSheet) {
-    const awData = awSheet.getDataRange().getValues();
-    if (awData.length > 0) {
-      const awHeaders = awData[0];
-      const sessionCol = awHeaders.indexOf('SessionID');
-      const reqCol = awHeaders.indexOf('ReqID');
-      const emailCol = awHeaders.indexOf('ApproverEmail');
-      const nameCol = awHeaders.indexOf('ApproverName');
-      const decisionCol = awHeaders.indexOf('Decision');
-      const commentCol = awHeaders.indexOf('Comments');
-      const dateCol = awHeaders.indexOf('DecisionDate');
 
-      for (let i = 1; i < awData.length; i++) {
-        const rSession = sessionCol !== -1 ? String(awData[i][sessionCol]) : '';
-        const rReq = reqCol !== -1 ? String(awData[i][reqCol]) : '';
-        
-        if (rSession === String(reqId) || rReq === String(reqId) || (piaSessionId && rSession === String(piaSessionId))) {
-          const aEmail = emailCol !== -1 ? String(awData[i][emailCol]).toLowerCase() : '';
-          const aDec = decisionCol !== -1 ? awData[i][decisionCol] : '';
-          const aCom = commentCol !== -1 ? awData[i][commentCol] : '';
-          const aDate = dateCol !== -1 && awData[i][dateCol] ? String(awData[i][dateCol]) : '';
-          
-          const match = approvers.find(a => a.email && a.email.toLowerCase() === aEmail);
-          if (match) {
-            if (aDec) match.decision = aDec;
-            if (aCom) match.comment = aCom;
-            if (aDate) match.date = aDate;
-          } else if (aEmail) {
-            approvers.push({
-              name: nameCol !== -1 ? awData[i][nameCol] : aEmail,
-              email: aEmail,
-              decision: aDec,
-              comment: aCom,
-              date: aDate,
-              role: 'Reviewer'
-            });
-          }
-        }
-      }
-    }
-  }
-  return approvers;
-}
-
-/*
-  Function: getISMApproversList_
-  LAYMAN:    Builds the InfoSec (ISM) reviewers list for a request's Phase 2 timeline.
-  TECHNICAL: Returns [] when piaSessionId is falsy. Scans ISM_Approval_Workflow (full getDataRange),
-             matching rows by SessionID via header-resolved columns. Read-only.
-  PARAMS:
-    - ss           — the database Spreadsheet object.
-    - piaSessionId — the PIA session ID to match.
-  RETURNS:   Array of { name, email, decision, status, comment, date, role:'InfoSec Member' } objects.
-*/
-function getISMApproversList_(ss, piaSessionId) {
-  const approvers = [];
-  if (!piaSessionId) return approvers;
-  
-  const sheet = ss.getSheetByName('ISM_Approval_Workflow');
-  if (sheet) {
-    const data = sheet.getDataRange().getValues();
-    if (data.length > 0) {
-      const headers = data[0];
-      const sessionCol = headers.indexOf('SessionID');
-      const nameCol = headers.indexOf('ISM_Member_Name');
-      const emailCol = headers.indexOf('ISM_Member_Email');
-      const decisionCol = headers.indexOf('Decision');
-      const statusCol = headers.indexOf('Status');
-      const commentCol = headers.indexOf('Comments');
-      const dateCol = headers.indexOf('DecisionDate');
-
-      if (sessionCol !== -1) {
-        for (let i = 1; i < data.length; i++) {
-          if (String(data[i][sessionCol]) === String(piaSessionId)) {
-            const aDate = dateCol !== -1 && data[i][dateCol] ? String(data[i][dateCol]) : '';
-            approvers.push({
-              name: nameCol !== -1 ? data[i][nameCol] : '',
-              email: emailCol !== -1 ? data[i][emailCol] : '',
-              decision: decisionCol !== -1 ? data[i][decisionCol] : '',
-              status: statusCol !== -1 ? data[i][statusCol] : '',
-              comment: commentCol !== -1 ? data[i][commentCol] : '',
-              date: aDate,
-              role: 'InfoSec Member'
-            });
-          }
-        }
-      }
-    }
-  }
-  return approvers;
-}
-
-/*
-  Function: getDivHeadApproversList_
-  LAYMAN:    Builds the Division Head reviewers list for a request's Phase 2 timeline.
-  TECHNICAL: Returns [] when piaSessionId is falsy. Scans DivisionHead_Approval_Workflow (full
-             getDataRange), matching rows by SessionID via header-resolved columns. The DivHead_Email
-             is used for both name and email fields. Read-only.
-  PARAMS:
-    - ss           — the database Spreadsheet object.
-    - piaSessionId — the PIA session ID to match.
-  RETURNS:   Array of { name, email, decision, status, comment, date, role:'Division Head' } objects.
-*/
-function getDivHeadApproversList_(ss, piaSessionId) {
-  const approvers = [];
-  if (!piaSessionId) return approvers;
-  
-  const sheet = ss.getSheetByName('DivisionHead_Approval_Workflow');
-  if (sheet) {
-    const data = sheet.getDataRange().getValues();
-    if (data.length > 0) {
-      const headers = data[0];
-      const sessionCol = headers.indexOf('SessionID');
-      const emailCol = headers.indexOf('DivHead_Email');
-      const decisionCol = headers.indexOf('Decision');
-      const statusCol = headers.indexOf('Status');
-      const commentCol = headers.indexOf('Comments');
-      const dateCol = headers.indexOf('DecisionDate');
-
-      if (sessionCol !== -1) {
-        for (let i = 1; i < data.length; i++) {
-          if (String(data[i][sessionCol]) === String(piaSessionId)) {
-            const aDate = dateCol !== -1 && data[i][dateCol] ? String(data[i][dateCol]) : '';
-            approvers.push({
-              name: emailCol !== -1 ? data[i][emailCol] : '',
-              email: emailCol !== -1 ? data[i][emailCol] : '',
-              decision: decisionCol !== -1 ? data[i][decisionCol] : '',
-              status: statusCol !== -1 ? data[i][statusCol] : '',
-              comment: commentCol !== -1 ? data[i][commentCol] : '',
-              date: aDate,
-              role: 'Division Head'
-            });
-          }
-        }
-      }
-    }
-  }
-  return approvers;
-}
 
 /*
   Function: apiGetRequestData
@@ -2691,17 +2746,51 @@ function getDivHeadApproversList_(ss, piaSessionId) {
                divHeadApprovers } on success; { found:false } if missing; { found:false, error } on error.
 */
 /*
-  Function: getRevisionHistoryRows_
+  Function: getHeaderIndexMap_
+  LAYMAN:    Binabasa yung unang row (yung header) ng isang sheet at ginagawang mapa:
+             pangalan-ng-column → posisyon. Kaya pwede tayong maghanap ng 'RoundNumber' sa
+             pangalan nito, hindi sa numero ng column.
+  TECHNICAL: Header-name → 0-based column index. Resolving by NAME rather than by a hardcoded
+             index is what makes this file survive PIA appending columns to its own sheets — the
+             exact cross-app coupling that the retired mirrored column map used to create.
+  PARAMS:    - sheet — the Sheet to read headers from.
+  RETURNS:   Object mapping trimmed header text to 0-based index. {} for an empty sheet.
+*/
+function getHeaderIndexMap_(sheet) {
+  const map = {};
+  try {
+    if (!sheet || sheet.getLastColumn() < 1) return map;
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    headers.forEach(function (h, i) { if (h) map[String(h).trim()] = i; });
+  } catch (e) { /* unreadable sheet → empty map, caller degrades to [] */ }
+  return map;
+}
+
+/*
+  Function: getApprovalHistoryRounds_
+
   LAYMAN (Tropang Ex):
-  Binabasa nito yung "Revision_History" logbook tab na sinusulatan ng PIA app tuwing may
-  return-and-resubmit, para maipakita sa requestor ang KUMPLETONG kwento ng approvals (lahat ng
-  rounds), hindi lang yung kasalukuyang round na nasa workflow sheets.
+  Kinukuha nito ang KUMPLETONG kwento ng approvals ng isang request — lahat ng round, mula unang
+  submit hanggang sa huling desisyon — para maipakita sa requestor.
+
+  Dati, may hiwalay na "Revision_History" tab na photocopy: bago burahin ng PIA ang mga lumang
+  approval rows tuwing may resubmit, kinokopya muna doon. Ngayon, hindi na binubura ang mga row,
+  kaya diretso na lang natin binabasa yung totoong workflow sheets. Wala nang photocopy.
 
   TECHNICAL:
-  Pure additive READ of the PIA-owned 'Revision_History' sheet in the same DB_ID spreadsheet.
-  Keyed by the PIA session id (NOT the DCS reqId). Local column map mirrors pia_code.js's
-  REVISION_HISTORY_COLS — pia_code.js owns the schema; keep in sync if it ever changes.
-  Null-guarded + try/catch: returns [] when the tab is missing, empty, or unreadable.
+  Reads the three PIA-owned workflow sheets (Approval_Workflow, ISM_Approval_Workflow,
+  DivisionHead_Approval_Workflow) and groups every row by its RoundNumber. Replaces
+  getRevisionHistoryRows_, which read the now-retired Revision_History tab.
+
+  🚩 Columns are resolved by HEADER NAME via getHeaderIndexMap_, deliberately. The previous version
+  carried a hardcoded index map mirroring pia_code.js's REVISION_HISTORY_COLS, which meant PIA could
+  not add a column without silently breaking this file. Name-based lookup removes that coupling.
+
+  Rows missing RoundNumber (written before the append-only change) normalize to round 1. Fully
+  guarded: returns [] when a tab is missing, empty, or unreadable.
+
+  RETURN SHAPE IS FROZEN — apiGetRequestData exposes it as `revisionHistory` and the frontend
+  renders it directly. Keep the field names as-is.
 
   PARAMS:
     - ss           — the database Spreadsheet object.
@@ -2709,42 +2798,81 @@ function getDivHeadApproversList_(ss, piaSessionId) {
   RETURNS: Array of { round, decisions:[{stage, approverName, approverEmail, role, decision,
            status, comments, flaggedFields, routing, decisionDate}] }, rounds ascending.
 */
-function getRevisionHistoryRows_(ss, piaSessionId) {
+function getApprovalHistoryRounds_(ss, piaSessionId) {
   try {
     const sid = String(piaSessionId || '').trim();
     if (!sid) return [];
-    const sheet = ss.getSheetByName('Revision_History');
-    if (!sheet || sheet.getLastRow() < 2) return [];
-    // Mirrors pia_code.js REVISION_HISTORY_COLS (1-based) — pia_code.js owns this schema.
-    const COL = { SESSION_ID: 2, ROUND_NUMBER: 3, STAGE: 4, APPROVER_NAME: 5, APPROVER_EMAIL: 6,
-                  ROLE: 7, DECISION: 8, STATUS: 9, COMMENTS: 10, FLAGGED_FIELDS: 11, ROUTING: 12,
-                  DECISION_DATE: 13 };
-    const data = sheet.getDataRange().getValues();
+
     const byRound = {};
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      if (String(row[COL.SESSION_ID - 1] || '').trim() !== sid) continue;
-      const round = Number(row[COL.ROUND_NUMBER - 1] || 0);
-      if (!byRound[round]) byRound[round] = { round: round, decisions: [] };
-      let flags = {};
-      try { flags = JSON.parse(row[COL.FLAGGED_FIELDS - 1] || '{}'); } catch (e) { flags = {}; }
-      byRound[round].decisions.push({
-        stage: row[COL.STAGE - 1] || '',
-        approverName: row[COL.APPROVER_NAME - 1] || '',
-        approverEmail: row[COL.APPROVER_EMAIL - 1] || '',
-        role: row[COL.ROLE - 1] || '',
-        decision: row[COL.DECISION - 1] || '',
-        status: row[COL.STATUS - 1] || '',
-        comments: row[COL.COMMENTS - 1] || '',
-        flaggedFields: flags,
-        routing: row[COL.ROUTING - 1] || '',
-        decisionDate: row[COL.DECISION_DATE - 1] ? String(row[COL.DECISION_DATE - 1]) : ''
-      });
-    }
+
+    // stage, sheet name, and the header names this stage uses for name/email/role/routing.
+    const defs = [
+      {
+        stage: 'head', sheetName: 'Approval_Workflow',
+        nameHdr: 'ApproverName', emailHdr: 'ApproverEmail', routingHdr: null,
+        roleFn: function (row, cols) {
+          const s = Number(row[cols['CurrentStep']] || 0);
+          return s === 1 ? 'Immediate Head' : s === 2 ? 'Department Head' : 'Head';
+        }
+      },
+      {
+        stage: 'ism', sheetName: 'ISM_Approval_Workflow',
+        nameHdr: 'ISM_Member_Name', emailHdr: 'ISM_Member_Email', routingHdr: 'Routing_Destination',
+        roleFn: function () { return 'InfoSec Reviewer'; }
+      },
+      {
+        stage: 'divhead', sheetName: 'DivisionHead_Approval_Workflow',
+        nameHdr: null, emailHdr: 'DivHead_Email', routingHdr: null,
+        roleFn: function () { return 'Division Head'; }
+      }
+    ];
+
+    defs.forEach(function (def) {
+      try {
+        const sheet = ss.getSheetByName(def.sheetName);
+        if (!sheet || sheet.getLastRow() < 2) return;
+        const cols = getHeaderIndexMap_(sheet);
+        if (cols['SessionID'] === undefined) return;
+
+        const data = readSheetValues_(sheet);
+        for (let i = 1; i < data.length; i++) {
+          const row = data[i];
+          if (String(row[cols['SessionID']] || '').trim() !== sid) continue;
+
+          // Blank RoundNumber = pre-append-only row = round 1.
+          const rawRound = Number(row[cols['RoundNumber']]);
+          const round = (isFinite(rawRound) && rawRound >= 1) ? Math.floor(rawRound) : 1;
+          if (!byRound[round]) byRound[round] = { round: round, decisions: [] };
+
+          let flags = {};
+          try {
+            const rawFlags = (cols['FlaggedFields'] !== undefined) ? row[cols['FlaggedFields']] : '';
+            if (rawFlags) flags = JSON.parse(rawFlags) || {};
+          } catch (e) { flags = {}; }
+
+          const decisionDate = row[cols['DecisionDate']];
+          byRound[round].decisions.push({
+            stage: def.stage,
+            approverName: def.nameHdr ? (row[cols[def.nameHdr]] || '') : '',
+            approverEmail: row[cols[def.emailHdr]] || '',
+            role: def.roleFn(row, cols),
+            decision: row[cols['Decision']] || '',
+            status: row[cols['Status']] || '',
+            comments: row[cols['Comments']] || '',
+            flaggedFields: flags,
+            routing: def.routingHdr ? (row[cols[def.routingHdr]] || '') : '',
+            decisionDate: decisionDate ? String(decisionDate) : ''
+          });
+        }
+      } catch (e) {
+        Logger.log('getApprovalHistoryRounds_ (' + def.sheetName + ') failed: ' + e.message);
+      }
+    });
+
     return Object.keys(byRound).map(function (k) { return byRound[k]; })
       .sort(function (a, b) { return a.round - b.round; });
   } catch (e) {
-    Logger.log('getRevisionHistoryRows_ failed (non-blocking): ' + e.message);
+    Logger.log('getApprovalHistoryRounds_ failed (non-blocking): ' + e.message);
     return [];
   }
 }
@@ -2836,14 +2964,16 @@ function apiGetRequestData(reqId) {
       approvers: batch.approvals,
       ismApprovers: batch.ismApprovals,
       divHeadApprovers: batch.divHeadApprovals,
-      // Round-4 (additive): prior rounds from PIA's Revision_History logbook, keyed by the PIA
-      // session id. [] for requests that never reached PIA or were never returned.
-      revisionHistory: getRevisionHistoryRows_(ss, piaRecord ? piaRecord.piaSessionId : '')
+      // EVERY round's decisions, grouped, read straight from the three PIA workflow sheets now
+      // that nothing is deleted on resubmit. (Previously this came from the retired
+      // Revision_History photocopy tab.) The `approvers`/`ismApprovers`/`divHeadApprovers` fields
+      // above carry the CURRENT round only, for the trackers. [] for requests that never reached PIA.
+      revisionHistory: getApprovalHistoryRounds_(ss, piaRecord ? piaRecord.piaSessionId : '')
     };
     
   } catch (err) {
     console.error('apiGetRequestData error:', err.message);
-    return { found: false, error: err.message };
+    return Object.assign({ found: false }, safeError_(err, ERR.INTERNAL));
   }
 }
 
@@ -2872,14 +3002,14 @@ function apiListUserRequests() {
       .findAll();
 
     if (emailFinder.length === 0) {
-      return { success: true, requests: [] };
+      return { ok: true, success: true, requests: [] };
     }
 
     // ✅ Build PIA map with targeted column search (no full sheet load)
     const piaMap = {};
     const appSheet = ss.getSheetByName('Applications');
     if (appSheet) {
-      const appData = appSheet.getDataRange().getValues();
+      const appData = readSheetValues_(appSheet);
       if (appData.length > 0) {
         const headers = appData[0];
         const reqCol = headers.indexOf('Linked_ReqID');
@@ -2927,10 +3057,10 @@ function apiListUserRequests() {
       requests.push(request);
     });
 
-    return { success: true, requests: requests.reverse() }; // Newest first
+    return { ok: true, success: true, requests: requests.reverse() }; // Newest first
   } catch (err) {
     console.error('apiListUserRequests error:', err.message);
-    return { success: false, error: err.message };
+    return safeError_(err, ERR.INTERNAL);
   }
 }
 
@@ -2952,8 +3082,8 @@ function apiGetReturnedApplication(reqId) {
   const userEmail = Session.getActiveUser().getEmail();
   const result = apiGetRequestData(reqId);
   
-  if (!result.found) return { success: false, error: 'Application not found.' };
-  if (result.email.toLowerCase() !== userEmail.toLowerCase()) return { success: false, error: 'Unauthorized.' };
+  if (!result.found) return { ok: false, success: false, error: 'Application not found.' };
+  if (result.email.toLowerCase() !== userEmail.toLowerCase()) return { ok: false, success: false, error: 'Unauthorized.' };
   
   const dcsStatus = String(result.status || '').toUpperCase();
   const piaStatusLower = String(result.piaStatus || '').toLowerCase();
@@ -2985,10 +3115,10 @@ function apiGetReturnedApplication(reqId) {
 
   // Check if it's eligible for editing
       if (!canEditDcs) {
-    return { success: false, error: 'This application is not in a returnable state for editing.' };
+    return { ok: false, success: false, error: 'This application is not in a returnable state for editing.' };
   }
   
-  return { success: true, application: result };
+  return { ok: true, success: true, application: result };
 }
 
 // ============================================================
@@ -3023,7 +3153,7 @@ function apiGetStatus_() {
 
   } catch (err) {
     console.error('apiGetStatus_ error:', err.message);
-    return { found: false, error: err.message };
+    return Object.assign({ found: false }, safeError_(err, ERR.INTERNAL));
   }
 }
 
@@ -3131,14 +3261,13 @@ function getGatewayRecord_(userEmail) {
 
   } catch (err) {
     console.error('getGatewayRecord_ error:', err.message);
-    return {
+    return Object.assign({
       gated : true,
       reason: 'SYSTEM_ERROR',
       reqId : '',
       fileId: '',
-      status: '',
-      error : err.message
-    };
+      status: ''
+    }, safeError_(err, ERR.INTERNAL));
   }
 }
 
@@ -3288,7 +3417,7 @@ function collectRequestFileIds_(values) {
 function apiDownloadDcsFile(reqId, fileId) {
   const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024; // 8 MB decoded; ~10.7 MB once base64-encoded
   // One opaque message for every authorization failure — never reveal which gate rejected.
-  const DENIED = { success: false, error: 'Document not available.' };
+  const DENIED = { ok: false, success: false, error: 'Document not available.' };
 
   try {
     /* Step 1 — Domain + argument gate. */
@@ -3327,7 +3456,7 @@ function apiDownloadDcsFile(reqId, fileId) {
     const bytes = blob.getBytes();
     if (bytes.length > MAX_DOWNLOAD_BYTES) {
       return {
-        success: false,
+        ok: false, success: false,
         error: 'This document is too large to open here (' +
                (bytes.length / 1024 / 1024).toFixed(1) +
                ' MB). Please request a copy from the ISM Department.'
@@ -3335,7 +3464,7 @@ function apiDownloadDcsFile(reqId, fileId) {
     }
 
     return {
-      success: true,
+      ok: true, success: true,
       data: {
         base64  : Utilities.base64Encode(bytes),
         mimeType: blob.getContentType() || 'application/octet-stream',
@@ -3346,7 +3475,7 @@ function apiDownloadDcsFile(reqId, fileId) {
   } catch (e) {
     // Generic to the caller, specific to the log — Drive errors echo resource IDs.
     console.error('apiDownloadDcsFile failed for ' + reqId + '/' + fileId + ': ' + e.message);
-    return { success: false, error: 'Could not open this document. Please try again or contact ISM.' };
+    return { ok: false, success: false, error: 'Could not open this document. Please try again or contact ISM.' };
   }
 }
 
@@ -3370,7 +3499,7 @@ function apiDownloadDcsFile(reqId, fileId) {
 function setupDataCollectionSheet() {
   // SECURITY: editor-run only. Cannot take a trailing underscore (must be Run-able from the
   // editor UI), so it is gated on owner-or-trigger context instead.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
   let sheet   = ss.getSheetByName(DC_SHEET_NAME);
 
@@ -3444,13 +3573,13 @@ function setupDataCollectionSheet() {
 function adminSetStatus(reqId, newStatus) {
   // SECURITY: editor-run status override. Public by necessity (editor Run), so gate on
   // owner-or-trigger context — otherwise any domain user could flip any request's status.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   const allowed = [STATUS_PENDING, STATUS_READY_FOR_PIA, STATUS_REJECTED];
   if (!allowed.includes(newStatus)) {
     throw new Error('Invalid status. Allowed: ' + allowed.join(', '));
   }
 
-  const ss     = SpreadsheetApp.openById(getProp_('DB_ID'));
+  const ss     = getCachedSpreadsheet_(getProp_('DB_ID'));
   const sheet  = ss.getSheetByName(DC_SHEET_NAME);
   const finder = sheet.getRange('B:B')
     .createTextFinder(reqId)
@@ -3481,7 +3610,7 @@ function adminSetStatus(reqId, newStatus) {
 function purgeExpiredDrafts() {
   // SECURITY: daily trigger handler. A trigger handler cannot take a trailing underscore, so it is
   // gated on owner-or-trigger context to stop any domain user invoking a mass row delete.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
   const sheet = ss.getSheetByName(DRAFTS_SHEET_NAME);
   if (!sheet) return;
@@ -3520,7 +3649,7 @@ function purgeExpiredDrafts() {
   RETURNS:   undefined (side effect: creates a test file; triggers OAuth consent; logs).
 */
 function forceAuthorize() {
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   SpreadsheetApp.getActiveSpreadsheet();
   const folderId = getProp_('ADMIN_FOLDER_ID');
   const folder = DriveApp.getFolderById(folderId);
@@ -3564,7 +3693,7 @@ function forceAuthorize() {
     backfillPrivateDcsFiles(false)   -> { dryRun:false, scanned:142, changed:142, failed:0 }
 */
 function backfillPrivateDcsFiles(dryRun) {
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
 
   // Fail safe: anything that is not exactly `false` is treated as a dry run.
   const isDry = (dryRun !== false);
@@ -3603,10 +3732,11 @@ function backfillPrivateDcsFiles(dryRun) {
     }
   } catch (e) {
     Logger.log('❌ backfillPrivateDcsFiles aborted: ' + e.message);
-    return { success: false, error: e.message, dryRun: isDry, scanned: scanned, changed: changed, failed: failed };
+    return Object.assign({ dryRun: isDry, scanned: scanned, changed: changed, failed: failed },
+                         safeError_(e, ERR.INTERNAL));
   }
 
   Logger.log('🔒 Done. scanned=' + scanned + ' changed=' + changed + ' failed=' + failed +
              (isDry ? '  → re-run as backfillPrivateDcsFiles(false) to apply.' : ''));
-  return { success: true, dryRun: isDry, scanned: scanned, changed: changed, failed: failed };
+  return { ok: true, success: true, dryRun: isDry, scanned: scanned, changed: changed, failed: failed };
 }

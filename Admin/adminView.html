@@ -131,6 +131,10 @@
     /* ═══════════════════════════════════════════
        DESIGN TOKENS
     ═══════════════════════════════════════════ */
+    /* Lines 1-31 of this block are GENERATED from docs/design-tokens.css — edit there,
+       then paste into all 6 targets. The other five: Phase 1/index.html,
+       Phase 2/pia_index.html, and the getStyledHtmlWrapper_ block in each of the three
+       backends. Everything BELOW the Motion group is Admin-only and stays here. */
     :root {
       /* ════════════════════════════════════════
          Pass-through system tokens
@@ -253,13 +257,15 @@
       --color-purple:       #7c3aed;
       --color-purple-lt:    #f5f3ff;
 
-      /* Layout */
+      /* Layout — Admin-only metrics. NOTE: --radius / --radius-lg used to be re-declared
+         here as 10px / 14px, silently overriding the shared tokens above and leaving Admin
+         visibly rounder than DCS and PIA. Removed 2026-08-11; the canonical 4px / 9px from
+         docs/design-tokens.css now stands. --radius-sm and --radius-xl are genuinely
+         Admin-only steps and stay. */
       --sidebar-w:   230px;
       --header-h:    56px;
-      --radius-sm:   6px;
-      --radius:      10px;
-      --radius-lg:   14px;
-      --radius-xl:   18px;
+      --radius-sm:   3px;
+      --radius-xl:   14px;
 
       /* Shadows */
       --shadow-xs: 0 1px 2px rgba(0,0,0,.04);
@@ -269,9 +275,9 @@
       --shadow-lg: 0 16px 32px rgba(0,0,0,.1),  0 4px 8px rgba(0,0,0,.05);
       --shadow-xl: 0 24px 48px rgba(0,0,0,.14), 0 8px 16px rgba(0,0,0,.06);
 
-      /* Font */
-      --font: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      --font-mono: 'DM Mono', 'Fira Code', monospace;
+      /* Font — the shared --font / --font-mono above already carry the DM Sans / DM Mono
+         stacks. The extra -apple-system / Fira Code fallbacks that used to be re-declared
+         here were the only difference and are not worth a divergent token. */
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2125,6 +2131,89 @@
               <div style="font-size:12px;color:#6b7280;line-height:1.5;"><strong>TechServe emails are managed per-site in the InfoSec_Email_Config sheet</strong> — one row per site/email (Role = TechServe, Site = AGT/GDP/EGP/TWS). They are not edited here.</div>
             </div>
           </div>
+
+          <!-- Delegation / Out-of-office. ISM-managed only: an approver cannot appoint their
+               own stand-in. The routing half lives in Phase 2/pia_code.js (resolveDelegate_). -->
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <svg><use href="#ic-users"/></svg> Approver Delegation
+            </div>
+            <div class="settings-card-body">
+              <div style="font-size:12px;color:#6b7280;line-height:1.6;margin-bottom:14px;">
+                When an approver is on leave, their requests stop moving. Add a delegation and the
+                review emails, the reminder nudges and the approval link all go to the delegate
+                instead. The decision is still recorded against the original approver, with a note
+                showing who actually acted.
+                <div style="margin-top:6px;">
+                  <strong>Not retroactive.</strong> Emails already sent keep pointing at the original
+                  approver, because a review link is signed when it is sent. For a request already
+                  sitting in someone's inbox, use Email Routing → Resend after adding the delegation.
+                </div>
+              </div>
+              <div id="delegationList" style="margin-bottom:12px;font-size:12.5px;">
+                <span style="color:var(--color-text-3);">Loading…</span>
+              </div>
+              <div class="divider"></div>
+              <div class="form-group row-group">
+                <div class="col"><label for="del-from">Approver going away</label><input type="email" id="del-from" placeholder="jane@..."></div>
+                <div class="col"><label for="del-to">Acts on their behalf</label><input type="email" id="del-to" placeholder="carlo@..."></div>
+              </div>
+              <div class="form-group row-group">
+                <div class="col"><label for="del-start">Start (optional)</label><input type="date" id="del-start"></div>
+                <div class="col"><label for="del-end">End (optional)</label><input type="date" id="del-end"></div>
+              </div>
+              <div class="form-group">
+                <label for="del-reason">Reason (shown to the delegate)</label>
+                <input type="text" id="del-reason" maxlength="200" placeholder="Annual leave">
+              </div>
+              <button class="btn btn-outline btn-sm" onclick="saveDelegation()" id="btnAddDelegation">Add delegation</button>
+            </div>
+          </div>
+
+          <!-- Data Retention — ships OFF. See the block comment above runRetentionSweep_
+               in admin_code.js before enabling anything here. -->
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <svg><use href="#ic-db"/></svg> Data Retention
+            </div>
+            <div class="settings-card-body">
+              <div style="font-size:12px;color:#6b7280;line-height:1.6;margin-bottom:14px;">
+                Nothing in the system currently deletes personal data. This sweep removes
+                <strong>closed</strong> requests older than the retention period — the request row,
+                the PIA answers, every approval decision, the uploaded documents in Drive, and the
+                matching audit and email-queue rows. Requests still awaiting an approver are never
+                touched, at any age.
+                <div style="margin-top:8px;padding:9px 11px;background:var(--color-danger-lt,#fef2f2);border:1px solid var(--color-danger);border-radius:var(--radius);color:var(--color-danger);">
+                  <strong>A purge cannot be undone.</strong> Run the preview, review it with ISM,
+                  and only then turn off dry-run mode. Drive files go to the trash (recoverable for
+                  30 days); sheet rows do not.
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="cfg-RETENTION_MONTHS">Retention period (months)</label>
+                <input type="number" id="cfg-RETENTION_MONTHS" min="1" max="120" placeholder="24">
+              </div>
+              <div class="form-group">
+                <label for="cfg-RETENTION_ENABLED">Retention sweep</label>
+                <select id="cfg-RETENTION_ENABLED">
+                  <option value="FALSE">Disabled (default)</option>
+                  <option value="TRUE">Enabled</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="cfg-RETENTION_DRY_RUN">Mode</label>
+                <select id="cfg-RETENTION_DRY_RUN">
+                  <option value="TRUE">Dry run — report only, delete nothing (default)</option>
+                  <option value="FALSE">Live — permanently delete eligible records</option>
+                </select>
+              </div>
+              <div class="divider"></div>
+              <button class="btn btn-outline btn-sm" onclick="previewRetention()" id="btnRetentionPreview">
+                Preview what would be deleted
+              </button>
+              <div id="retentionPreview" style="margin-top:12px;font-size:12.5px;"></div>
+            </div>
+          </div>
         </div>
         <div class="settings-actions">
           <button class="btn btn-outline" onclick="requestEditSettings()" id="btnEditSettings">
@@ -2705,28 +2794,28 @@ function refreshData() {
     so the error message tells the admin what is actually wrong.
   TECHNICAL: If result is null, fans out nested google.script.run calls
     (ping -> getAdminDataDebug -> debugSheets) to assemble a diagnostic message,
-    then routes to onDataError. On result.success, sets allRows, clears selection,
+    then routes to onDataError. On result.ok, sets allRows, clears selection,
     and calls populateFilterDropdowns() + render().
   PARAMS:
     - result — {success, data:[], error?} from getAdminData(), or null.
   RETURNS: undefined (renders or surfaces an error).
   STEPS
     Step 1 — Null guard: run ping/debug/sheet diagnostics, then onDataError.
-    Step 2 — Error guard: surface result.error via onDataError.
+    Step 2 — Error guard: surface result.message via onDataError.
     Step 3 — Happy path: store rows, reset selection, populate filters, render.
 */
 function onDataLoaded(result) {
   if (!result) {
     google.script.run
       .withSuccessHandler(function(pingResult) {
-        if (!pingResult || !pingResult.success) {
-          onDataError('Server returned null.\nPing failed: ' + (pingResult ? pingResult.error : 'no response'));
+        if (!pingResult || !pingResult.ok) {
+          onDataError('Server returned null.\nPing failed: ' + (pingResult ? pingResult.message : 'no response'));
           return;
         }
         google.script.run
           .withSuccessHandler(function(debugResult) {
             var msg = 'Server returned null — possible sheet mismatch.';
-            if (debugResult && debugResult.success) {
+            if (debugResult && debugResult.ok) {
               var info = debugResult.debug;
               msg += '\n\nDiagnostics:';
               Object.keys(info).forEach(function(k) {
@@ -2735,7 +2824,7 @@ function onDataLoaded(result) {
             }
             google.script.run
               .withSuccessHandler(function(sheetResult) {
-                if (sheetResult && sheetResult.success) msg += '\n\nSheets found:\n' + sheetResult.sheets.join('\n');
+                if (sheetResult && sheetResult.ok) msg += '\n\nSheets found:\n' + sheetResult.sheets.join('\n');
                 onDataError(msg);
               })
               .withFailureHandler(function(){ onDataError(msg); })
@@ -2748,7 +2837,7 @@ function onDataLoaded(result) {
       .ping();
     return;
   }
-  if (!result.success) { onDataError(result.error); return; }
+  if (!result.ok) { onDataError(result.message); return; }
   allRows = result.data || [];
   selectedIds = {};
   populateFilterDropdowns();
@@ -3450,6 +3539,32 @@ function esc(str) {
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 /*
+  Function: icon
+  LAYMAN: Emoji used to stand in for icons here (⚠ ✓ ✗). They render differently on
+    every OS, ignore the surrounding text colour, and break this project's own rule
+    against emoji as interface icons. These are real SVGs that follow the text colour
+    and fetch nothing from the network.
+  TECHNICAL: Inline SVG (Lucide-derived paths) stroked with `currentColor`, so no
+    per-variant CSS is needed. Returns HTML — only use where the sink is innerHTML or
+    a concatenated markup string, never through textContent.
+  PARAMS: - name — 'warn' | 'check' | 'x'; unknown names return ''.
+          - size — px box, default 14.
+  RETURNS: An <svg> string, or '' for an unknown name.
+*/
+function icon(name, size) {
+  var s = size || 14;
+  var paths = {
+    warn:  '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    x:     '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+  };
+  if (!paths[name]) return '';
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="' + s + '" height="' + s + '"'
+       + ' viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+       + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
+       + ' style="vertical-align:-2px;flex-shrink:0;">' + paths[name] + '</svg>';
+}
+/*
   Function: escAttr
   LAYMAN: Escapes a value for safe use inside an HTML attribute / inline onclick
     argument (only the quote characters).
@@ -3634,7 +3749,7 @@ function renderPia2(str) {
     var isYes = fieldValues[i] === 'YES';
     html += '<div class="pii-item' + (isYes ? ' yes-item' : '') + '">' +
       '<span class="pii-label' + (isSensitive ? ' sensitive' : '') + '">' +
-        (isSensitive ? '⚠ ' : '') + esc(PII2_FIELDS[i]) +
+        (isSensitive ? icon('warn', 12) + ' ' : '') + esc(PII2_FIELDS[i]) +
       '</span>' +
       '<span>' + answerBadge(fieldValues[i]) + '</span>' +
     '</div>';
@@ -4252,8 +4367,8 @@ function viewAudit(reqId, sessionId, name) {
     '<div class="state-overlay"><div class="spinner"></div><p>Loading audit trail for <strong>' + esc(name) + '</strong>…</p></div>';
   google.script.run
     .withSuccessHandler(function(result) {
-      if (!result || !result.success) {
-        document.getElementById('auditModalBody').innerHTML = '<p style="color:var(--color-danger);">Failed to load: ' + esc(result ? result.error : 'null response') + '</p>';
+      if (!result || !result.ok) {
+        document.getElementById('auditModalBody').innerHTML = '<p style="color:var(--color-danger);">Failed to load: ' + esc(result ? result.message : 'null response') + '</p>';
         return;
       }
       renderAuditLogs(result, name);
@@ -4547,7 +4662,173 @@ function renderAnalytics() {
   html += '</div></div>';
 
   html += '</div>'; // /analytics-grid
+
+  // Aging section renders underneath, filled asynchronously by loadAgingReport().
+  html += '<div id="agingSection" style="margin-top:18px;">' +
+            '<div class="chart-card"><h3>Bottlenecks</h3>' +
+            '<div class="chart-sub">Loading aging data…</div></div>' +
+          '</div>';
+
   document.getElementById('analyticsContent').innerHTML = html;
+  loadAgingReport();
+}
+
+/*
+  Function: loadAgingReport
+  LAYMAN: Kinukuha yung "saan natetengga ang mga request" na datos mula sa server, tapos
+    ipinapakita sa ilalim ng Analytics. Hiwalay siyang tawag kasi ibang datos ito — hindi
+    galing sa dashboard rows na naka-load na, kundi diretsong binabasa sa workflow sheets.
+  TECHNICAL: Calls adminApi_getAgingReport (checkAccess_-gated) and hands the payload to
+    renderAging. Failure is rendered in place rather than toasted — a broken bottleneck
+    panel must not look like an empty one, because "no bottlenecks" is a meaningful and
+    very different answer from "we could not check."
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
+function loadAgingReport() {
+  var host = document.getElementById('agingSection');
+  if (!host) return;
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (!result || !result.ok) {
+        host.innerHTML = '<div class="chart-card"><h3>Bottlenecks</h3>' +
+          '<div class="chart-sub" style="color:var(--color-danger);">' +
+          esc((result && result.message) || 'Could not load the aging report.') + '</div></div>';
+        return;
+      }
+      renderAging(result);
+    })
+    .withFailureHandler(function(err) {
+      host.innerHTML = '<div class="chart-card"><h3>Bottlenecks</h3>' +
+        '<div class="chart-sub" style="color:var(--color-danger);">' +
+        esc(String(err && err.message ? err.message : err)) + '</div></div>';
+    })
+    .adminApi_getAgingReport();
+}
+
+/*
+  Function: renderAging
+  LAYMAN: Dalawang bagay ang ipinapakita: (1) bar chart ng kung ilang request ang
+    naghihintay ng 0-3, 4-7, 8-14, at 15+ na araw, at (2) listahan ng pinaka-matagal nang
+    nakatengga — sino ang hinihintay, anong stage, at ilang araw na.
+  TECHNICAL: Reuses the existing .chart-card + track/fill bar idiom verbatim so the section
+    matches the charts above it; no new CSS, no charting library. Rows are already sorted
+    oldest-first by the server. Unknown-age rows render as "unknown" rather than 0 so a
+    legacy record cannot be mistaken for a fresh one.
+  PARAMS: - report — the adminApi_getAgingReport payload.
+  RETURNS: undefined (writes into #agingSection).
+*/
+function renderAging(report) {
+  var host = document.getElementById('agingSection');
+  if (!host) return;
+
+  var toneColor = {
+    ok:   'var(--color-success)',
+    warn: 'var(--color-warning)',
+    high: 'var(--color-primary)',
+    crit: 'var(--color-danger)'
+  };
+
+  var h = '<div class="analytics-grid">';
+
+  // ── Bar chart: how long has each pending request been waiting ──
+  h += '<div class="chart-card">' +
+       '<h3>Time Waiting</h3>' +
+       '<div class="chart-sub">Pending requests by days since the current approver was notified</div>';
+  var maxB = 1;
+  report.buckets.forEach(function(b){ if (b.count > maxB) maxB = b.count; });
+  report.buckets.forEach(function(b) {
+    var pct = b.count === 0 ? 0 : Math.max(4, Math.round(b.count / maxB * 100));
+    h += '<div style="margin-bottom:10px;">' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">' +
+        '<span style="color:var(--color-text);">' + esc(b.label) + '</span>' +
+        '<span style="font-weight:700;color:' + toneColor[b.tone] + ';">' + b.count + '</span>' +
+      '</div>' +
+      '<div style="height:6px;background:var(--color-border);border-radius:3px;overflow:hidden;">' +
+        '<div style="height:100%;width:' + pct + '%;background:' + toneColor[b.tone] +
+        ';border-radius:3px;transition:width .5s ease;"></div>' +
+      '</div>' +
+    '</div>';
+  });
+  if (report.totalPending === 0) {
+    h += '<p style="color:var(--color-text-3);font-size:13px;">Nothing is currently pending an approver.</p>';
+  }
+  if (report.unknownAge > 0) {
+    h += '<p style="color:var(--color-text-3);font-size:11.5px;margin-top:8px;">' +
+         report.unknownAge + ' request(s) have no usable notification date and are excluded ' +
+         'from the buckets above. These predate the NotifiedDate column.</p>';
+  }
+  h += '</div>';
+
+  // ── Key numbers ──
+  h += '<div class="chart-card">' +
+       '<h3>Bottleneck Summary</h3><div class="chart-sub">At-a-glance</div>' +
+       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
+  var over7 = report.items.filter(function(i){ return i.days !== null && i.days > 7; }).length;
+  var stageCount = {};
+  report.items.forEach(function(i){ stageCount[i.stage] = (stageCount[i.stage] || 0) + 1; });
+  var worstStage = '—', worstN = 0;
+  Object.keys(stageCount).forEach(function(s){ if (stageCount[s] > worstN) { worstN = stageCount[s]; worstStage = s; } });
+  [
+    { label: 'Awaiting an approver', value: report.totalPending, color: 'var(--color-primary)' },
+    { label: 'Waiting over 7 days',  value: over7,               color: over7 > 0 ? 'var(--color-danger)' : 'var(--color-success)' },
+    { label: 'Longest wait (days)',  value: report.oldestDays,   color: report.oldestDays > 14 ? 'var(--color-danger)' : 'var(--color-text)' },
+    { label: 'Slowest stage',        value: worstStage,          color: 'var(--color-text)' }
+  ].forEach(function(m) {
+    var big = String(m.value).length > 6;
+    h += '<div style="text-align:center;padding:16px 12px;background:var(--slate-50);border:1px solid var(--color-border);border-radius:var(--radius);">' +
+      '<div style="font-size:' + (big ? '13px' : '24px') + ';font-weight:800;letter-spacing:' +
+        (big ? '0' : '-1px') + ';color:' + m.color + ';">' + esc(String(m.value)) + '</div>' +
+      '<div style="font-size:11px;color:var(--color-text-2);margin-top:3px;">' + esc(m.label) + '</div>' +
+    '</div>';
+  });
+  h += '</div></div></div>';
+
+  // ── The actual stuck list ──
+  h += '<div class="chart-card" style="margin-top:14px;">' +
+       '<h3>Most Stuck Requests</h3>' +
+       '<div class="chart-sub">Oldest first. "Waiting on" is the approver currently blocking the ladder.</div>';
+  if (report.items.length === 0) {
+    h += '<p style="color:var(--color-text-3);font-size:13px;">Nothing is stuck.</p>';
+  } else {
+    h += '<div class="table-scroll" style="overflow-x:auto;">' +
+         '<table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:640px;">' +
+         '<thead><tr>' +
+           '<th style="text-align:left;padding:8px 10px 8px 0;color:var(--color-text-2);font-weight:600;">Request</th>' +
+           '<th style="text-align:left;padding:8px 10px;color:var(--color-text-2);font-weight:600;">Stage</th>' +
+           '<th style="text-align:left;padding:8px 10px;color:var(--color-text-2);font-weight:600;">Waiting on</th>' +
+           '<th style="text-align:right;padding:8px 0 8px 10px;color:var(--color-text-2);font-weight:600;">Days</th>' +
+         '</tr></thead><tbody>';
+    report.items.slice(0, 25).forEach(function(it) {
+      var dcolor = it.days === null ? 'var(--color-text-3)'
+                 : it.days > 14 ? 'var(--color-danger)'
+                 : it.days > 7  ? 'var(--color-warning)'
+                 : 'var(--color-text)';
+      h += '<tr style="border-top:1px solid var(--color-border);">' +
+        '<td style="padding:8px 10px 8px 0;"><span style="font-weight:600;">' +
+          esc(it.reqId || it.sessionId) + '</span>' +
+          (it.reqId ? '<div style="font-size:11px;color:var(--color-text-3);">' + esc(it.sessionId) + '</div>' : '') +
+        '</td>' +
+        '<td style="padding:8px 10px;">' + esc(it.stage) +
+          (it.step > 1 ? ' <span style="color:var(--color-text-3);">(step ' + it.step + ')</span>' : '') +
+        '</td>' +
+        '<td style="padding:8px 10px;">' + esc(it.approverName || it.approverEmail || '—') +
+          (it.approverName && it.approverEmail
+            ? '<div style="font-size:11px;color:var(--color-text-3);">' + esc(it.approverEmail) + '</div>' : '') +
+        '</td>' +
+        '<td style="padding:8px 0 8px 10px;text-align:right;font-weight:700;color:' + dcolor + ';">' +
+          (it.days === null ? 'unknown' : it.days) +
+        '</td>' +
+      '</tr>';
+    });
+    h += '</tbody></table></div>';
+    if (report.items.length > 25) {
+      h += '<p style="color:var(--color-text-3);font-size:11.5px;margin-top:8px;">' +
+           'Showing the 25 oldest of ' + report.items.length + '.</p>';
+    }
+  }
+  h += '</div>';
+
+  host.innerHTML = h;
 }
 
 // ════════════════════════════
@@ -4566,8 +4847,8 @@ function exportSelected() {
   showToast('Exporting ' + selected.length + ' rows to Google Sheet…', 'info');
   google.script.run
     .withSuccessHandler(function(result) {
-      if (result.success) { showToast('Exported successfully.', 'success'); window.open(result.url, '_blank'); }
-      else { showToast('Export failed: ' + result.error, 'error'); }
+      if (result.ok) { showToast('Exported successfully.', 'success'); window.open(result.url, '_blank'); }
+      else { showToast('Export failed: ' + result.message, 'error'); }
     })
     .withFailureHandler(function(err){ showToast('Export error: ' + String(err), 'error'); })
     .exportToSheet(selected);
@@ -4639,10 +4920,10 @@ function loadApprovedApplications() {
     .withSuccessHandler(function(result) {
       tableLoading.style.display = 'none';
 
-      if (!result || !result.success) {
+      if (!result || !result.ok) {
         tableEmpty.style.display = 'flex';
         tableEmpty.querySelector('h3').textContent = 'Failed to Load';
-        tableEmpty.querySelector('p').textContent = result ? result.error : 'Could not fetch applications.';
+        tableEmpty.querySelector('p').textContent = result ? result.message : 'Could not fetch applications.';
         rowCount.textContent = 'Error loading';
         return;
       }
@@ -4971,8 +5252,8 @@ function checkRoutingStatus(sessionId) {
     .withSuccessHandler(function(result) {
       document.getElementById('routingDetailLoading').style.display = 'none';
 
-      if (!result || !result.success) {
-        showToast(result ? result.error : 'Failed to check status.', 'error');
+      if (!result || !result.ok) {
+        showToast(result ? result.message : 'Failed to check status.', 'error');
         closeModal('routingDetailModal');
         return;
       }
@@ -5201,8 +5482,8 @@ function downloadCertificateFromModal() {
       btn.disabled = false;
       btn.innerHTML = originalText;
 
-      if (!result || !result.success) {
-        showToast('Failed to generate certificate: ' + (result ? result.error : 'Unknown error'), 'error');
+      if (!result || !result.ok) {
+        showToast('Failed to generate certificate: ' + (result ? result.message : 'Unknown error'), 'error');
         return;
       }
 
@@ -5267,8 +5548,8 @@ function downloadCertificate() {
       btn.disabled = false;
       btn.innerHTML = originalText;
 
-      if (!result || !result.success) {
-        showToast('Failed to generate certificate: ' + (result ? result.error : 'Unknown error'), 'error');
+      if (!result || !result.ok) {
+        showToast('Failed to generate certificate: ' + (result ? result.message : 'Unknown error'), 'error');
         return;
       }
 
@@ -5408,8 +5689,8 @@ function executeReroute() {
       btn.disabled = false;
       btn.innerHTML = '<svg><use href="#ic-send"/></svg> Resend Email';
 
-      if (!result || !result.success) {
-        showToast('Failed: ' + (result ? result.error : 'Unknown error'), 'error');
+      if (!result || !result.ok) {
+        showToast('Failed: ' + (result ? result.message : 'Unknown error'), 'error');
         return;
       }
 
@@ -5522,9 +5803,9 @@ function loadEmailQueue() {
   google.script.run
     .withSuccessHandler(function(result) {
       loading.style.display = 'none';
-      if (!result || !result.success) {
+      if (!result || !result.ok) {
         error.style.display = 'flex';
-        document.getElementById('queueErrorMessage').textContent = result ? result.error : 'Unknown error.';
+        document.getElementById('queueErrorMessage').textContent = result ? result.message : 'Unknown error.';
         return;
       }
       _queueAllEntries = result.data || [];
@@ -5567,7 +5848,7 @@ function loadEmailQueue() {
 function renderQueueStats() {
   google.script.run
     .withSuccessHandler(function(result) {
-      if (!result || !result.success) return;
+      if (!result || !result.ok) return;
       var d = result.data;
       document.getElementById('qsPending').textContent   = d.totalPending || 0;
       document.getElementById('qsFailed').textContent     = d.totalFailed || 0;
@@ -5692,11 +5973,11 @@ function retryQueueItem(queueId) {
   showToast('Retrying queue entry…', 'info');
   google.script.run
     .withSuccessHandler(function(result) {
-      if (result && result.success) {
+      if (result && result.ok) {
         showToast('Queue entry retried successfully.', 'success');
         loadEmailQueue();
       } else {
-        showToast('Retry failed: ' + (result ? result.error : 'Unknown error'), 'error');
+        showToast('Retry failed: ' + (result ? result.message : 'Unknown error'), 'error');
       }
     })
     .withFailureHandler(function(err) { showToast('Retry error: ' + String(err), 'error'); })
@@ -5716,11 +5997,11 @@ function cancelQueueItem(sessionId, type) {
   showToast('Cancelling…', 'info');
   google.script.run
     .withSuccessHandler(function(result) {
-      if (result && result.success) {
+      if (result && result.ok) {
         showToast(result.message || 'Cancelled.', 'success');
         loadEmailQueue();
       } else {
-        showToast('Cancel failed: ' + (result ? result.error : 'Unknown error'), 'error');
+        showToast('Cancel failed: ' + (result ? result.message : 'Unknown error'), 'error');
       }
     })
     .withFailureHandler(function(err) { showToast('Cancel error: ' + String(err), 'error'); })
@@ -5740,11 +6021,11 @@ function retryAllInSession(sessionId) {
   showToast('Retrying all for session…', 'info');
   google.script.run
     .withSuccessHandler(function(result) {
-      if (result && result.success) {
+      if (result && result.ok) {
         showToast(result.message || 'Retried.', 'success');
         loadEmailQueue();
       } else {
-        showToast('Retry failed: ' + (result ? result.error : 'Unknown error'), 'error');
+        showToast('Retry failed: ' + (result ? result.message : 'Unknown error'), 'error');
       }
     })
     .withFailureHandler(function(err) { showToast('Retry error: ' + String(err), 'error'); })
@@ -5771,9 +6052,9 @@ function viewPipeline(sessionId) {
 
   google.script.run
     .withSuccessHandler(function(result) {
-      if (!result || !result.success) {
+      if (!result || !result.ok) {
         document.getElementById('pipelineModalBody').innerHTML =
-          '<div class="state-overlay state-error"><svg><use href="#ic-alert"/></svg><h3>Failed to Load</h3><p>' + esc(result ? result.error : 'Unknown error') + '</p></div>';
+          '<div class="state-overlay state-error"><svg><use href="#ic-alert"/></svg><h3>Failed to Load</h3><p>' + esc(result ? result.message : 'Unknown error') + '</p></div>';
         return;
       }
       renderPipeline(result.data);
@@ -5928,7 +6209,7 @@ function loadNotificationConfig() {
   // Load notification settings
   google.script.run
     .withSuccessHandler(function(result) {
-      if (!result || !result.success) return;
+      if (!result || !result.ok) return;
       var cfg = result.data;
       var emailEl = document.getElementById('cfgAdminEmail');
       var failEl  = document.getElementById('cfgNotifyFail');
@@ -5942,7 +6223,7 @@ function loadNotificationConfig() {
   // Load admin members from InfoSec_Email_Config
   google.script.run
     .withSuccessHandler(function(result) {
-      if (!result || !result.success) return;
+      if (!result || !result.ok) return;
       var adminsEl = document.getElementById('cfgAdminMembers');
       if (!adminsEl) return;
       var infoRows = result.info || [];
@@ -5956,7 +6237,7 @@ function loadNotificationConfig() {
         }
       }
       if (adminMembers.length === 0) {
-        adminsEl.innerHTML = '<span style="color:var(--rose-500);">⚠️ No admin members configured</span>';
+        adminsEl.innerHTML = '<span style="color:var(--rose-500);">' + icon('warn') + ' No admin members configured</span>';
         return;
       }
       adminsEl.innerHTML = adminMembers.map(function(a) {
@@ -5985,8 +6266,8 @@ function saveNotificationConfig() {
   };
   google.script.run
     .withSuccessHandler(function(result) {
-      if (result && result.success) showToast('Notification settings saved.', 'success');
-      else showToast('Save failed: ' + (result ? result.error : 'Unknown error'), 'error');
+      if (result && result.ok) showToast('Notification settings saved.', 'success');
+      else showToast('Save failed: ' + (result ? result.message : 'Unknown error'), 'error');
     })
     .withFailureHandler(function(err) { showToast('Save error: ' + String(err), 'error'); })
     .adminApi_setNotificationConfig(config);
@@ -6025,9 +6306,9 @@ function loadFailedEmails() {
     .withSuccessHandler(function(result) {
       loading.style.display = 'none';
 
-      if (!result || !result.success) {
+      if (!result || !result.ok) {
         error.style.display = 'flex';
-        document.getElementById('failoverErrorMessage').textContent = result ? result.error : 'Unknown error';
+        document.getElementById('failoverErrorMessage').textContent = result ? result.message : 'Unknown error';
         rowCount.textContent = 'Error';
         return;
       }
@@ -6176,9 +6457,9 @@ function viewEmailLog(sessionId) {
     .withSuccessHandler(function(result) {
       document.getElementById('failoverDetailLoading').style.display = 'none';
 
-      if (!result || !result.success) {
+      if (!result || !result.ok) {
         document.getElementById('failoverDetailContent').style.display = 'block';
-        document.getElementById('failoverDetailSummary').innerHTML = '<span style="color:var(--color-danger);">Failed to load: ' + esc(result ? result.error : 'Unknown error') + '</span>';
+        document.getElementById('failoverDetailSummary').innerHTML = '<span style="color:var(--color-danger);">Failed to load: ' + esc(result ? result.message : 'Unknown error') + '</span>';
         document.getElementById('failoverDetailTableBody').innerHTML = '';
         return;
       }
@@ -6346,19 +6627,19 @@ function executeFailoverResend() {
 
   google.script.run
     .withSuccessHandler(function(result) {
-      if (result && result.success) {
-        resendResult.innerHTML = '<span style="color:var(--color-success);font-weight:600;">✓ Email resent successfully to ' + esc(data.recipient) + '</span>';
+      if (result && result.ok) {
+        resendResult.innerHTML = '<span style="color:var(--color-success);font-weight:600;">' + icon('check') + ' Email resent successfully to ' + esc(data.recipient) + '</span>';
         showToast('Email resent successfully!', 'success');
         // Refresh the email log & failed emails list
         viewEmailLog(data.sessionId);
         loadFailedEmails();
       } else {
-        resendResult.innerHTML = '<span style="color:var(--color-danger);font-weight:600;">✗ Failed: ' + esc(result ? result.error : 'Unknown error') + '</span>';
-        showToast('Resend failed: ' + (result ? result.error : 'Unknown error'), 'error');
+        resendResult.innerHTML = '<span style="color:var(--color-danger);font-weight:600;">' + icon('x') + ' Failed: ' + esc(result ? result.message : 'Unknown error') + '</span>';
+        showToast('Resend failed: ' + (result ? result.message : 'Unknown error'), 'error');
       }
     })
     .withFailureHandler(function(err) {
-      resendResult.innerHTML = '<span style="color:var(--color-danger);font-weight:600;">✗ Error: ' + esc(String(err)) + '</span>';
+      resendResult.innerHTML = '<span style="color:var(--color-danger);font-weight:600;">' + icon('x') + ' Error: ' + esc(String(err)) + '</span>';
       showToast('Resend error: ' + String(err), 'error');
     })
     .adminResendEmail(data.sessionId, data.recipient, data.type);
@@ -6410,7 +6691,7 @@ var settingsLoading = false;
   PARAMS: (none)  RETURNS: undefined.
 */
 function disableSettingsFields() {
-  document.querySelectorAll('#settingsContent input').forEach(function(i) { i.disabled = true; });
+  document.querySelectorAll('#settingsContent input, #settingsContent select').forEach(function(i) { i.disabled = true; });
   document.getElementById('btnEditSettings').style.display = 'inline-flex';
   document.getElementById('btnSaveSettings').style.display = 'none';
   document.getElementById('btnCancelEdit').style.display = 'none';
@@ -6430,7 +6711,7 @@ function requestEditSettings() { openModal('settingsEditModal'); }
 */
 function confirmEditSettings() {
   closeModal('settingsEditModal');
-  document.querySelectorAll('#settingsContent input').forEach(function(i) { i.disabled = false; });
+  document.querySelectorAll('#settingsContent input, #settingsContent select').forEach(function(i) { i.disabled = false; });
   document.getElementById('btnEditSettings').style.display = 'none';
   document.getElementById('btnSaveSettings').style.display = 'inline-flex';
   document.getElementById('btnCancelEdit').style.display = 'inline-flex';
@@ -6464,9 +6745,10 @@ function loadSettings(force) {
     .withSuccessHandler(function(result) {
       settingsLoading = false;
       if (btn) btn.disabled = false;
-      if (!result.success) { showToast('Error loading settings: ' + result.error, 'error'); return; }
+      if (!result.ok) { showToast('Error loading settings: ' + result.message, 'error'); return; }
       settingsLoaded = true;
       disableSettingsFields();
+      loadDelegations();   // its own endpoint — the Delegations tab is not part of getConfigData
       if (result.sys) result.sys.forEach(function(r) { var el = document.getElementById('cfg-' + r.Configuration_Key); if (el) el.value = r.Value || ''; });
       if (result.info) result.info.forEach(function(r) {
         var nameEl = document.getElementById('info-name-' + r.Member_ID);
@@ -6512,13 +6794,221 @@ function saveSettings() {
   google.script.run
     .withSuccessHandler(function(res) {
       btn.disabled = false; btn.textContent = 'Save Changes';
-      if (res.success) {
-        showToast('Settings saved successfully.', 'success');
-        disableSettingsFields();
-      } else showToast('Failed to save settings: ' + res.error, 'error');
+      if (res.ok) {
+        // Retention goes through its OWN endpoint rather than riding along in sysUpdates,
+        // because adminApi_setRetentionConfig enforces the 1-120 month clamp. A zero or
+        // negative period would put the cutoff at "now or later" and make every closed
+        // record eligible in a single sweep — the generic key/value writer cannot catch that.
+        saveRetentionSettings(function() {
+          showToast('Settings saved successfully.', 'success');
+          disableSettingsFields();
+        });
+      } else showToast('Failed to save settings: ' + res.message, 'error');
     })
     .withFailureHandler(function(e) { btn.disabled = false; btn.textContent = 'Save Changes'; showToast('Error saving settings: ' + String(e), 'error'); })
     .saveConfigData(sysUpdates, infoUpdates);
+}
+
+/*
+  Function: saveRetentionSettings
+  LAYMAN: Sine-save yung tatlong retention setting. Hiwalay siya sa ibang settings kasi may
+    sariling pagsusuri sa server (1 hanggang 120 buwan lang), at delikado kung mali.
+  TECHNICAL: Posts the retention card's three fields through adminApi_setRetentionConfig,
+    which validates the month range and writes an audit row. Called from saveSettings after
+    the generic config write succeeds; `done` runs only on success so a rejected retention
+    value does not report "saved".
+  PARAMS: - done — callback invoked once the retention write succeeds.
+  RETURNS: undefined (async).
+*/
+function saveRetentionSettings(done) {
+  var monthsEl  = document.getElementById('cfg-RETENTION_MONTHS');
+  var enabledEl = document.getElementById('cfg-RETENTION_ENABLED');
+  var dryRunEl  = document.getElementById('cfg-RETENTION_DRY_RUN');
+  if (!monthsEl || !enabledEl || !dryRunEl) { if (done) done(); return; }
+
+  var payload = {
+    enabled: enabledEl.value === 'TRUE',
+    dryRun:  dryRunEl.value !== 'FALSE',
+    months:  parseInt(monthsEl.value, 10)
+  };
+  if (!isFinite(payload.months)) payload.months = undefined;   // leave the stored value alone
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.ok) { if (done) done(); }
+      else showToast('Retention settings not saved: ' + ((res && res.message) || 'unknown error'), 'error');
+    })
+    .withFailureHandler(function(e) { showToast('Retention settings error: ' + String(e), 'error'); })
+    .adminApi_setRetentionConfig(payload);
+}
+
+/*
+  Function: loadDelegations
+  LAYMAN: Kinukuha yung kasalukuyang listahan ng mga kapalit at ipinapakita.
+  TECHNICAL: Calls adminApi_getDelegations. The server precomputes `active` (the flag AND the
+    date window) so the UI never re-implements the in-effect rule that resolveDelegate_ owns —
+    two implementations of that would drift and disagree about who is covering today.
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
+function loadDelegations() {
+  var host = document.getElementById('delegationList');
+  if (!host) return;
+  google.script.run
+    .withSuccessHandler(function(r) {
+      if (!r || !r.ok) {
+        host.innerHTML = '<span style="color:var(--color-danger);">' +
+          esc((r && r.message) || 'Could not load delegations.') + '</span>';
+        return;
+      }
+      if (!r.data || r.data.length === 0) {
+        host.innerHTML = '<span style="color:var(--color-text-3);">' +
+          'No delegations configured. Approvers receive their own requests directly.</span>';
+        return;
+      }
+      var h = '<div class="table-scroll" style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:520px;">';
+      r.data.forEach(function(d) {
+        var window_ = (d.start || d.end)
+          ? ((d.start || 'now') + ' → ' + (d.end || 'open-ended'))
+          : 'no date limit';
+        var badge = d.active
+          ? '<span style="color:var(--color-success);font-weight:600;">in effect</span>'
+          : '<span style="color:var(--color-text-3);">' + (d.isActive ? 'outside window' : 'paused') + '</span>';
+        h += '<tr style="border-top:1px solid var(--color-border);">' +
+          '<td style="padding:7px 8px 7px 0;">' + esc(d.from) +
+            '<div style="font-size:11px;color:var(--color-text-3);">covered by ' + esc(d.to) + '</div></td>' +
+          '<td style="padding:7px 8px;color:var(--color-text-2);">' + esc(window_) +
+            (d.reason ? '<div style="font-size:11px;color:var(--color-text-3);">' + esc(d.reason) + '</div>' : '') + '</td>' +
+          '<td style="padding:7px 8px;">' + badge + '</td>' +
+          '<td style="padding:7px 0;text-align:right;"><button class="btn btn-ghost btn-sm" ' +
+            'onclick="removeDelegation(\'' + escAttr(d.id) + '\')">Remove</button></td>' +
+        '</tr>';
+      });
+      h += '</table></div>';
+      host.innerHTML = h;
+    })
+    .withFailureHandler(function(e) {
+      host.innerHTML = '<span style="color:var(--color-danger);">' + esc(String(e)) + '</span>';
+    })
+    .adminApi_getDelegations();
+}
+
+/*
+  Function: saveDelegation
+  LAYMAN: Nagdadagdag ng bagong kapalit mula sa form sa ibaba ng card.
+  TECHNICAL: Posts to adminApi_saveDelegation, which does the real validation (same-domain,
+    not self, end >= start). The client does not pre-validate beyond emptiness on purpose —
+    one authority for the rules, and it is the one that can actually enforce them.
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
+function saveDelegation() {
+  var btn = document.getElementById('btnAddDelegation');
+  var payload = {
+    from:   (document.getElementById('del-from')   || {}).value || '',
+    to:     (document.getElementById('del-to')     || {}).value || '',
+    start:  (document.getElementById('del-start')  || {}).value || '',
+    end:    (document.getElementById('del-end')    || {}).value || '',
+    reason: (document.getElementById('del-reason') || {}).value || ''
+  };
+  if (!payload.from.trim() || !payload.to.trim()) {
+    showToast('Both the approver and the delegate email are required.', 'error');
+    return;
+  }
+  if (btn) btn.disabled = true;
+  google.script.run
+    .withSuccessHandler(function(r) {
+      if (btn) btn.disabled = false;
+      if (r && r.ok) {
+        showToast('Delegation saved.', 'success');
+        ['del-from','del-to','del-start','del-end','del-reason'].forEach(function(id) {
+          var el = document.getElementById(id); if (el) el.value = '';
+        });
+        loadDelegations();
+      } else {
+        showToast((r && r.message) || 'Could not save the delegation.', 'error');
+      }
+    })
+    .withFailureHandler(function(e) { if (btn) btn.disabled = false; showToast(String(e), 'error'); })
+    .adminApi_saveDelegation(payload);
+}
+
+/*
+  Function: removeDelegation
+  LAYMAN: Tinatanggal ang isang kapalit. Pagkatapos, yung orihinal na approver na ulit ang
+    tatanggap ng mga susunod na email.
+  TECHNICAL: Confirms first (this changes who receives approval authority, so it is not a
+    silent click), then calls adminApi_deleteDelegation and reloads the list.
+  PARAMS: - id — the Delegation_ID.  RETURNS: undefined (async).
+*/
+function removeDelegation(id) {
+  if (!window.confirm('Remove this delegation? Future emails will go back to the original approver.')) return;
+  google.script.run
+    .withSuccessHandler(function(r) {
+      if (r && r.ok) { showToast('Delegation removed.', 'success'); loadDelegations(); }
+      else showToast((r && r.message) || 'Could not remove the delegation.', 'error');
+    })
+    .withFailureHandler(function(e) { showToast(String(e), 'error'); })
+    .adminApi_deleteDelegation(id);
+}
+
+/*
+  Function: previewRetention
+  LAYMAN: Yung "Preview" button. Tinatanong niya sa server kung ANO ang mabubura kung
+    tatakbo ang sweep ngayon — pero walang binuburang kahit ano. Ito ang dapat basahin ng
+    ISM bago nila buksan ang switch.
+  TECHNICAL: Calls adminApi_runRetentionDryRun, which passes forceDryRun:true unconditionally
+    so this path can never delete regardless of the stored RETENTION_DRY_RUN value. Renders
+    the counts plus a sample of the oldest eligible records inline.
+  PARAMS: (none)  RETURNS: undefined (async).
+*/
+function previewRetention() {
+  var out = document.getElementById('retentionPreview');
+  var btn = document.getElementById('btnRetentionPreview');
+  if (!out) return;
+  out.innerHTML = '<span style="color:var(--color-text-2);">Scanning…</span>';
+  if (btn) btn.disabled = true;
+
+  google.script.run
+    .withSuccessHandler(function(r) {
+      if (btn) btn.disabled = false;
+      if (!r || !r.ok) {
+        out.innerHTML = '<span style="color:var(--color-danger);">' +
+          esc((r && r.message) || 'Preview failed.') + '</span>';
+        return;
+      }
+      if (r.enabled === false) {
+        out.innerHTML = '<span style="color:var(--color-text-2);">' + esc(r.message) + '</span>';
+        return;
+      }
+      var h = '<div style="padding:10px 12px;background:var(--slate-50);border:1px solid var(--color-border);border-radius:var(--radius);">' +
+        '<div><strong>' + r.eligibleSessions + '</strong> closed request(s) would be deleted' +
+        ' — anything closed on or before <strong>' + esc(r.cutoff) + '</strong>.</div>' +
+        '<div style="color:var(--color-text-2);margin-top:4px;">' + r.skippedLive +
+        ' request(s) skipped: still open, or no usable closing date.</div>';
+      if (r.capped) {
+        h += '<div style="color:var(--color-warning);margin-top:4px;">More than ' +
+             'one run\'s worth — the sweep processes a capped batch at a time and would need ' +
+             'to run again.</div>';
+      }
+      if (r.sample && r.sample.length) {
+        h += '<div style="margin-top:10px;font-weight:600;">Oldest eligible (sample)</div>' +
+             '<div class="table-scroll" style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:4px;min-width:420px;">';
+        r.sample.forEach(function(s2) {
+          h += '<tr style="border-top:1px solid var(--color-border);">' +
+            '<td style="padding:5px 8px 5px 0;">' + esc(s2.reqId || s2.sessionId) + '</td>' +
+            '<td style="padding:5px 8px;color:var(--color-text-2);">' + esc(s2.status) + '</td>' +
+            '<td style="padding:5px 0;text-align:right;color:var(--color-text-2);">closed ' + esc(s2.closed) + '</td>' +
+          '</tr>';
+        });
+        h += '</table></div>';
+      }
+      h += '</div>';
+      out.innerHTML = h;
+    })
+    .withFailureHandler(function(e) {
+      if (btn) btn.disabled = false;
+      out.innerHTML = '<span style="color:var(--color-danger);">' + esc(String(e)) + '</span>';
+    })
+    .adminApi_runRetentionDryRun();
 }
 </script>
 </body>

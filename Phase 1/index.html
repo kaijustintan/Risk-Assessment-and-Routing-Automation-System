@@ -213,6 +213,9 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* GENERATED from docs/design-tokens.css — edit there, then paste into all 6 targets.
+       The other five: Phase 2/pia_index.html, Admin/adminView.html, and the
+       getStyledHtmlWrapper_ block in each of the three backends. */
     :root {
       /* Pass-through system tokens */
       --bg:      var(--color-background-primary,    #ffffff);
@@ -1634,7 +1637,9 @@
 <div id="custom-modal-overlay" class="modal-overlay hidden">
   <div class="modal-box">
     <div class="modal-header">
-      <div class="modal-icon warn" id="custom-modal-icon">⚠</div>
+      <!-- Static markup, so the SVG is inlined literally rather than via icon('warn').
+           Keep it in sync with the `warn` entry in icon() if that path ever changes. -->
+      <div class="modal-icon warn" id="custom-modal-icon"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></div>
       <h3 class="modal-title" id="custom-modal-title">Confirm Action</h3>
     </div>
     <div class="modal-body" id="custom-modal-content"></div>
@@ -2112,21 +2117,6 @@ function getFlaggedSupplementaryFiles() {
     }
   }
   return out;
-}
-
-/*
-  Function Name: isLegacyDefaultComment
-  LAYMAN: Old approvals auto-saved a boilerplate note ("Approved via secure access review link.")
-          when the approver wrote nothing. It's noise, so displays hide it.
-  TECHNICAL: Client copy of PIA's isLegacyDefaultComment_ (exact-match, render-time only; the
-             stored sheet rows are never rewritten).
-  PARAMS:
-  - c — the comment string.
-  RETURNS: boolean.
-*/
-function isLegacyDefaultComment(c) {
-  const s = String(c || '').trim();
-  return s === 'Approved via secure access review link.' || s === 'No additional comments provided.';
 }
 
 /*
@@ -2888,7 +2878,7 @@ function renderISMAndDivHeadTracker(data, innerOnly) {
   const buildItem = (a) => {
     const safeName = escapeHtml(a.name || a.email || a.role || 'Approver');
     const safeRole = escapeHtml(a.role || '');
-    const safeComment = escapeHtml(isLegacyDefaultComment(a.comment) ? '' : (a.comment || ''));
+    const safeComment = escapeHtml(a.comment || '');
     
     let cls = 'vertical-timeline-dot', badge = '';
     const statusOrDecision = String(a.status || a.decision || '').toLowerCase().trim();
@@ -3049,7 +3039,7 @@ function renderApprovalTracker(data, innerOnly) {
   const timeline = approvers.map((a, i) => {
     const safeName = escapeHtml(a.name || a.role || 'Approver');
     const safeRole = escapeHtml(a.role || '');
-    const safeComment = escapeHtml(isLegacyDefaultComment(a.comment) ? '' : (a.comment || ''));
+    const safeComment = escapeHtml(a.comment || '');
     
     let cls = 'vertical-timeline-dot', badge = '';
     const dec = String(a.decision || '').toLowerCase().trim();
@@ -3190,7 +3180,7 @@ function renderUnifiedApprovalHistory(data) {
       const name = escapeHtml(d.approverName || d.approverEmail || 'Approver');
       const role = escapeHtml(d.role || '');
       const dateStr = d.decisionDate ? escapeHtml(String(d.decisionDate)) : '';
-      const comment = (d.comments && !isLegacyDefaultComment(d.comments)) ? escapeHtml(String(d.comments)) : '';
+      const comment = d.comments ? escapeHtml(String(d.comments)) : '';
       const flagKeys = (d.flaggedFields && typeof d.flaggedFields === 'object') ? Object.keys(d.flaggedFields) : [];
       const flagsHtml = flagKeys.length
         ? '<div style="font-size:11px;color:var(--warn-text);margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
@@ -3311,24 +3301,177 @@ function safeIdAttr(v) {
   return String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '');
 }
 
+/* ── Secure document viewer ──────────────────────────────────────────────────────────
+   Files live PRIVATELY in the company Drive vault (they used to be shared with anyone
+   holding the link, so one forwarded link leaked a signed NDA publicly). Nothing here
+   ever exposes a Drive URL: the server hands back the raw bytes, and we render them
+   from a same-document blob.
+
+   🚩 WHY A MODAL AND NOT window.open(blobUrl). This app is served inside Apps Script's
+   sandboxed iframe. Popups are blocked there, and a blob: URL minted inside that frame
+   is not reliably navigable as a top-level document. Rendering into the CURRENT document
+   is the only approach that works consistently, so the preview is an in-page overlay.
+
+   🚩 THE BLOB URL MUST OUTLIVE THE CALL. The old download-only path revoked immediately
+   after the synthetic click; a preview cannot, because the <iframe>/<img> reads the URL
+   for as long as it is on screen. It is revoked in closeFilePreview() instead — which is
+   why every exit route (X, backdrop, Esc, opening a second file) funnels through there.
+   Miss one and the blob leaks for the life of the page.
+────────────────────────────────────────────────────────────────────────────────────── */
+
+// Live blob URL while the preview is open. Exactly one at a time; see closeFilePreview.
+var __filePreviewUrl = null;
+
 /*
-  Function Name: downloadDcsFile
-  LAYMAN: Downloads one of your uploaded documents. Files now live PRIVATELY in the company Drive
-          vault (they used to be shared with anyone who had the link, which meant a forwarded link
-          leaked an NDA publicly). So instead of opening a Drive page, we ask the server for the
-          file, it checks that the document really is yours, and then it hands the bytes straight
-          to your browser as a download.
-  TECHNICAL: Calls apiDownloadDcsFile(reqId, fileId); on success base64-decodes into a Blob and
-             triggers a synthetic <a download> click, then revokes the object URL. Mirrors the
-             existing pattern in Admin/adminView.html downloadCertificateFromModal(). Disables the
-             button and shows inline progress for the round trip, restoring it in every branch.
+  Function Name: filePreviewEscHandler
+  LAYMAN: Closes the document preview when you press Esc.
+  TECHNICAL: Named (not anonymous) so removeEventListener can actually detach it — an
+             anonymous handler here would stack one listener per preview opened.
+  PARAMS: - e — the keydown event.   RETURNS: Nothing.
+*/
+function filePreviewEscHandler(e) {
+  if (e.key === 'Escape') closeFilePreview();
+}
+
+/*
+  Function Name: closeFilePreview
+  LAYMAN: Closes the preview window and frees the memory the document was using.
+  TECHNICAL: Removes the overlay, revokes the object URL, and detaches the Esc listener.
+             Safe to call when nothing is open, which is why showFilePreview calls it first
+             to guarantee only one preview (and one live blob) exists at a time.
+  PARAMS: (none)   RETURNS: Nothing.
+*/
+function closeFilePreview() {
+  var host = document.getElementById('filePreviewOverlay');
+  if (host && host.parentNode) host.parentNode.removeChild(host);
+  if (__filePreviewUrl) { URL.revokeObjectURL(__filePreviewUrl); __filePreviewUrl = null; }
+  document.removeEventListener('keydown', filePreviewEscHandler);
+}
+
+/*
+  Function Name: showFilePreview
+  LAYMAN: Shows the document right here on the page instead of downloading it — because the
+          point of "View" is to check what was submitted, not to collect files on your laptop.
+          PDFs and images show inline; anything else (Word, Excel) can't be displayed by a
+          browser, so those get a Download button and an honest explanation.
+  TECHNICAL: Decodes base64 -> Blob -> object URL, then builds the overlay with createElement
+             and sets the filename via textContent. Deliberately NOT innerHTML with the name
+             interpolated: the filename is user-supplied and this file's escapeHtml is not in
+             scope inside every copy of this block, so textContent is the portable safe choice.
+             A Download button is ALWAYS offered even when the inline render succeeds, as the
+             escape hatch if a given browser refuses to display the type.
+  PARAMS:
+  - data — { base64, mimeType, filename } exactly as apiDownloadDcsFile returns it.
+  RETURNS: Nothing (mutates the DOM).
+*/
+function showFilePreview(data) {
+  closeFilePreview();   // never stack two previews, never leak the previous blob
+
+  var mime = String((data && data.mimeType) || 'application/octet-stream');
+  var name = String((data && data.filename) || 'document');
+
+  var byteChars = atob(data.base64);
+  var byteNums = new Array(byteChars.length);
+  for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+  __filePreviewUrl = URL.createObjectURL(new Blob([new Uint8Array(byteNums)], { type: mime }));
+
+  var isPdf = mime.indexOf('pdf') !== -1;
+  var isImg = mime.indexOf('image/') === 0;
+
+  var ov = document.createElement('div');
+  ov.id = 'filePreviewOverlay';
+  ov.setAttribute('role', 'dialog');
+  ov.setAttribute('aria-modal', 'true');
+  ov.setAttribute('aria-label', 'Document preview');
+  ov.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(17,24,39,0.6);' +
+    'z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:16px;';
+
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:9px;width:100%;max-width:900px;height:90vh;' +
+    'display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25);';
+
+  var head = document.createElement('div');
+  head.style.cssText = 'display:flex;align-items:center;gap:10px;padding:11px 14px;' +
+    'border-bottom:1px solid #e5e7eb;flex-shrink:0;';
+
+  var title = document.createElement('div');
+  title.textContent = name;   // user-supplied — never parsed as HTML
+  title.style.cssText = 'font-weight:600;font-size:13.5px;color:#111827;flex:1;min-width:0;' +
+    'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+  var dl = document.createElement('button');
+  dl.type = 'button';
+  dl.textContent = 'Download';
+  dl.style.cssText = 'padding:6px 14px;font-size:12.5px;font-weight:500;cursor:pointer;' +
+    'border:1px solid #d1d5db;border-radius:4px;background:#fff;color:#111827;flex-shrink:0;';
+  dl.onclick = function () {
+    var a = document.createElement('a');
+    a.href = __filePreviewUrl;      // reuse the open blob — no second server round trip
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  var x = document.createElement('button');
+  x.type = 'button';
+  x.setAttribute('aria-label', 'Close preview');
+  x.innerHTML = '&times;';
+  x.style.cssText = 'border:none;background:none;font-size:22px;line-height:1;cursor:pointer;' +
+    'color:#6b7280;padding:0 4px;flex-shrink:0;';
+  x.onclick = closeFilePreview;
+
+  head.appendChild(title);
+  head.appendChild(dl);
+  head.appendChild(x);
+
+  var pane = document.createElement('div');
+  pane.style.cssText = 'flex:1;min-height:0;background:#f7f8fa;' +
+    (isImg ? 'display:flex;align-items:center;justify-content:center;padding:12px;' : '');
+
+  if (isPdf) {
+    var frame = document.createElement('iframe');
+    frame.src = __filePreviewUrl;
+    frame.title = name;
+    frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+    pane.appendChild(frame);
+  } else if (isImg) {
+    var img = document.createElement('img');
+    img.src = __filePreviewUrl;
+    img.alt = name;
+    img.style.cssText = 'max-width:100%;max-height:100%;display:block;';
+    pane.appendChild(img);
+  } else {
+    var note = document.createElement('div');
+    note.style.cssText = 'padding:36px 24px;text-align:center;color:#4b5563;font-size:13px;line-height:1.7;';
+    note.textContent = 'This file type cannot be displayed in the browser. ' +
+      'Use Download to open it in the right application.';
+    pane.appendChild(note);
+  }
+
+  box.appendChild(head);
+  box.appendChild(pane);
+  ov.appendChild(box);
+  ov.addEventListener('click', function (e) { if (e.target === ov) closeFilePreview(); });
+  document.body.appendChild(ov);
+  document.addEventListener('keydown', filePreviewEscHandler);
+}
+
+/*
+  Function Name: viewDcsFile
+  LAYMAN: Opens one of the uploaded documents so you can look at it. The server first checks
+          the document really belongs to this request before handing anything over.
+  TECHNICAL: Calls apiDownloadDcsFile(reqId, fileId) — the server endpoint keeps its name, it
+             genuinely returns the bytes; only the client presentation changed from a forced
+             download to an inline preview. Disables the button for the round trip and restores
+             it on every branch.
   PARAMS:
   - reqId  — the DCS Request ID that owns the document.
   - fileId — the Drive file ID (validated server-side against reqId).
   - btn    — the clicked element, so we can show a per-button loading state.
-  RETURNS: Nothing (async; triggers a browser download or a toast on failure).
+  RETURNS: Nothing (async; opens the preview overlay or shows an alert).
 */
-function downloadDcsFile(reqId, fileId, btn) {
+function viewDcsFile(reqId, fileId, btn) {
   var originalHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.innerHTML = 'Opening...'; }
 
@@ -3339,25 +3482,14 @@ function downloadDcsFile(reqId, fileId, btn) {
   google.script.run
     .withSuccessHandler(function (res) {
       restore();
-      if (!res || !res.success) {
-        showCustomAlert((res && res.error) ? res.error : 'Could not open this document.', 'danger');
+      if (!res || !res.ok) {
+        showCustomAlert((res && res.message) ? res.message : 'Could not open this document.', 'danger');
         return;
       }
       try {
-        var byteChars = atob(res.data.base64);
-        var byteNums = new Array(byteChars.length);
-        for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
-        var blob = new Blob([new Uint8Array(byteNums)], { type: res.data.mimeType });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = res.data.filename || 'document';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        showFilePreview(res.data);
       } catch (err) {
-        showCustomAlert('Could not prepare the download. Please try again.', 'danger');
+        showCustomAlert('Could not display this document. Please try again.', 'danger');
       }
     })
     .withFailureHandler(function (err) {
@@ -3456,10 +3588,10 @@ function persistState(isAutoSave = false) {
     if (typeof google !== 'undefined') {
       google.script.run
         .withSuccessHandler((res) => {
-          if (res && res.success) {
+          if (res && res.ok) {
             if (isAutoSave) showDraftStatus('Saved', false);
           } else {
-            console.warn('Draft save failed:', res?.error || 'Unknown error');
+            console.warn('Draft save failed:', res?.message || 'Unknown error');
             if (isAutoSave) showDraftStatus('Save failed', true);
           }
         })
@@ -3831,7 +3963,7 @@ function goBack(screen) {
   TECHNICAL:
   Returns desktop (.form-sidebar) + mobile (.progress-bar) HTML. A nested
   hasUnfilledOptionalFields() inspects state.dcs to decide whether step 2 renders as 'pending'
-  (with '?') instead of 'done' (with '✓').
+  (with '?') instead of 'done' (with a check icon).
 
   PARAMS:
   - activeStep — the current step number (1-3).
@@ -3852,7 +3984,7 @@ function renderSidebarTracker(activeStep) {
     let numHtml = step.num;
     if (step.num < activeStep) {
       cls = 'done';
-      numHtml = '✓';
+      numHtml = icon('check', 13);
     } else if (step.num === activeStep) {
       cls = 'active';
     }
@@ -4571,7 +4703,7 @@ function renderForm() {
     </div>
 
     ${state.isEditing ? `
-    <span class="step-badge" style="background:var(--warn);color:var(--warn-text);border-color:rgba(180,109,20,0.2);margin-bottom:12px;display:inline-flex;gap:6px;">⚠ Revision Mode</span>
+    <span class="step-badge" style="background:var(--warn);color:var(--warn-text);border-color:rgba(180,109,20,0.2);margin-bottom:12px;display:inline-flex;gap:6px;align-items:center;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;flex-shrink:0;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Revision Mode</span>
     ` : ''}
     ${!state.isEditing && state.dcs._hadFiles ? `
     <div class="card" style="background:var(--danger);border-color:rgba(220,38,38,0.2);">
@@ -4822,7 +4954,7 @@ function renderForm() {
         </label>
         `}
         <div id="dsa-success" class="upload-success ${(s.dsa || state.dcs.dsa) && !dsaFileRetained ? '' : 'hidden'}">
-          ✓ ${s.dsa || state.dcs.dsa || ''} selected
+          Selected: ${s.dsa || state.dcs.dsa || ''}
         </div>
       </div>
 
@@ -4875,7 +5007,7 @@ function renderForm() {
         </label>
         `}
         <div id="agency-endorsement-success" class="upload-success ${(state.dcs.agency && state.dcs.agency.endorsementLetter) && !endorseFileRetained ? '' : 'hidden'}">
-          ✓ ${(state.dcs.agency && state.dcs.agency.endorsementLetter) || ''} selected
+          Selected: ${(state.dcs.agency && state.dcs.agency.endorsementLetter) || ''}
         </div>
       </div>
 
@@ -5084,7 +5216,7 @@ function renderForm() {
 
 /*
   Function Name: handleFileChange
-  LAYMAN: When you pick a file, shows a "✓ filename selected" confirmation and clears the
+  LAYMAN: When you pick a file, shows a "Selected: filename" confirmation and clears the
           "needs re-upload" warning.
   TECHNICAL: Reads input.files[0]; toggles the #successId element's text/visibility and resets
              state.dcs._hadFiles once any file is chosen.
@@ -5096,7 +5228,7 @@ function renderForm() {
 function handleFileChange(input, successId) {
   const successEl = document.getElementById(successId);
   if (input.files && input.files[0]) {
-    successEl.textContent = `✓ ${input.files[0].name} selected`;
+    successEl.textContent = `Selected: ${input.files[0].name}`;
     successEl.removeAttribute('style'); // #5: clear any "re-upload required" warning styling
     successEl.classList.remove('hidden');
     // If we were forcing re-upload, clear _hadFiles once any file is selected
@@ -5142,7 +5274,7 @@ function handleSupplementaryChange(input) {
 
 /*
   Function Name: clearUpload
-  LAYMAN: Clears a file picker + its "✓ selected" line when the required document changes
+  LAYMAN: Clears a file picker + its "Selected:" line when the required document changes
           (e.g. Internal→External, or standard→agency), so no stale file lingers.
   TECHNICAL: Resets the input value, hides the success element, and drops the saved File
              reference so it isn't re-applied on the next render.
@@ -5792,6 +5924,51 @@ function renderAgency() {
   - value — the row value (empty -> 'N/A').
   RETURNS: HTML string.
 */
+/*
+  Function Name: icon
+
+  LAYMAN (Tropang Ex):
+  Dati, emoji ang ginagamit na icon (⚠ ✓ ✗). Mukhang iba-iba yun depende sa OS at browser,
+  hindi masusunod ang kulay ng text, at labag sa sariling rule natin sa frontend ("no emoji
+  as interface icons"). Ito yung kapalit: totoong SVG na sumusunod sa kulay ng nakapaligid
+  na text, at walang kinukuhang file sa internet.
+
+  TECHNICAL:
+  Returns an inline SVG string for a small named icon set (Lucide-derived paths), stroked
+  with `currentColor` so it inherits the surrounding colour and needs no per-variant CSS.
+  Zero network requests, which matters here — Apps Script serves the page from a sandboxed
+  iframe and an external icon font would be a third-party fetch on every load.
+
+  🚩 Returns HTML, so only use it where the sink is innerHTML / a template literal that
+  becomes markup. It will render as literal text through `textContent` or through
+  summaryRow(), which escapes its value. In those places drop the glyph instead of
+  substituting one — a tick mark inside a sentence is punctuation, not an icon.
+
+  PARAMS:
+  - name — 'warn' | 'check' | 'x'. An unknown name returns '' rather than throwing.
+  - size — pixel box, default 14.
+
+  RETURNS:
+  An `<svg>` string, or '' for an unknown name.
+
+  EXAMPLE
+    el.innerHTML = icon('check') + ' Saved';
+    → '<svg …><path d="M20 6 9 17l-5-5"/></svg> Saved'
+*/
+function icon(name, size) {
+  const s = size || 14;
+  const paths = {
+    warn:  '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    x:     '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+  };
+  if (!paths[name]) return '';
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="' + s + '" height="' + s + '"'
+       + ' viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+       + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
+       + ' style="vertical-align:-2px;flex-shrink:0;">' + paths[name] + '</svg>';
+}
+
 function summaryRow(label, value) {
   const safeLabel = escapeHtml(label || '');
   const display = escapeHtml(value || 'N/A');
@@ -5939,7 +6116,7 @@ function renderSummary() {
           if (state.isEditing && fileName && !isFileFlaggedForRevision('dcs-nda')) {
             return summaryRow(docLabel, fileName + ' (retained)');
           } else if (state.isEditing && isFileFlaggedForRevision('dcs-nda')) {
-            return summaryRow(docLabel, (fileName || 'Not attached') + ' — ⚠ RE-UPLOAD REQUIRED');
+            return summaryRow(docLabel, (fileName || 'Not attached') + ' — RE-UPLOAD REQUIRED');
           }
           return summaryRow(docLabel, fileName || 'Not attached');
         })()}
@@ -5949,7 +6126,7 @@ function renderSummary() {
           if (state.isEditing && dsaName && !isFileFlaggedForRevision('dcs-dsa')) {
             return summaryRow('DSA', dsaName + ' (retained)');
           } else if (state.isEditing && isFileFlaggedForRevision('dcs-dsa')) {
-            return summaryRow('DSA', (dsaName || 'Not attached') + ' — ⚠ RE-UPLOAD REQUIRED');
+            return summaryRow('DSA', (dsaName || 'Not attached') + ' — RE-UPLOAD REQUIRED');
           }
           return summaryRow('DSA', dsaName || 'Not attached');
         })()}
@@ -5959,7 +6136,7 @@ function renderSummary() {
           if (state.isEditing && endName && !isFileFlaggedForRevision('dcs-agency-endorsement')) {
             return summaryRow(endLabel, endName + ' (retained)');
           } else if (state.isEditing && isFileFlaggedForRevision('dcs-agency-endorsement')) {
-            return summaryRow(endLabel, (endName || 'Not attached') + ' — ⚠ RE-UPLOAD REQUIRED');
+            return summaryRow(endLabel, (endName || 'Not attached') + ' — RE-UPLOAD REQUIRED');
           }
           return summaryRow(endLabel, endName || 'Not attached');
         })() : ''}
@@ -6127,7 +6304,7 @@ async function submitRequest() {
           hideLoading();
           if (btn) { btn.textContent = originalText; btn.disabled = false; }
           
-          if (response.success) {
+          if (response.ok) {
             const submittedAt = new Date().toLocaleDateString('en-PH', { year:'numeric', month:'short', day:'numeric' });
             const finalReqId = response.reqId;
             const phase2Url = response.phase2Url;
@@ -6138,7 +6315,7 @@ async function submitRequest() {
             show('success');
             renderSuccess(finalReqId, submittedAt, phase2Url);
           } else {
-            showCustomAlert('Submission failed: ' + response.error, 'danger');
+            showCustomAlert('Submission failed: ' + response.message, 'danger');
           }
         })
         .withFailureHandler((err) => {
@@ -6330,8 +6507,8 @@ function renderRequests() {
 
       if (loadingIndicator) loadingIndicator.classList.add('hidden'); // Hide loading
 
-      if (!response.success) {
-        requestsListContainer.innerHTML = `<div class="card"><p>Error: ${escapeHtml(response.error)}</p></div>`;
+      if (!response.ok) {
+        requestsListContainer.innerHTML = `<div class="card"><p>Error: ${escapeHtml(response.message)}</p></div>`;
         return;
       }
 
@@ -6572,8 +6749,8 @@ function renderRequestDetails(data) {
     var name = escapeHtml(obj.name || 'View file');
     // Missing ids would produce a dead button — show the plain name instead.
     if (!fid || !reqIdAttr) return name;
-    return '<button type="button" class="doc-link" title="Download ' + name + '"' +
-           ' onclick="downloadDcsFile(\'' + reqIdAttr + '\',\'' + fid + '\',this)">' +
+    return '<button type="button" class="doc-link" title="View ' + name + '"' +
+           ' onclick="viewDcsFile(\'' + reqIdAttr + '\',\'' + fid + '\',this)">' +
            name + '</button>';
   };
   const ndaFile = fileLinkHtml(files.find(f => f.type === 'NDA' || f.type === 'CU' || f.type === 'DPA'));
@@ -6864,7 +7041,7 @@ function fetchReturnedApplicationFromDB(reqId) {
   google.script.run
     .withSuccessHandler(res => {
       hideLoading();
-      if (res.success) {
+      if (res.ok) {
         state.isEditing = true;
         state.sessionId = reqId;
         
@@ -6923,7 +7100,7 @@ function fetchReturnedApplicationFromDB(reqId) {
         show('form');
         renderForm();
       } else {
-        showCustomAlert('Failed to load application: ' + res.error, 'danger');
+        showCustomAlert('Failed to load application: ' + res.message, 'danger');
       }
     })
     .withFailureHandler(err => {
@@ -6961,7 +7138,7 @@ function boot() {
   // Drafts are retrieved from the server via the "Proceed to Form" flow.
   if (typeof google !== 'undefined') {
     google.script.run.withSuccessHandler(res => {
-      if (res.success) {
+      if (res.ok) {
         state.config = res.config;
         if (state.currentScreen === 'guide') renderGuide();
       }

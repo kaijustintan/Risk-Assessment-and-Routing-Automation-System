@@ -286,8 +286,8 @@ const DB_SHEET_NAMES = {
   INFOSEC_CONFIG: 'InfoSec_Email_Config',
   EMAIL_QUEUE: 'Email_Queue',
   ADMIN_NOTIFICATION: 'Admin_Notification_Config',
-  REVISION_HISTORY: 'Revision_History',
-  APPLICATION_SNAPSHOTS: 'Application_Snapshots'
+  APPLICATION_SNAPSHOTS: 'Application_Snapshots',
+  DELEGATIONS: 'Delegations'   // out-of-office table, admin-managed. See resolveDelegate_.
 };
 
 const DB_SPREADSHEET_ID_PROP = 'PIA_DB_SPREADSHEET_ID';
@@ -372,7 +372,7 @@ function getAdminNotificationConfig_() {
   try {
     var sheet = getDatabaseSheet_(DB_SHEET_NAMES.ADMIN_NOTIFICATION, false);
     if (!sheet || sheet.getLastRow() < 2) return defaults;
-    var data = sheet.getDataRange().getValues();
+    var data = readSheetValues_(sheet);
     if (data.length < 2) return defaults;
     var row = data[1]; // First data row
     return {
@@ -531,7 +531,7 @@ function sendEmailWithRetry_(recipient, subject, body, options) {
       }
 
       return {
-        success: true,
+        ok: true, success: true,
         attempts: attempt + 1,
         error: null
       };
@@ -550,7 +550,7 @@ function sendEmailWithRetry_(recipient, subject, body, options) {
         Logger.log('ERROR: Email send failed to ' + recipient +
                    ' after ' + (attempt + 1) + ' attempts: ' + errorMsg);
         return {
-          success: false,
+          ok: false, success: false,
           attempts: attempt + 1,
           error: errorMsg
         };
@@ -565,7 +565,7 @@ function sendEmailWithRetry_(recipient, subject, body, options) {
   }
 
   return {
-    success: false,
+    ok: false, success: false,
     attempts: MAX_ATTEMPTS,
     error: 'Failed after ' + MAX_ATTEMPTS + ' attempts'
   };
@@ -667,7 +667,7 @@ const safeIdAttr_ = (v) => String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g,
   RETURNS:   HTML string for one download button.
 */
 const makeDocDownloadBtn_ = (sessionId, fileId, label, title) =>
-  `<button type="button" class="btn btn-sm" style="color: var(--navy-bright); border-color: var(--navy-bright);" title="${escapeHtml_(title || label)}" onclick="downloadDcsFile('${safeIdAttr_(sessionId)}','${safeIdAttr_(fileId)}',this)">${escapeHtml_(label)}</button>`;
+  `<button type="button" class="btn btn-sm" style="color: var(--navy-bright); border-color: var(--navy-bright);" title="${escapeHtml_(title || label)}" onclick="viewDcsFile('${safeIdAttr_(sessionId)}','${safeIdAttr_(fileId)}',this)">${escapeHtml_(label)}</button>`;
 
 /*
   Function: escapeHtml_
@@ -683,6 +683,384 @@ function escapeHtml_(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/*
+  ━━━ THE ERROR CONTRACT (F-06) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  LAYMAN (Tropang Ex):
+  Dati, kapag may pumalpak sa server, yung EKSAKTONG error message ng Google ang
+  ipinapakita sa browser. Problema: kasama dun yung ID ng spreadsheet at ng Drive folder
+  natin. Ibig sabihin, isang sirang request lang, may naibigay ka nang internal na ID sa
+  kung sino man ang nakatingin. Ngayon: yung totoong error, sa LOG lang; yung user,
+  malinis na mensahe + isang maikling "Reference" code. Kapag nag-report siya, hahanapin
+  mo lang yung code na yun sa Executions log at makikita mo yung buong detalye.
+
+  TECHNICAL:
+  Closes F-06 (CWE-200, "Raw error text returned to the client"). 89 catch blocks across
+  the three projects returned `error: e.toString()`; GAS exceptions echo the offending
+  resource ID, so a Drive failure leaked the folder id and a Sheets failure leaked the
+  spreadsheet id.
+
+  🚩 THE ENVELOPE IS DUAL-KEY, ON PURPOSE, FOR ONE RELEASE:
+
+      { ok: false, code: 'NOT_FOUND', message: '...', ref: '7f3a91',
+        success: false, error: '...' }        <- legacy pair, delete next release
+
+  `ok`/`code`/`message` are the contract going forward. `success`/`error` are kept so a
+  frontend call site that has not been migrated yet keeps working instead of silently
+  rendering "undefined" at a user. Three separate GAS projects deploy independently, so
+  a window where backend and frontend disagree is not hypothetical — it is the normal
+  case. Remove the legacy pair only after all three frontends are confirmed live on the
+  new keys, and remove it from all three projects in the same change.
+
+  ⚠️ The real exception goes to Logger.log ONLY — deliberately NOT to Risk_Audit. An audit
+  row per error is exactly the log-bloat pattern this repo already avoids elsewhere, and
+  a sheet write inside an error handler is a second failure waiting to happen. Stackdriver
+  ("exceptionLogging": "STACKDRIVER" in the manifest) already retains it, keyed by `ref`.
+*/
+const ERR = {
+  UNAUTHORIZED:     'UNAUTHORIZED',      // not signed in, or not on the allowed domain
+  FORBIDDEN:        'FORBIDDEN',         // signed in, but not a party to this record
+  NOT_FOUND:        'NOT_FOUND',
+  VALIDATION:       'VALIDATION',        // the caller sent something malformed
+  CONFLICT:         'CONFLICT',          // someone else changed it first
+  ALREADY_ACTIONED: 'ALREADY_ACTIONED',  // decision already recorded / no longer pending
+  BUSY:             'BUSY',              // could not acquire the lock in time
+  INTERNAL:         'INTERNAL'           // anything we did not anticipate
+};
+
+const ERR_MESSAGES = {
+  UNAUTHORIZED:     'You are not signed in with an authorized account.',
+  FORBIDDEN:        'You do not have access to this record.',
+  NOT_FOUND:        'That record could not be found.',
+  VALIDATION:       'Some of the information submitted was not valid.',
+  CONFLICT:         'Someone else updated this record. Please reload and try again.',
+  ALREADY_ACTIONED: 'This request has already been processed.',
+  BUSY:             'The system is busy right now. Please try again in a moment.',
+  INTERNAL:         'Something went wrong on our end.'
+};
+
+/*
+  Function: fail_
+  LAYMAN:    Gumagawa ng standard na "hindi natuloy" na sagot. Isang hugis lang, kahit saan.
+  TECHNICAL: Builds the dual-key failure envelope. Unknown codes degrade to INTERNAL rather
+             than emitting a code the frontend cannot interpret.
+  PARAMS:    - code — one of ERR.*.
+             - message — optional override; defaults to the code's standard wording.
+  RETURNS:   { ok:false, code, message, success:false, error }.
+  EXAMPLE
+    return fail_(ERR.NOT_FOUND);
+    return fail_(ERR.VALIDATION, 'Comment must be at least 20 characters.');
+*/
+function fail_(code, message) {
+  const c = Object.prototype.hasOwnProperty.call(ERR_MESSAGES, code) ? code : ERR.INTERNAL;
+  const m = message || ERR_MESSAGES[c];
+  return { ok: false, code: c, message: m, success: false, error: m };
+}
+
+/*
+  Function: safeError_
+  LAYMAN:    Ito ang tawagin sa loob ng catch. Sinusulat niya yung totoong error sa log
+             (kasama ang stack), tapos binibigay sa user yung malinis na mensahe at isang
+             maikling reference code. Yung reference code ang tulay: sabihin sa'yo ng user,
+             hanapin mo sa log.
+  TECHNICAL: Logs `[ref] CODE :: stack` then returns fail_() with the ref appended to the
+             public message. NEVER put e.toString()/e.message into the returned object.
+  PARAMS:    - e — the caught exception.
+             - code — one of ERR.* (defaults to INTERNAL).
+             - publicMessage — optional user-facing override.
+  RETURNS:   The dual-key failure envelope, plus a `ref` field.
+  EXAMPLE
+    } catch (e) { return safeError_(e, ERR.INTERNAL); }
+    → { ok:false, code:'INTERNAL', ref:'7f3a91',
+        message:'Something went wrong on our end. Reference: 7f3a91', … }
+*/
+function safeError_(e, code, publicMessage) {
+  const ref = Utilities.getUuid().slice(0, 8);
+  const detail = (e && e.stack) ? e.stack : String(e);
+  Logger.log('[' + ref + '] ' + (code || ERR.INTERNAL) + ' :: ' + detail);
+  const out = fail_(code || ERR.INTERNAL, publicMessage);
+  out.ref = ref;
+  out.message = out.message + ' Reference: ' + ref;
+  out.error = out.message;   // legacy key mirrors the new one for the transition window
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//  DELEGATION / OUT-OF-OFFICE  —  admin-managed
+// ════════════════════════════════════════════════════════════════════════════════════
+/*
+  ━━━ WHY THIS IS HARDER THAN A LOOKUP TABLE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  LAYMAN (Tropang Ex):
+  Nag-leave yung approver, tumigil yung request. Walang makakagalaw para sa kanya. Mukhang
+  simpleng ayusin — "gawan ng table kung sino ang kapalit" — pero hindi.
+
+  Yung email ng approver ay naka-BAON na sa row noong nag-submit pa lang. Tapos TATLONG
+  magkakaibang bagay ang naka-sandal dun: (1) yung security check na "ikaw ba talaga si X?",
+  (2) yung lagda sa link mismo sa email — naka-sign yun sa email NIYA, at (3) yung paghahanap
+  ng tamang row. Kaya kung ipapasa mo lang yung link sa kapalit, TATLO ang babagsak, hindi isa.
+
+  Ang solusyon: sa oras ng pag-email pa lang, ang DELEGATE na ang padadalhan AT ang delegate
+  na ang pipirmahan ng link. Ganun, normal na normal na yung daan ng link. Yung row, sa
+  ORIHINAL na approver pa rin naka-pangalan — dinadagdagan lang ng ACTED_BY para malinaw sa
+  audit trail kung sino talaga ang pumindot.
+
+  TECHNICAL:
+  Implements §IV.2. The approver email is denormalized into the workflow row at
+  initializeApprovalWorkflow_ time, and three mechanisms key off it:
+    1. the F-02 guard  (Session.getActiveUser() must equal the passed approver email)
+    2. the HMAC review token, minted OVER that email (generateAuthToken_)
+    3. the row lookup  (match on APPROVER_EMAIL + Pending + round)
+  A delegate clicking the original's link fails all three, so forwarding is not a workaround.
+
+  The design therefore resolves the delegate at NOTIFY time, not at decision time:
+    - notify paths send to the delegate and mint the token over the DELEGATE's email, so
+      handleEmailAction_'s identity check and token check both pass without modification;
+    - the F-02 guards widen from "is the same person" to canActAs_, which also accepts an
+      active delegate;
+    - the row match is unchanged — still the original approver's row — and ACTED_BY records
+      who really acted.
+
+  🚩 ADMIN-MANAGED ONLY, and that is a security decision, not a UI convenience. If approvers
+  could appoint their own stand-in, any approver could quietly route their own approvals to a
+  chosen colleague. ISM maintains the table; there is no self-service path.
+
+  🚩 A delegation does NOT let the delegate approve a request they are otherwise barred from,
+  and it does not stack: resolveDelegate_ takes ONE hop. If A delegates to B and B delegates
+  to C, A's requests go to B, not C. Chained delegation is a loop risk and an accountability
+  hole; if it is ever needed, add cycle detection first.
+*/
+const DELEGATION_COLS = {
+  DELEGATION_ID: 1,
+  FROM_EMAIL:    2,   // the approver who is away
+  TO_EMAIL:      3,   // who acts in their place
+  START_DATE:    4,   // inclusive, YYYY-MM-DD
+  END_DATE:      5,   // inclusive, YYYY-MM-DD
+  REASON:        6,
+  IS_ACTIVE:     7,   // 'YES' / 'NO' — a manual kill switch independent of the dates
+  CREATED_BY:    8,
+  CREATED_AT:    9
+};
+
+/*
+  Function: getDelegationsSheet_
+  LAYMAN:    Kinukuha (o ginagawa, kung wala pa) yung Delegations tab.
+  TECHNICAL: Self-healing accessor — creates the tab with headers on first use, mirroring
+             getApplicationSnapshotSheet_, so a deployment that never re-ran
+             initializeDatabase_ still works without a manual setup step.
+  PARAMS:    (none)
+  RETURNS:   The Sheet, or null if it could not be created.
+*/
+function getDelegationsSheet_() {
+  const sheet = getDatabaseSheet_(DB_SHEET_NAMES.DELEGATIONS, true);
+  if (!sheet) return null;
+  try {
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(['Delegation_ID', 'From_Email', 'To_Email', 'Start_Date', 'End_Date',
+                       'Reason', 'Is_Active', 'Created_By', 'Created_At']);
+      formatHeaderRow_(sheet);
+    }
+  } catch (e) {
+    Logger.log('getDelegationsSheet_: header init failed — ' + e);
+  }
+  return sheet;
+}
+
+/*
+  Function: resolveDelegate_
+
+  LAYMAN (Tropang Ex):
+  Tanong: "May kapalit ba si <email> ngayon?" Kung meron at aktibo pa (nasa loob ng petsa at
+  naka-YES), ibabalik yung email ng kapalit. Kung wala, null — normal na daloy.
+
+  TECHNICAL:
+  Single-hop lookup against the Delegations sheet. A row applies when Is_Active is YES and
+  today falls within [Start_Date, End_Date] inclusive. A blank start means "already started";
+  a blank end means "open-ended". Comparison is on whole local days so a delegation ending
+  today is still honoured all day.
+
+  🚩 Fails OPEN to "no delegate" on any error. That is the right direction: a broken
+  delegation table must degrade to normal routing (the named approver still gets the mail),
+  never to "nobody is notified".
+
+  PARAMS:
+  - email — the named approver's address.
+  - atDate — optional Date to evaluate against; defaults to now. Used by tests.
+
+  RETURNS:
+  { email, reason, delegationId } for an active delegate, or null.
+
+  EXAMPLE
+    resolveDelegate_('jane@megaworld.com')
+    → { email:'carlo@megaworld.com', reason:'Annual leave', delegationId:'DEL-0003' }
+    → null when Jane is not away, or when the sheet is unreadable
+*/
+function resolveDelegate_(email, atDate) {
+  const from = getNormalizedEmail_(email);
+  if (!from) return null;
+  let rows;
+  try {
+    const sheet = getDelegationsSheet_();
+    if (!sheet) return null;
+    rows = readSheetValues_(sheet);
+  } catch (e) {
+    Logger.log('resolveDelegate_: delegation lookup failed, falling back to direct routing — ' + e);
+    return null;
+  }
+  if (!rows || rows.length < 2) return null;
+
+  const now = atDate || new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (String(r[DELEGATION_COLS.IS_ACTIVE - 1] || '').trim().toUpperCase() !== 'YES') continue;
+    if (getNormalizedEmail_(r[DELEGATION_COLS.FROM_EMAIL - 1]) !== from) continue;
+
+    const to = sanitizeEmail_(r[DELEGATION_COLS.TO_EMAIL - 1]);
+    if (!to) continue;
+    if (getNormalizedEmail_(to) === from) continue;   // self-delegation is a no-op, not an error
+
+    const start = parseDelegationDate_(r[DELEGATION_COLS.START_DATE - 1]);
+    const end   = parseDelegationDate_(r[DELEGATION_COLS.END_DATE - 1]);
+    if (start && today < start) continue;
+    if (end && today > end) continue;
+
+    return {
+      email: to,
+      reason: String(r[DELEGATION_COLS.REASON - 1] || '').trim(),
+      delegationId: String(r[DELEGATION_COLS.DELEGATION_ID - 1] || '').trim()
+    };
+  }
+  return null;
+}
+
+/*
+  Function: parseDelegationDate_
+  LAYMAN:    Ginagawang petsa yung laman ng cell. Kung walang laman o hindi mabasa, null —
+             ibig sabihin walang hangganan sa gilid na yun.
+  TECHNICAL: Accepts a Date object (Sheets often auto-converts) or 'YYYY-MM-DD', normalized to
+             local midnight so day comparisons are inclusive at both ends. Returns null for
+             blank or unparseable, which callers treat as "unbounded on that side".
+  PARAMS:    - v — the raw cell value.
+  RETURNS:   A Date at local midnight, or null.
+*/
+function parseDelegationDate_(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (Object.prototype.toString.call(v) === '[object Date]') {
+    return isNaN(v.getTime()) ? null : new Date(v.getFullYear(), v.getMonth(), v.getDate());
+  }
+  const m = String(v).trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(String(v));
+  return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/*
+  Function: canActAs_
+
+  LAYMAN (Tropang Ex):
+  "Pwede bang si <caller> ang pumirma para kay <approver>?" Oo kung (a) sila mismo, o
+  (b) sila ang naka-set na kapalit ngayon. Wala nang pangatlo.
+
+  TECHNICAL:
+  The widened F-02 predicate.
+
+  🚩 EXCLUSIVE, NOT ADDITIVE — and that is the whole point. The first cut of this function
+  checked same-person FIRST and delegation second, which meant the original approver AND
+  their delegate could both act on the same Pending row. That is not a handoff, it is a
+  race: two people can hold a valid link to the same step and click Approve seconds apart,
+  and whichever write lands second silently loses (the row is no longer Pending, so the
+  second caller gets "record not found" — confusing at best, and it makes "who actually
+  decided this" ambiguous).
+
+  Delegation is therefore resolved FIRST and answers for the whole function: while a
+  delegation is active, ONLY the delegate passes. The original approver is refused on
+  exactly the same branch a stranger is. There is always exactly one "yes".
+
+  With an empty Delegations sheet (day one, or once a delegation expires or is removed)
+  resolveDelegate_ returns null and this collapses to a plain identity check, i.e. the
+  pre-delegation behaviour.
+
+  PARAMS:
+  - callerEmail — the resolved Session.getActiveUser() address.
+  - approverEmail — the address named on the workflow row.
+
+  RETURNS:
+  { allowed:boolean, onBehalfOf:string } — onBehalfOf is '' when the approver acted
+  personally, and the ORIGINAL approver's address when a delegate acted. Callers write that
+  straight into ACTED_BY.
+
+  EXAMPLE
+    // no delegation in effect
+    canActAs_('jane@mw.com',   'jane@mw.com') → { allowed:true,  onBehalfOf:'' }
+    canActAs_('mallory@mw.com','jane@mw.com') → { allowed:false, onBehalfOf:'' }
+    // while Jane is delegated to Carlo
+    canActAs_('carlo@mw.com',  'jane@mw.com') → { allowed:true,  onBehalfOf:'jane@mw.com' }
+    canActAs_('jane@mw.com',   'jane@mw.com') → { allowed:false, onBehalfOf:'' }  ← Jane too
+*/
+function canActAs_(callerEmail, approverEmail) {
+  const me = getNormalizedEmail_(callerEmail);
+  const target = getNormalizedEmail_(approverEmail);
+  if (!me || !target) return { allowed: false, onBehalfOf: '' };
+
+  // Delegation first, and it is exclusive: an active delegate is the ONLY one who may act.
+  // Checking same-person first (the obvious ordering) is what would reopen the double-approve
+  // window, because the original would short-circuit out before delegation was ever consulted.
+  const del = resolveDelegate_(target);
+  if (del) {
+    if (me === getNormalizedEmail_(del.email)) {
+      Logger.log('DELEGATION: ' + me + ' acting on behalf of ' + target +
+                 (del.delegationId ? ' [' + del.delegationId + ']' : ''));
+      return { allowed: true, onBehalfOf: target };
+    }
+    if (me === target) {
+      Logger.log('DELEGATION: refused ' + me + ' on their own row — currently delegated to ' +
+                 del.email + (del.delegationId ? ' [' + del.delegationId + ']' : ''));
+    }
+    return { allowed: false, onBehalfOf: '' };   // includes the original — no shared window
+  }
+
+  if (me === target) return { allowed: true, onBehalfOf: '' };
+  return { allowed: false, onBehalfOf: '' };
+}
+
+/*
+  Function: recipientFor_
+  LAYMAN:    Sino ang dapat padalhan ng email para sa approver na ito? Kung may kapalit,
+             siya. Kung wala, yung approver mismo.
+  TECHNICAL: The single choke point every notify path routes through, so delegation cannot
+             be half-applied (mail to one address, token signed for another — which would
+             produce a link that fails the identity check and look like a bug).
+  PARAMS:    - approverEmail — the address named on the workflow row.
+  RETURNS:   { email, onBehalfOf, reason } — onBehalfOf is '' when there is no delegation.
+*/
+function recipientFor_(approverEmail) {
+  const del = resolveDelegate_(approverEmail);
+  if (!del) return { email: approverEmail, onBehalfOf: '', reason: '' };
+  return { email: del.email, onBehalfOf: approverEmail, reason: del.reason };
+}
+
+/*
+  Function: delegationNoticeHtml_
+  LAYMAN:    Yung maliit na paalala sa email: "pinapadala ito sa'yo kasi ikaw ang kapalit ni
+             <X>." Kailangan yun — kung wala, magtataka yung tao kung bakit siya inemail
+             tungkol sa request na hindi naman sa kanya.
+  TECHNICAL: Returns '' when there is no delegation, so every call site can concatenate it
+             unconditionally without a branch.
+  PARAMS:    - onBehalfOf — the original approver's address, or ''.  - reason — optional.
+  RETURNS:   An HTML string, or ''.
+*/
+function delegationNoticeHtml_(onBehalfOf, reason) {
+  if (!onBehalfOf) return '';
+  return '<div style="background:#fffbeb;border:1px solid rgba(180,109,20,0.25);border-radius:4px;'
+       + 'padding:10px 14px;font-size:13px;color:#92400e;margin-bottom:16px;">'
+       + 'You are receiving this because you are the designated delegate for <strong>'
+       + escapeHtml_(onBehalfOf) + '</strong>'
+       + (reason ? ' (' + escapeHtml_(reason) + ')' : '')
+       + '. Your decision will be recorded as made on their behalf.</div>';
 }
 
 /*
@@ -727,7 +1105,7 @@ function getAndShareDCSFiles_(dcsReqId) {
   try {
     const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, false);
     if (dcsSheet) {
-      const vals = dcsSheet.getDataRange().getValues();
+      const vals = readSheetValues_(dcsSheet);
       for (let i = 1; i < vals.length; i++) {
         if (String(vals[i][DCS_COLS.REQ_ID - 1] || '').trim() === String(dcsReqId).trim()) {
           let arr = [];
@@ -790,7 +1168,7 @@ function getDCSSupersededFiles_(dcsReqId) {
   try {
     const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, false);
     if (!dcsSheet) return [];
-    const vals = dcsSheet.getDataRange().getValues();
+    const vals = readSheetValues_(dcsSheet);
     for (let i = 1; i < vals.length; i++) {
       if (String(vals[i][DCS_COLS.REQ_ID - 1] || '').trim() === String(dcsReqId).trim()) {
         let meta = {};
@@ -909,7 +1287,7 @@ function collectDcsFileIds_(row) {
 function apiDownloadDcsFile(sessionId, fileId) {
   const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024; // 8 MB decoded; ~10.7 MB once base64-encoded
   // One opaque message for every authorization failure — never reveal which gate rejected.
-  const DENIED = { success: false, error: 'Document not available.' };
+  const DENIED = { ok: false, success: false, error: 'Document not available.' };
 
   try {
     /* Step 1 — Domain + argument gate. */
@@ -932,7 +1310,7 @@ function apiDownloadDcsFile(sessionId, fileId) {
     const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, false);
     if (!dcsSheet) return DENIED;
 
-    const vals = dcsSheet.getDataRange().getValues();
+    const vals = readSheetValues_(dcsSheet);
     let dcsRow = null;
     for (let i = 1; i < vals.length; i++) {
       if (String(vals[i][DCS_COLS.REQ_ID - 1] || '').trim() === linkedReqId) {
@@ -955,7 +1333,7 @@ function apiDownloadDcsFile(sessionId, fileId) {
     const bytes = blob.getBytes();
     if (bytes.length > MAX_DOWNLOAD_BYTES) {
       return {
-        success: false,
+        ok: false, success: false,
         error: 'This document is too large to open here (' +
                (bytes.length / 1024 / 1024).toFixed(1) +
                ' MB). Please request a copy from the ISM Department.'
@@ -963,7 +1341,7 @@ function apiDownloadDcsFile(sessionId, fileId) {
     }
 
     return {
-      success: true,
+      ok: true, success: true,
       data: {
         base64  : Utilities.base64Encode(bytes),
         mimeType: blob.getContentType() || 'application/octet-stream',
@@ -974,7 +1352,7 @@ function apiDownloadDcsFile(sessionId, fileId) {
   } catch (e) {
     // Generic to the caller, specific to the log — Drive errors echo resource IDs.
     Logger.log('apiDownloadDcsFile failed for ' + sessionId + '/' + fileId + ': ' + e.toString());
-    return { success: false, error: 'Could not open this document. Please try again or contact ISM.' };
+    return { ok: false, success: false, error: 'Could not open this document. Please try again or contact ISM.' };
   }
 }
 
@@ -995,6 +1373,10 @@ function getStyledHtmlWrapper_(header, content) {
     <head>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
       <style>
+        /* GENERATED from docs/design-tokens.css — this is the block an APPROVER sees on the
+           page they land on from an email link. It drifted to navy #1a3a5c and radius 6/12 for
+           months because nobody thinks of the backend as having a stylesheet. Edit the canonical
+           file, then paste into all 6 targets. */
         :root {
           --bg:      #ffffff;
           --bg2:     #f7f8fa;
@@ -1004,15 +1386,15 @@ function getStyledHtmlWrapper_(header, content) {
           --text3:   #9ca3af;
           --border:  #e5e7eb;
           --border2: #d1d5db;
-          --radius:  6px;
-          --radius-lg: 12px;
+          --radius:  4px;
+          --radius-lg: 9px;
           --font:    'DM Sans', system-ui, sans-serif;
-          --navy:    #1a3a5c;
-          --navy-mid: #1e4976;
-          --navy-bright: #185FA5;
-          --navy-glow: rgba(26, 58, 92, 0.12);
-          --navy-tint: #eef4fb;
-          --navy-border: rgba(26, 58, 92, 0.18);
+          --navy:    #1e3a5f;
+          --navy-mid: #2a5285;
+          --navy-bright: #3b76c4;
+          --navy-glow: rgba(30, 58, 95, 0.12);
+          --navy-tint: #f4f7fb;
+          --navy-border: rgba(30, 58, 95, 0.18);
           --danger:  #fef2f2;
           --danger-text: #991b1b;
           --warn:    #fffbeb;
@@ -1322,14 +1704,135 @@ function getStyledHtmlWrapper_(header, content) {
         function showError(msg) { _showToast(msg, 'error'); }
         function showSuccess(msg) { _showToast(msg, 'success'); }
 
-        // ── Secure document download ────────────────────────────────────────────────
+        // ── Secure document viewer ──────────────────────────────────────────────────
         // DCS attachments used to render as raw https://drive.google.com/file/d/<id>/view links,
         // which only worked because uploads were published with ANYONE_WITH_LINK. Documents are
         // now PRIVATE in Drive; apiDownloadDcsFile re-checks that the caller is party to this
         // request AND that the fileId belongs to it, then returns the bytes as base64.
-        // NOTE: plain string concatenation only — this whole block sits inside a backtick
-        // template literal in pia_code.js, so a \${...} here would be interpolated server-side.
-        function downloadDcsFile(sessionId, fileId, btn) {
+        //
+        // This is the APPROVER-FACING copy — the page reached from an email link. It is a
+        // deliberate triplicate of the viewer in Phase 1/index.html and Phase 2/pia_index.html;
+        // three separate GAS projects, and this page is not even the same document as the PIA
+        // app. Edit all three together.
+        //
+        // NOTE: plain string concatenation only, and NO backticks — this whole block sits inside
+        // a backtick template literal in pia_code.js. A dollar-brace sequence here would be
+        // interpolated server-side, and a stray backtick would terminate the template early.
+        // (Both failure modes pass node --check on the file and only break the SERVED page.)
+        var __filePreviewUrl = null;
+
+        function filePreviewEscHandler(e) {
+          if (e.key === 'Escape') closeFilePreview();
+        }
+
+        // Revokes the blob. The preview cannot revoke right after creation the way the old
+        // download-only path did, because the iframe/img reads the URL for as long as it is on
+        // screen — so every exit route (X, backdrop, Esc, opening another file) lands here.
+        function closeFilePreview() {
+          var host = document.getElementById('filePreviewOverlay');
+          if (host && host.parentNode) host.parentNode.removeChild(host);
+          if (__filePreviewUrl) { URL.revokeObjectURL(__filePreviewUrl); __filePreviewUrl = null; }
+          document.removeEventListener('keydown', filePreviewEscHandler);
+        }
+
+        // Renders into the CURRENT document rather than window.open(blobUrl): this page is served
+        // inside Apps Script's sandboxed iframe, where popups are blocked and a blob: URL is not
+        // reliably navigable as a top-level document. Filename goes in via textContent, never
+        // innerHTML — it is user-supplied and there is no escape helper in scope here.
+        function showFilePreview(data) {
+          closeFilePreview();
+
+          var mime = String((data && data.mimeType) || 'application/octet-stream');
+          var name = String((data && data.filename) || 'document');
+
+          var byteChars = atob(data.base64);
+          var byteNums = new Array(byteChars.length);
+          for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+          __filePreviewUrl = URL.createObjectURL(new Blob([new Uint8Array(byteNums)], { type: mime }));
+
+          var isPdf = mime.indexOf('pdf') !== -1;
+          var isImg = mime.indexOf('image/') === 0;
+
+          var ov = document.createElement('div');
+          ov.id = 'filePreviewOverlay';
+          ov.setAttribute('role', 'dialog');
+          ov.setAttribute('aria-modal', 'true');
+          ov.setAttribute('aria-label', 'Document preview');
+          ov.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(17,24,39,0.6);' +
+            'z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:16px;';
+
+          var box = document.createElement('div');
+          box.style.cssText = 'background:#fff;border-radius:9px;width:100%;max-width:900px;height:90vh;' +
+            'display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25);';
+
+          var head = document.createElement('div');
+          head.style.cssText = 'display:flex;align-items:center;gap:10px;padding:11px 14px;' +
+            'border-bottom:1px solid #e5e7eb;flex-shrink:0;';
+
+          var title = document.createElement('div');
+          title.textContent = name;
+          title.style.cssText = 'font-weight:600;font-size:13.5px;color:#111827;flex:1;min-width:0;' +
+            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+          var dl = document.createElement('button');
+          dl.type = 'button';
+          dl.textContent = 'Download';
+          dl.style.cssText = 'padding:6px 14px;font-size:12.5px;font-weight:500;cursor:pointer;' +
+            'border:1px solid #d1d5db;border-radius:4px;background:#fff;color:#111827;flex-shrink:0;';
+          dl.onclick = function () {
+            var a = document.createElement('a');
+            a.href = __filePreviewUrl;
+            a.download = name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          };
+
+          var x = document.createElement('button');
+          x.type = 'button';
+          x.setAttribute('aria-label', 'Close preview');
+          x.innerHTML = '&times;';
+          x.style.cssText = 'border:none;background:none;font-size:22px;line-height:1;cursor:pointer;' +
+            'color:#6b7280;padding:0 4px;flex-shrink:0;';
+          x.onclick = closeFilePreview;
+
+          head.appendChild(title);
+          head.appendChild(dl);
+          head.appendChild(x);
+
+          var pane = document.createElement('div');
+          pane.style.cssText = 'flex:1;min-height:0;background:#f7f8fa;' +
+            (isImg ? 'display:flex;align-items:center;justify-content:center;padding:12px;' : '');
+
+          if (isPdf) {
+            var frame = document.createElement('iframe');
+            frame.src = __filePreviewUrl;
+            frame.title = name;
+            frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+            pane.appendChild(frame);
+          } else if (isImg) {
+            var img = document.createElement('img');
+            img.src = __filePreviewUrl;
+            img.alt = name;
+            img.style.cssText = 'max-width:100%;max-height:100%;display:block;';
+            pane.appendChild(img);
+          } else {
+            var note = document.createElement('div');
+            note.style.cssText = 'padding:36px 24px;text-align:center;color:#4b5563;font-size:13px;line-height:1.7;';
+            note.textContent = 'This file type cannot be displayed in the browser. ' +
+              'Use Download to open it in the right application.';
+            pane.appendChild(note);
+          }
+
+          box.appendChild(head);
+          box.appendChild(pane);
+          ov.appendChild(box);
+          ov.addEventListener('click', function (e) { if (e.target === ov) closeFilePreview(); });
+          document.body.appendChild(ov);
+          document.addEventListener('keydown', filePreviewEscHandler);
+        }
+
+        function viewDcsFile(sessionId, fileId, btn) {
           var originalHtml = btn ? btn.innerHTML : '';
           if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.innerHTML = 'Opening...'; }
           function restore() {
@@ -1338,25 +1841,14 @@ function getStyledHtmlWrapper_(header, content) {
           google.script.run
             .withSuccessHandler(function (res) {
               restore();
-              if (!res || !res.success) {
-                showError((res && res.error) ? res.error : 'Could not open this document.');
+              if (!res || !res.ok) {
+                showError((res && res.message) ? res.message : 'Could not open this document.');
                 return;
               }
               try {
-                var byteChars = atob(res.data.base64);
-                var byteNums = new Array(byteChars.length);
-                for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
-                var blob = new Blob([new Uint8Array(byteNums)], { type: res.data.mimeType });
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = res.data.filename || 'document';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+                showFilePreview(res.data);
               } catch (err) {
-                showError('Could not prepare the download. Please try again.');
+                showError('Could not display this document. Please try again.');
               }
             })
             .withFailureHandler(function () {
@@ -1403,7 +1895,14 @@ const APPROVAL_COLS = {
   REMINDER_DATE: 10,
   EMAIL_STATUS: 11,
   EMAIL_ERROR: 12,
-  NOTIFIED_DATE: 13 // Commit 6: date this approver was first notified (drives the 7-day first-reminder clock)
+  NOTIFIED_DATE: 13, // Commit 6: date this approver was first notified (drives the 7-day first-reminder clock)
+  // ── Append-only workflow (2026-08-11). Appended at the END so no existing index shifts. ──
+  ROUND_NUMBER: 14,  // which resubmission cycle this row belongs to. Blank/0 is read as round 1.
+  FLAGGED_FIELDS: 15, // JSON of what THIS approver flagged on THIS round (only set on a Return).
+  // ── Delegation (2026-08-11). Also appended at the END, same reason. ──
+  ACTED_BY: 16       // who actually clicked, when that is NOT the named approver. Blank = the
+                     // approver acted personally. Set only on a delegated decision, so the
+                     // audit trail reads "approved by X on behalf of Y".
 };
 
 const AUDIT_COLS = {
@@ -1450,7 +1949,14 @@ const ISM_WORKFLOW_COLS = {
   REMINDER_DATE: 13,
   EMAIL_STATUS: 14,
   EMAIL_ERROR: 15,
-  NOTIFIED_DATE: 16 // Commit 6: date this ISM member was first notified (drives the 7-day first-reminder clock)
+  NOTIFIED_DATE: 16, // Commit 6: date this ISM member was first notified (drives the 7-day first-reminder clock)
+  // ── Append-only workflow (2026-08-11). Appended at the END so no existing index shifts. ──
+  ROUND_NUMBER: 17,  // which resubmission cycle this row belongs to. Blank/0 is read as round 1.
+  FLAGGED_FIELDS: 18, // JSON of what THIS reviewer flagged on THIS round (only set on a Return).
+  // ── Delegation (2026-08-11). Also appended at the END, same reason. ──
+  ACTED_BY: 19        // who actually clicked, when that is NOT the named ISM member. Blank
+                      // means they acted personally. Set only on a delegated decision, so
+                      // the audit trail reads "approved by X on behalf of Y".
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1467,28 +1973,18 @@ const DIV_HEAD_CONFIG_COLS = {
   REMINDER_DATE: 8,
   EMAIL_STATUS: 9,
   EMAIL_ERROR: 10,
-  NOTIFIED_DATE: 11 // Commit 6: date this Division Head was first notified (drives the 7-day first-reminder clock)
+  NOTIFIED_DATE: 11, // Commit 6: date this Division Head was first notified (drives the 7-day first-reminder clock)
+  // ── Append-only workflow (2026-08-11). Appended at the END so no existing index shifts. ──
+  ROUND_NUMBER: 12,  // which resubmission cycle this row belongs to. Blank/0 is read as round 1.
+  FLAGGED_FIELDS: 13, // JSON of what the Division Head flagged on THIS round (only set on a Return).
+  // ── Delegation (2026-08-11). Also appended at the END, same reason. ──
+  ACTED_BY: 14        // who actually clicked, when that is NOT the named Division Head.
+                      // Blank means they acted personally. Set only on a delegated
+                      // decision, so the audit trail reads "approved by X on behalf of Y".
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // REVISION HISTORY SHEET COLUMNS (durable return-cycle logbook)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const REVISION_HISTORY_COLS = {
-  HISTORY_ID: 1,
-  SESSION_ID: 2,
-  ROUND_NUMBER: 3,
-  STAGE: 4,
-  APPROVER_NAME: 5,
-  APPROVER_EMAIL: 6,
-  ROLE: 7,
-  DECISION: 8,
-  STATUS: 9,
-  COMMENTS: 10,
-  FLAGGED_FIELDS: 11,
-  ROUTING: 12,
-  DECISION_DATE: 13,
-  SNAPSHOT_AT: 14
-};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // APPLICATION SNAPSHOT COLUMNS (what the approvers actually saw, per round)
@@ -1501,12 +1997,15 @@ const REVISION_HISTORY_COLS = {
 // TECHNICAL: Append-only per-round snapshot of the five PIA_*_Data blobs plus the approver flags,
 //   written by submitApplication_ immediately BEFORE the resubmit overwrite, inside the same lock.
 //
-//   🚩 WHY A SEPARATE SHEET, NOT EXTRA Revision_History COLUMNS: REVISION_HISTORY_COLS is mirrored
-//   in Phase 1/Code.js (getRevisionHistoryRows_) so DCS can read the same tab. Widening it would be
-//   a cross-app contract break of exactly the kind CLAUDE.md §2 forbids. A new tab touches nothing.
+//   🚩 THIS IS NOT THE SAME KIND OF THING AS THE OLD Revision_History, which was retired when the
+//   workflow went append-only. That sheet was a copy-before-DELETE of rows that never needed
+//   deleting. This is a copy-before-UPDATE of Applications.PIA_1..5_Data, which genuinely is a
+//   single-current-state record looked up by SessionID across all three apps — versioning it into
+//   multiple rows would break every reader in the system. Current-state row + separate history
+//   table is the correct pattern here, not a workaround.
 //
-//   Revision_History captures the DECISIONS of a round; this captures the SUBMISSION of that round.
-//   The two are keyed by the same (SessionID, RoundNumber) pair and are meant to be read together.
+//   The workflow sheets hold the DECISIONS of each round; this holds the SUBMISSION of that round.
+//   Both are keyed by (SessionID, RoundNumber) and are meant to be read together.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const APPLICATION_SNAPSHOT_COLS = {
   SNAPSHOT_ID: 1,
@@ -1692,7 +2191,7 @@ function handleAdminApiRequest_(e) {
     // Authenticate
     if (!validKey || apiKey !== validKey) {
       return ContentService.createTextOutput(JSON.stringify({
-        success: false, error: 'Unauthorized — invalid or missing apiKey'
+        ok: false, success: false, error: 'Unauthorized — invalid or missing apiKey'
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -1751,14 +2250,14 @@ function handleAdminApiRequest_(e) {
         result = adminGetPipelineView_(params.sessionId);
         break;
       default:
-        result = { success: false, error: 'Unknown action: ' + action };
+        result = { ok: false, success: false, error: 'Unknown action: ' + action };
     }
 
     return ContentService.createTextOutput(JSON.stringify(result))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (e) {
     return ContentService.createTextOutput(JSON.stringify({
-      success: false, error: 'API handler error: ' + e.toString()
+      ok: false, success: false, error: 'API handler error: ' + e.toString()
     })).setMimeType(ContentService.MimeType.JSON);
   }
 }
@@ -1782,6 +2281,7 @@ function handleAdminApiRequest_(e) {
 function handleEmailAction_(params) {
   const webAppUrl = getWebAppUrl_() || ScriptApp.getService().getUrl();
   const { action, sessionId, token, ts, isPost, approverType } = params;
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   const allowedActions = ['Approve', 'Reject', 'Deny', 'Review', 'Return', 'ISMReview'];
 
   if (allowedActions.indexOf(action) === -1) {
@@ -1827,11 +2327,11 @@ function handleEmailAction_(params) {
 
   if (action === 'ISMReview' || action.startsWith('ISM')) {
     const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-    const ismData = ismWorkflowSheet.getDataRange().getValues();
+    const ismData = readSheetValues_(ismWorkflowSheet);
     let foundPending = false;
     let completedRecord = null;
     for (let i = 1; i < ismData.length; i++) {
-      if (ismData[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId &&
+      if (rowMatches_(ismData[i], ISM_WORKFLOW_COLS, sessionId, __round) &&
           getNormalizedEmail_(ismData[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]) === normalizedTargetEmail) {
         
         const loopStep = Number(ismData[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] || 1);
@@ -1853,11 +2353,11 @@ function handleEmailAction_(params) {
   } else if (action === 'Review' || ['Approve', 'Reject', 'Deny', 'Return'].includes(action)) {
     if (approverType === 'divhead') {
       const divHeadSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
-      const divData = divHeadSheet.getDataRange().getValues();
+      const divData = readSheetValues_(divHeadSheet);
       let foundPending = false;
       let completedRecord = null;
       for (let i = 1; i < divData.length; i++) {
-        if (divData[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === sessionId &&
+        if (rowMatches_(divData[i], DIV_HEAD_CONFIG_COLS, sessionId, __round) &&
             getNormalizedEmail_(divData[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1]) === normalizedTargetEmail) {
           if (divData[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') {
             foundPending = true;
@@ -1872,11 +2372,11 @@ function handleEmailAction_(params) {
       }
     } else {
       const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-      const apprData = apprSheet.getDataRange().getValues();
+      const apprData = readSheetValues_(apprSheet);
       let foundPending = false;
       let completedRecord = null;
       for (let i = 1; i < apprData.length; i++) {
-        if (apprData[i][APPROVAL_COLS.SESSION_ID - 1] === sessionId &&
+        if (rowMatches_(apprData[i], APPROVAL_COLS, sessionId, __round) &&
             getNormalizedEmail_(apprData[i][APPROVAL_COLS.APPROVER_EMAIL - 1]) === normalizedTargetEmail) {
           
           const loopStep = Number(apprData[i][APPROVAL_COLS.CURRENT_STEP - 1] || 1);
@@ -2302,9 +2802,9 @@ function handleEmailAction_(params) {
     };
     try {
       const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-      const data = ismWorkflowSheet.getDataRange().getValues();
+      const data = readSheetValues_(ismWorkflowSheet);
       for (let i = 1; i < data.length; i++) {
-        if (data[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId) {
+        if (rowMatches_(data[i], ISM_WORKFLOW_COLS, sessionId, __round)) {
           context.steps.push({
             step: data[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1],
             name: data[i][ISM_WORKFLOW_COLS.ISM_MEMBER_NAME - 1],
@@ -2327,11 +2827,11 @@ function handleEmailAction_(params) {
   const getISMReviewerStep = () => {
     try {
       const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-      const data = ismWorkflowSheet.getDataRange().getValues();
+      const data = readSheetValues_(ismWorkflowSheet);
       const normalizedTarget = String(getNormalizedEmail_(targetEmail) || '').toLowerCase();
       
       for (let i = 1; i < data.length; i++) {
-        if (data[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId) {
+        if (rowMatches_(data[i], ISM_WORKFLOW_COLS, sessionId, __round)) {
           const normalizedMember = String(getNormalizedEmail_(data[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]) || '').toLowerCase();
           const status = String(data[i][ISM_WORKFLOW_COLS.STATUS - 1] || '').trim();
           if (normalizedMember === normalizedTarget && status === 'Pending') {
@@ -2348,11 +2848,11 @@ function handleEmailAction_(params) {
   const getApproverStep = () => {
     try {
       const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-      const data = apprSheet.getDataRange().getValues();
+      const data = readSheetValues_(apprSheet);
       const normalizedTarget = String(getNormalizedEmail_(targetEmail) || '').toLowerCase();
       
       for (let i = 1; i < data.length; i++) {
-        if (data[i][APPROVAL_COLS.SESSION_ID - 1] === sessionId) {
+        if (rowMatches_(data[i], APPROVAL_COLS, sessionId, __round)) {
           const normalizedMember = String(getNormalizedEmail_(data[i][APPROVAL_COLS.APPROVER_EMAIL - 1]) || '').toLowerCase();
           const status = String(data[i][APPROVAL_COLS.STATUS - 1] || '').trim();
           if (normalizedMember === normalizedTarget && status === 'Pending') {
@@ -2369,9 +2869,9 @@ function handleEmailAction_(params) {
   const checkDivHeadReviewed = () => {
     try {
       const divHeadSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
-      const data = divHeadSheet.getDataRange().getValues();
+      const data = readSheetValues_(divHeadSheet);
       for (let i = 1; i < data.length; i++) {
-        if (data[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === sessionId &&
+        if (rowMatches_(data[i], DIV_HEAD_CONFIG_COLS, sessionId, __round) &&
             data[i][DIV_HEAD_CONFIG_COLS.DECISION - 1] !== '') {
           return true;
         }
@@ -2591,7 +3091,7 @@ function handleEmailAction_(params) {
               <div><div class="routing-title">Both Teams</div><div class="routing-desc">DCOPS &amp; TechServe</div></div>
             </label>
           </div>
-          <div id="routingErrorMain" style="display:none; color:var(--danger-text); font-size:12.5px; margin-top:8px;">⚠ Please select a routing destination for Approve or Escalate.</div>
+          <div id="routingErrorMain" style="display:none; color:var(--danger-text); font-size:12.5px; margin-top:8px;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;flex-shrink:0;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Please select a routing destination for Approve or Escalate.</div>
           <div style="font-size:12px; color:var(--text3); line-height:1.4; margin-top:8px;">Routing is required only for <strong>Approve</strong> or <strong>Escalate</strong>. Leave it unselected for <strong>Return</strong> or <strong>Deny</strong>.</div>
 
           <div class="modal-step-title" style="margin:18px 0 10px;">Decision</div>
@@ -3267,11 +3767,30 @@ function handleEmailAction_(params) {
 }
 
 /*
+  Constant: __SS_HANDLE_CACHE
+
+  LAYMAN (Tropang Ex):
+  Isang execution lang ito buhay. Dati, kada beses na may kailangang tab sa database,
+  binubuksan ulit ng code yung buong spreadsheet file — kahit kaka-bukas lang niya.
+  Isang approver na nag-click ng email link = 13 beses na pagbukas ng parehong file.
+  Ngayon, unang bukas lang ang tunay; yung sunod-sunod, yung nakabukas na ang gamit.
+
+  TECHNICAL: Execution-scoped memo for SpreadsheetApp.openById(). Safe by construction:
+  a Spreadsheet object is a LIVE handle, not a data snapshot, so a cached handle still
+  observes writes made through any other handle in the same execution. This is a
+  strictly different thing from __SHEET_CACHE below, which caches VALUES and therefore
+  has to worry about staleness. Mirrors Phase 1's CACHE.spreadsheets / getCachedSpreadsheet_.
+*/
+var __SS_HANDLE_CACHE = { id: null, ss: null };
+
+/*
   Function: getDatabaseSpreadsheet_
   LAYMAN:    Opens the one shared Google Spreadsheet that is the whole system's database. Finds it
              by stored id, or falls back to the active/bound spreadsheet, or creates a new one.
+             Only actually opens it once per run — after that it hands back the same handle.
   TECHNICAL: Resolves DB via DB_SPREADSHEET_ID_PROP; else uses getActiveSpreadsheet() and caches its
              id; else (createIfMissing !== false) creates 'PIA System Database' and caches its id.
+             The resolved handle is memoized in __SS_HANDLE_CACHE for the rest of the execution.
   PARAMS:    - createIfMissing — pass false to never create (returns null instead).
   RETURNS:   Spreadsheet object, or null when not found and createIfMissing === false.
 */
@@ -3280,12 +3799,19 @@ function getDatabaseSpreadsheet_(createIfMissing) {
   const spreadsheetId = scriptProperties.getProperty(DB_SPREADSHEET_ID_PROP);
 
   if (spreadsheetId) {
-    return SpreadsheetApp.openById(spreadsheetId);
+    // PERF: reuse the open handle instead of re-opening the same file on every sheet access.
+    if (__SS_HANDLE_CACHE.ss && __SS_HANDLE_CACHE.id === spreadsheetId) {
+      return __SS_HANDLE_CACHE.ss;
+    }
+    const opened = SpreadsheetApp.openById(spreadsheetId);
+    __SS_HANDLE_CACHE = { id: spreadsheetId, ss: opened };
+    return opened;
   }
 
   const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   if (activeSpreadsheet) {
     scriptProperties.setProperty(DB_SPREADSHEET_ID_PROP, activeSpreadsheet.getId());
+    __SS_HANDLE_CACHE = { id: activeSpreadsheet.getId(), ss: activeSpreadsheet };
     return activeSpreadsheet;
   }
 
@@ -3295,6 +3821,7 @@ function getDatabaseSpreadsheet_(createIfMissing) {
 
   const databaseSpreadsheet = SpreadsheetApp.create('PIA System Database');
   scriptProperties.setProperty(DB_SPREADSHEET_ID_PROP, databaseSpreadsheet.getId());
+  __SS_HANDLE_CACHE = { id: databaseSpreadsheet.getId(), ss: databaseSpreadsheet };
   return databaseSpreadsheet;
 }
 
@@ -3339,38 +3866,121 @@ function getDatabaseSheet_(sheetName, createIfMissing) {
   return sheet;
 }
 
+/*
+  ━━━ THE SHEET-VALUE READ CACHE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  LAYMAN (Tropang Ex):
+  Bago nito, kada tanong sa database = "i-download mo muna yung BUONG tab, tapos hanapin
+  mo dun." Isang approver na nag-click ng link sa email = 13 beses na buong-tab download,
+  at yung iba dun ay yung PAREHONG tab, paulit-ulit. Ngayon, may maliit na notepad na
+  buhay habang tumatakbo yung request: kapag hiningi ulit yung parehong tab, dun na kukuha.
+  Pagkatapos ng request, burado agad — walang natitirang luma.
+
+  🚩 PERO: PATAY ang cache by default. Kailangan mong SADYANG buksan sa pamamagitan ng
+  withSheetCache_(). Yun ang buong point.
+
+  TECHNICAL:
+  Execution-scoped memo of getDataRange().getValues(), keyed by sheet NAME. Three rules,
+  and the safety of the whole thing rests on the first one:
+
+  1. __SHEET_CACHE is null (OFF) by default, so readSheetValues_ degrades to exactly the
+     call it replaced. That is why converting all ~150 read sites to readSheetValues_ is
+     a behaviour-preserving no-op on its own, and why the conversion cannot regress.
+
+  2. The cache is enabled ONLY around READ-ONLY entry points. It is deliberately NOT
+     enabled on any path that writes. This makes write-then-stale-read structurally
+     impossible instead of depending on someone remembering to invalidate across the
+     151 setValue/appendRow/deleteRow sites in this file. invalidateSheetCache_ exists
+     for the narrow case of a read-only path that must re-read after a repair write.
+
+  3. On a cache HIT the caller gets the SAME array reference, not a copy — that is the
+     whole saving. So a cached read must never be mutated in place. Rule 2 already
+     guarantees this (read-only paths do not write back), but if you ever widen the
+     cache to a mutating path, copy before mutating or you will corrupt a later reader.
+
+  Nesting composes: an inner withSheetCache_ sees a live outer cache and leaves it alone,
+  so the OUTERMOST wrapper owns the lifetime. Wrapping adminGetPipelineView_ therefore
+  extends one cache across every getUnifiedHistory_ / getCurrentRound_ call it makes.
+
+  ⚠️ NOT extended to mutation paths in this pass, on purpose. Doing that safely needs a
+  write-then-reread audit of every mutator first (processApprovalDecision_ writes a
+  decision and then checkAllApproved_ re-reads the same sheet, for one). Do that as its
+  own change, with its own test, not as a side effect of something else.
+*/
+var __SHEET_CACHE = null;
+
+/*
+  Function: withSheetCache_
+  LAYMAN:    Buksan ang cache habang tumatakbo yung ibinigay mong function, tapos patayin ulit.
+  TECHNICAL: Enables __SHEET_CACHE for the duration of fn and restores the previous state in a
+             finally block, so a throw cannot leave the cache switched on. Re-entrant: a nested
+             call detects a live outer cache and yields lifetime ownership to it.
+  PARAMS:    - fn — zero-arg function to run with caching enabled.
+  RETURNS:   Whatever fn returns (exceptions propagate untouched).
+  EXAMPLE
+    return withSheetCache_(function () { return buildDashboard_(); });
+*/
+function withSheetCache_(fn) {
+  const outer = __SHEET_CACHE;
+  if (!outer) __SHEET_CACHE = {};
+  try {
+    return fn();
+  } finally {
+    if (!outer) __SHEET_CACHE = null;
+  }
+}
+
+/*
+  Function: readSheetValues_
+  LAYMAN:    Kunin lahat ng laman ng isang tab. Kung nakabukas yung cache at nakuha na dati
+             sa parehong takbo, yung naka-imbak na ang ibabalik — walang bagong download.
+  TECHNICAL: Drop-in replacement for `sheet.getDataRange().getValues()`. With the cache off
+             it IS that call. With it on, memoizes by sheet.getName().
+
+             🚩 A null sheet THROWS, deliberately. The call this replaced threw a TypeError
+             in that case, and several callers depend on that: sendDailyReminders_'s
+             pre-filter is fail-CLOSED precisely because an empty map would read as "nobody
+             has been reminded" and blast every pending approver in the system. Returning []
+             here would have quietly converted those fail-loud paths into fail-silent ones.
+             Same control flow as before, just a message you can actually read.
+  PARAMS:    - sheet — a Sheet object (usually straight from getDatabaseSheet_).
+  RETURNS:   2-D array of cell values. Shared reference on a cache hit — do not mutate.
+*/
+function readSheetValues_(sheet) {
+  if (!sheet) throw new Error('readSheetValues_: sheet is null (the tab could not be opened or created).');
+  if (!__SHEET_CACHE) return sheet.getDataRange().getValues();
+  const key = sheet.getName();
+  if (!Object.prototype.hasOwnProperty.call(__SHEET_CACHE, key)) {
+    __SHEET_CACHE[key] = sheet.getDataRange().getValues();
+  }
+  return __SHEET_CACHE[key];
+}
+
+/*
+  Function: invalidateSheetCache_
+  LAYMAN:    Kalimutan yung naka-imbak na kopya ng isang tab (o ng lahat), para sariwa ulit
+             yung susunod na basa. Kailangan lang ito kung may sinulat ka habang bukas ang cache.
+  TECHNICAL: No-op when the cache is off. Drops one entry by Sheet or by name, or clears all
+             when called with no argument.
+  PARAMS:    - sheetOrName — a Sheet, a tab-name string, or nothing (clear everything).
+  RETURNS:   undefined.
+*/
+function invalidateSheetCache_(sheetOrName) {
+  if (!__SHEET_CACHE) return;
+  if (!sheetOrName) { __SHEET_CACHE = {}; return; }
+  const key = (typeof sheetOrName === 'string') ? sheetOrName : sheetOrName.getName();
+  delete __SHEET_CACHE[key];
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 🗂️ REVISION HISTORY STORE (survives the resubmit wipe)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-/*
-  Function: getRevisionHistorySheet_
-  LAYMAN:    Grabs (or lazily creates) the "Revision_History" logbook tab and makes sure it has its
-             header row. Since the production DB is already initialized, initializeDatabase_ never
-             re-runs — so this tab is born on the first snapshot write instead.
-  TECHNICAL: getDatabaseSheet_(name, true) inserts the bare sheet if missing; if the sheet is empty
-             (getLastRow()===0) it seeds the header row + formatHeaderRow_. Returns null on failure.
-  PARAMS:    (none)
-  RETURNS:   Sheet, or null.
-*/
-function getRevisionHistorySheet_() {
-  const sheet = getDatabaseSheet_(DB_SHEET_NAMES.REVISION_HISTORY, true);
-  if (!sheet) return null;
-  if (sheet.getLastRow() === 0) {
-    const headers = [
-      'HistoryID', 'SessionID', 'RoundNumber', 'Stage', 'ApproverName', 'ApproverEmail',
-      'Role', 'Decision', 'Status', 'Comments', 'FlaggedFields', 'Routing', 'DecisionDate', 'SnapshotAt'
-    ];
-    sheet.appendRow(headers);
-    try { formatHeaderRow_(sheet); } catch (e) { /* header formatting is best-effort */ }
-  }
-  return sheet;
-}
 
 /*
   Function: getApplicationSnapshotSheet_
   LAYMAN:    Kinukuha (o ginagawa, kung wala pa) yung tab na pinag-iimbakan ng mga lumang sagot.
-  TECHNICAL: Self-healing accessor, same shape as getRevisionHistorySheet_ — creates the tab with
-             headers on first use so a deployment that skipped initializeDatabase_ still works.
+  TECHNICAL: Self-healing accessor — creates the tab with headers on first use, so a deployment
+             that never re-ran initializeDatabase_ still gets it without a manual setup step.
   PARAMS:    (none)
   RETURNS:   The Sheet, or null if it could not be created.
 */
@@ -3397,20 +4007,20 @@ function getApplicationSnapshotSheet_() {
   application ngayon at itinatabi sa hiwalay na tab. Yun yung ebidensya kung ano talaga yung nakita
   at inaprubahan ng bawat approver noong nakaraang round.
 
-  Dati kasi wala nito. Yung `Revision_History` ay nagse-save lang ng DESISYON ("inaprubahan ni X,
-  ganito comment") pero hindi yung SAGOT na tinitignan nila. Kaya kapag nag-resubmit ka, wala nang
-  paraan para patunayan kung ano yung inaprubahan.
+  Dati kasi wala nito. Ang naitatago lang ay yung DESISYON ("inaprubahan ni X, ganito comment"),
+  pero hindi yung SAGOT na tinitignan nila. Kaya kapag nag-resubmit ka, wala nang paraan para
+  patunayan kung ano talaga yung inaprubahan. Yung mga desisyon ay nasa workflow sheets na mismo
+  (hindi na binubura), pero yung sagot ay nasa-overwrite pa rin — kaya nandito sila.
 
   TECHNICAL:
   Appends one row capturing the pre-overwrite PIA_1..5 blobs, the applicant, the status, the
   approver flags and the linked DCS id. Must be called INSIDE submitApplication_'s lock and BEFORE
   the setValue overwrite block — round derivation (max prior + 1) is only race-free under that lock.
 
-  🚩 FAILURE HANDLING — this is the actual point of the change. The write stays non-blocking,
-  because a history failure must never block a resubmit (same rule as writeRevisionHistorySnapshot_).
-  But unlike that function it does NOT fail silently: a failure writes a 'Snapshot Failed' row into
-  Risk_Audit so the gap is detectable afterwards instead of vanishing into a Logger line nobody
-  reads. Silent loss was the defect; blocking the user was never the fix.
+  🚩 FAILURE HANDLING. The write stays non-blocking, because a history failure must never block a
+  resubmit. But it does NOT fail silently: a failure writes a 'Snapshot Failed' row into Risk_Audit
+  so the gap is detectable afterwards instead of vanishing into a Logger line nobody reads. Silent
+  loss was the defect in the old snapshot mechanism; blocking the user was never the fix.
 
   PARAMS:
     - sessionId — the application id being resubmitted.
@@ -3430,7 +4040,7 @@ function writeApplicationSnapshot_(sessionId, row) {
 
     /* Round = (max prior round for this session) + 1. Race-free only under the caller's lock. */
     let round = 1;
-    const existing = sheet.getDataRange().getValues();
+    const existing = readSheetValues_(sheet);
     for (let i = 1; i < existing.length; i++) {
       if (String(existing[i][APPLICATION_SNAPSHOT_COLS.SESSION_ID - 1] || '').trim() === sid) {
         const r = Number(existing[i][APPLICATION_SNAPSHOT_COLS.ROUND_NUMBER - 1] || 0);
@@ -3472,171 +4082,55 @@ function writeApplicationSnapshot_(sessionId, row) {
   }
 }
 
-/*
-  Function: writeRevisionHistorySnapshot_
-  LAYMAN:    Right before a returned application is resubmitted (which erases the whole approval
-             trail), this copies that round's decisions — who approved/returned, their comments, the
-             fields they flagged, and the ISM routing choice — into the permanent logbook so the
-             back-and-forth is never lost.
-  TECHNICAL: Reads the three workflow sheets for the session, keeps only ACTIONED rows (skips
-             Pending/blank), and appends one Revision_History row per decision, tagged with the next
-             RoundNumber (max prior round + 1). The passed-in approverFlags (captured before the
-             Applications cell is cleared) is attached to the row that Returned. Fully wrapped in
-             try/catch — a history-write failure must NEVER block a resubmit.
-  PARAMS:    - sessionId — application id (base id; resubmits reuse it).
-             - approverFlags — the Approver_Flags object, read before it was cleared.
-  RETURNS:   undefined (side-effect: appended rows).
-*/
-function writeRevisionHistorySnapshot_(sessionId, approverFlags) {
-  try {
-    const sid = String(sessionId || '').trim();
-    if (!sid) return;
-    const sheet = getRevisionHistorySheet_();
-    if (!sheet) return;
 
-    // Next round number = (max prior round for this session) + 1
-    let round = 1;
-    const existing = sheet.getDataRange().getValues();
-    for (let i = 1; i < existing.length; i++) {
-      if (String(existing[i][REVISION_HISTORY_COLS.SESSION_ID - 1] || '').trim() === sid) {
-        const r = Number(existing[i][REVISION_HISTORY_COLS.ROUND_NUMBER - 1] || 0);
-        if (r >= round) round = r + 1;
-      }
-    }
-
-    const snapshotAt = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
-    const flagsStr = (approverFlags && typeof approverFlags === 'object')
-      ? JSON.stringify(approverFlags)
-      : String(approverFlags || '');
-    const isReturnDecision = function (decision, status) {
-      return /return|reject/i.test(String(decision || '') + ' ' + String(status || ''));
-    };
-    const rows = [];
-
-    const collect = function (sheetName, cols, stage, nameCol, emailCol, roleFn, routingCol) {
-      const src = getDatabaseSheet_(sheetName, false);
-      if (!src) return;
-      const data = src.getDataRange().getValues();
-      for (let i = 1; i < data.length; i++) {
-        const row = data[i];
-        if (String(row[cols.SESSION_ID - 1] || '').trim() !== sid) continue;
-        const status = String(row[cols.STATUS - 1] || '');
-        if (status === 'Pending' || status === '') continue; // only rows that were actioned
-        const decision = row[cols.DECISION - 1];
-        rows.push([
-          Utilities.getUuid(), sid, round, stage,
-          nameCol ? (row[nameCol - 1] || '') : '',
-          row[emailCol - 1] || '',
-          roleFn(row),
-          decision || '',
-          status,
-          row[cols.COMMENTS - 1] || '',
-          isReturnDecision(decision, status) ? flagsStr : '',
-          routingCol ? (row[routingCol - 1] || '') : '',
-          row[cols.DECISION_DATE - 1] || '',
-          snapshotAt
-        ]);
-      }
-    };
-
-    collect(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS, 'head',
-      APPROVAL_COLS.APPROVER_NAME, APPROVAL_COLS.APPROVER_EMAIL,
-      function (row) {
-        const s = Number(row[APPROVAL_COLS.CURRENT_STEP - 1] || 0);
-        return s === 1 ? 'Immediate Head' : s === 2 ? 'Department Head' : 'Head';
-      }, null);
-
-    collect(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS, 'ism',
-      ISM_WORKFLOW_COLS.ISM_MEMBER_NAME, ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL,
-      function () { return 'InfoSec Reviewer'; }, ISM_WORKFLOW_COLS.ROUTING_DESTINATION);
-
-    collect(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS, 'divhead',
-      null, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL,
-      function () { return 'Division Head'; }, null);
-
-    if (rows.length > 0) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
-      Logger.log('Revision history: snapshotted ' + rows.length + ' decision(s) for ' + sid + ' (round ' + round + ')');
-    }
-  } catch (e) {
-    Logger.log('writeRevisionHistorySnapshot_ failed (non-blocking): ' + e.toString());
-  }
-}
 
 /*
-  Function: getRevisionHistory_
-  LAYMAN:    Reads back the logbook for one application, grouped by round, so emails / the review
-             screen / the certificate / the requestor timeline can show the full return history.
-  TECHNICAL: Filters Revision_History by sessionId, groups rows by RoundNumber, parses FlaggedFields
-             JSON, and returns rounds sorted ascending. Returns [] if the tab or rows don't exist.
-  PARAMS:    - sessionId — application id.
-  RETURNS:   Array of { round, decisions:[{stage, approverName, approverEmail, role, decision,
-             status, comments, flaggedFields, routing, decisionDate, snapshotAt}] }.
-*/
-function getRevisionHistory_(sessionId) {
-  try {
-    const sheet = getDatabaseSheet_(DB_SHEET_NAMES.REVISION_HISTORY, false);
-    if (!sheet || sheet.getLastRow() < 2) return [];
-    const sid = String(sessionId || '').trim();
-    const data = sheet.getDataRange().getValues();
-    const byRound = {};
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      if (String(row[REVISION_HISTORY_COLS.SESSION_ID - 1] || '').trim() !== sid) continue;
-      const round = Number(row[REVISION_HISTORY_COLS.ROUND_NUMBER - 1] || 0);
-      if (!byRound[round]) byRound[round] = { round: round, decisions: [] };
-      let flags = {};
-      try { flags = JSON.parse(row[REVISION_HISTORY_COLS.FLAGGED_FIELDS - 1] || '{}'); } catch (e) { flags = {}; }
-      byRound[round].decisions.push({
-        stage: row[REVISION_HISTORY_COLS.STAGE - 1] || '',
-        approverName: row[REVISION_HISTORY_COLS.APPROVER_NAME - 1] || '',
-        approverEmail: row[REVISION_HISTORY_COLS.APPROVER_EMAIL - 1] || '',
-        role: row[REVISION_HISTORY_COLS.ROLE - 1] || '',
-        decision: row[REVISION_HISTORY_COLS.DECISION - 1] || '',
-        status: row[REVISION_HISTORY_COLS.STATUS - 1] || '',
-        comments: row[REVISION_HISTORY_COLS.COMMENTS - 1] || '',
-        flaggedFields: flags,
-        routing: row[REVISION_HISTORY_COLS.ROUTING - 1] || '',
-        decisionDate: row[REVISION_HISTORY_COLS.DECISION_DATE - 1] || '',
-        snapshotAt: row[REVISION_HISTORY_COLS.SNAPSHOT_AT - 1] || ''
-      });
-    }
-    return Object.keys(byRound).map(function (k) { return byRound[k]; }).sort(function (a, b) { return a.round - b.round; });
-  } catch (e) {
-    Logger.log('getRevisionHistory_ failed: ' + e.toString());
-    return [];
-  }
-}
-
-/*
-  Function: collectCurrentRoundDecisions_
-  LAYMAN:    Reads the CURRENT round's approver rows straight from the three live workflow sheets
-             (the prior rounds live in Revision_History; the current one only exists here until the
-             next return wipes it into the logbook).
-  TECHNICAL: Same three-sheet walk as writeRevisionHistorySnapshot_'s collect, returning objects in
-             the getRevisionHistory_ decision shape instead of sheet rows. Duplicated from the
-             snapshot on purpose: its WRITE path must stay untouched (risk containment). When
-             includePending is true, Pending/blank rows are kept as status 'Pending' so in-progress
-             surfaces can show who is next in line.
+  Function: collectAllRoundDecisions_
+  LAYMAN:    Binabasa LAHAT ng approver rows ng isang request sa tatlong workflow sheet, at
+             pinapangkat ayon sa round. Dati kasi hati sa dalawa: yung lumang rounds nasa
+             Revision_History (photocopy), yung kasalukuyan nasa live sheets. Ngayon walang
+             binubura, kaya nandito na lahat sa iisang lugar.
+  TECHNICAL: Single three-sheet walk grouped by ROUND_NUMBER. Replaced collectCurrentRoundDecisions_
+             (current round only) once the append-only change made Revision_History redundant, which
+             also removed the union-two-sources logic in getUnifiedHistory_.
+             flaggedFields is now read from each row's own FLAGGED_FIELDS cell (it used to be
+             hardcoded {} here because only the retired photocopy carried flags).
+             When includePending is true, Pending/blank rows are kept as status 'Pending' so
+             in-progress surfaces can show who is next in line.
   PARAMS:    - sessionId — application id.  - includePending — keep Pending rows too.
   RETURNS:   Array of decision objects (possibly empty). Never throws.
 */
-function collectCurrentRoundDecisions_(sessionId, includePending) {
+function collectAllRoundDecisions_(sessionId, includePending) {
   const sid = String(sessionId || '').trim();
-  const out = [];
-  if (!sid) return out;
+  const byRound = {};   // roundNumber -> [decision, ...]
+  if (!sid) return byRound;
+
+  const push = function (round, entry) {
+    if (!byRound[round]) byRound[round] = [];
+    byRound[round].push(entry);
+  };
+
   const collect = function (sheetName, cols, stage, nameCol, emailCol, roleFn, routingCol) {
     try {
       const src = getDatabaseSheet_(sheetName, false);
       if (!src) return;
-      const data = src.getDataRange().getValues();
+      const data = readSheetValues_(src);
       for (let i = 1; i < data.length; i++) {
         const row = data[i];
         if (String(row[cols.SESSION_ID - 1] || '').trim() !== sid) continue;
         const status = String(row[cols.STATUS - 1] || '');
         const isPending = status === 'Pending' || status === '';
         if (isPending && !includePending) continue;
-        out.push({
+
+        // Per-round flags now live on the approver's own row (FLAGGED_FIELDS), which is what
+        // replaced Revision_History.FlaggedFields. Blank on anything that was not a Return.
+        let flagged = {};
+        try {
+          const rawFlags = row[cols.FLAGGED_FIELDS - 1];
+          if (rawFlags) flagged = JSON.parse(rawFlags) || {};
+        } catch (e) { flagged = {}; }
+
+        push(roundOf_(row, cols), {
           stage: stage,
           approverName: nameCol ? (row[nameCol - 1] || '') : '',
           approverEmail: row[emailCol - 1] || '',
@@ -3644,12 +4138,12 @@ function collectCurrentRoundDecisions_(sessionId, includePending) {
           decision: row[cols.DECISION - 1] || '',
           status: isPending ? 'Pending' : status,
           comments: row[cols.COMMENTS - 1] || '',
-          flaggedFields: {},
+          flaggedFields: flagged,
           routing: routingCol ? (row[routingCol - 1] || '') : '',
           decisionDate: row[cols.DECISION_DATE - 1] || ''
         });
       }
-    } catch (e) { Logger.log('collectCurrentRoundDecisions_ (' + sheetName + ') failed: ' + e.toString()); }
+    } catch (e) { Logger.log('collectAllRoundDecisions_ (' + sheetName + ') failed: ' + e.toString()); }
   };
 
   collect(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS, 'head',
@@ -3667,7 +4161,7 @@ function collectCurrentRoundDecisions_(sessionId, includePending) {
     null, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL,
     function () { return 'Division Head'; }, null);
 
-  return out;
+  return byRound;
 }
 
 /*
@@ -3675,19 +4169,27 @@ function collectCurrentRoundDecisions_(sessionId, includePending) {
   LAYMAN:    The single source for "everything that happened to this application, start to finish":
              every prior round (from the logbook) plus the current in-progress round, grouped by
              round. Feeds the emails, both review screens, the certificate, and the requestor views.
-  TECHNICAL: getRevisionHistory_ prior rounds (isCurrent:false) + collectCurrentRoundDecisions_ as
-             round (last prior + 1, isCurrent:true). Current round omitted when it has no rows.
+  TECHNICAL: One call to collectAllRoundDecisions_, sorted ascending by round, with isCurrent set on
+             the round matching getCurrentRound_. Previously unioned Revision_History with a separate
+             current-round scan; the append-only workflow made that union unnecessary.
   PARAMS:    - sessionId — application id.  - includePending — include Pending rows in the current round.
   RETURNS:   { rounds: [{round, isCurrent, decisions:[...]}] } (rounds may be empty).
 */
 function getUnifiedHistory_(sessionId, includePending) {
-  const prior = getRevisionHistory_(sessionId);
-  const rounds = prior.map(function (r) { return { round: r.round, isCurrent: false, decisions: r.decisions }; });
-  const current = collectCurrentRoundDecisions_(sessionId, includePending);
-  if (current.length > 0) {
-    const currentRound = (rounds.length ? rounds[rounds.length - 1].round : 0) + 1;
-    rounds.push({ round: currentRound, isCurrent: true, decisions: current });
-  }
+  // Append-only (2026-08-11): this used to union Revision_History (prior rounds, from a
+  // best-effort photocopy taken before the rows were deleted) with a separate scan of the live
+  // current round. Nothing is deleted any more, so every round is right here in the workflow
+  // sheets and the union — plus the entire Revision_History sheet — is gone.
+  const byRound = collectAllRoundDecisions_(sessionId, includePending);
+  const currentRound = getCurrentRound_(sessionId);
+
+  const rounds = Object.keys(byRound)
+    .map(Number)
+    .sort(function (a, b) { return a - b; })
+    .map(function (r) {
+      return { round: r, isCurrent: (r === currentRound), decisions: byRound[r] };
+    });
+
   return { rounds: rounds };
 }
 
@@ -3706,13 +4208,22 @@ function getUnifiedHistory_(sessionId, includePending) {
 function apiGetApprovalHistory(sessionId) {
   try {
     const me = getNormalizedEmail_(Session.getActiveUser().getEmail());
-    if (!me) return { success: false, error: 'Unauthorized' };
-    const appData = getApplicationData_(sessionId);
-    if (!appData) return { success: false, error: 'Application not found' };
-    if (getNormalizedEmail_(String(appData.applicantEmail || '')) !== me) {
-      return { success: false, error: 'Unauthorized' };
-    }
-    const unified = getUnifiedHistory_(sessionId, true);
+    if (!me) return { ok: false, success: false, error: 'Unauthorized' };
+
+    // PERF: getApplicationData_ and getUnifiedHistory_ between them pull the three workflow
+    // sheets about eleven times, mostly the same ones over and over (each one calls
+    // getCurrentRound_, which alone reads all three). Gather both under ONE cache so the
+    // repeats collapse to three reads. Pure read path — nothing here writes.
+    const gathered = withSheetCache_(function () {
+      const ad = getApplicationData_(sessionId);
+      if (!ad) return null;
+      if (getNormalizedEmail_(String(ad.applicantEmail || '')) !== me) return { denied: true };
+      return { appData: ad, unified: getUnifiedHistory_(sessionId, true) };
+    });
+    if (!gathered) return { ok: false, success: false, error: 'Application not found' };
+    if (gathered.denied) return { ok: false, success: false, error: 'Unauthorized' };
+
+    const unified = gathered.unified;
     unified.rounds.forEach(function (r) {
       (r.decisions || []).forEach(function (d) {
         if (Object.prototype.toString.call(d.decisionDate) === '[object Date]') {
@@ -3725,10 +4236,10 @@ function apiGetApprovalHistory(sessionId) {
         }
       });
     });
-    return { success: true, rounds: unified.rounds };
+    return { ok: true, success: true, rounds: unified.rounds };
   } catch (e) {
     Logger.log('apiGetApprovalHistory failed: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -3801,7 +4312,7 @@ function initializeDatabase_() {
       const headers = [
         'ApprovalID', 'SessionID', 'CurrentStep', 'ApproverName',
         'ApproverEmail', 'Decision', 'Comments', 'DecisionDate', 'Status', 'ReminderDate',
-        'EmailStatus', 'EmailError', 'NotifiedDate'
+        'EmailStatus', 'EmailError', 'NotifiedDate', 'RoundNumber', 'FlaggedFields'
       ];
       apprSheet.appendRow(headers);
       formatHeaderRow_(apprSheet);
@@ -3867,7 +4378,7 @@ function initializeDatabase_() {
       const ismHeaders = [
         'ISM_Approval_ID', 'SessionID', 'CurrentStep', 'ISM_Member_Name', 'ISM_Member_Email',
         'Decision', 'Comments', 'DecisionDate', 'Status', 'Requires_DivHead', 'DivHead_Escalation_ID', 'Routing_Destination', 'ReminderDate',
-        'EmailStatus', 'EmailError', 'NotifiedDate'
+        'EmailStatus', 'EmailError', 'NotifiedDate', 'RoundNumber', 'FlaggedFields'
       ];
       createPhase3SheetWithValidation_(DB_SHEET_NAMES.ISM_WORKFLOW, ismHeaders, []);
     } else {
@@ -3878,7 +4389,7 @@ function initializeDatabase_() {
     if (!sheetExists_(DB_SHEET_NAMES.DIV_HEAD_CONFIG)) {
       const divHeadHeaders = [
         'Escalation_ID', 'SessionID', 'DivHead_Email', 'Decision', 'Comments',
-        'DecisionDate', 'Status', 'ReminderDate', 'EmailStatus', 'EmailError', 'NotifiedDate'
+        'DecisionDate', 'Status', 'ReminderDate', 'EmailStatus', 'EmailError', 'NotifiedDate', 'RoundNumber', 'FlaggedFields'
       ];
       createPhase3SheetWithValidation_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, divHeadHeaders, []);
     } else {
@@ -3941,7 +4452,23 @@ function initializeDatabase_() {
       ];
       createPhase3SheetWithValidation_(DB_SHEET_NAMES.APPLICATION_SNAPSHOTS, snapshotHeaders, []);
     } else {
-      Logger.log(`✓ Application_Snapshots sheet already exists`);
+      Logger.log('✓ Application_Snapshots sheet already exists');
+    }
+
+    // Delegations (out-of-office). Admin-managed; EMPTY IS THE NORMAL STATE and means "no
+    // delegation is in effect", which is exactly how the system behaved before this table
+    // existed. See resolveDelegate_ for why it is admin-managed and single-hop.
+    // (getDelegationsSheet_ also self-heals this tab on first read, so an existing deployment
+    //  that never re-runs initializeDatabase_ still gets it.)
+    if (!sheetExists_(DB_SHEET_NAMES.DELEGATIONS)) {
+      Logger.log('  Creating Delegations sheet...');
+      const delegationHeaders = [
+        'Delegation_ID', 'From_Email', 'To_Email', 'Start_Date', 'End_Date',
+        'Reason', 'Is_Active', 'Created_By', 'Created_At'
+      ];
+      createPhase3SheetWithValidation_(DB_SHEET_NAMES.DELEGATIONS, delegationHeaders, []);
+    } else {
+      Logger.log('✓ Delegations sheet already exists');
     }
 
     seedSessionCounterFromDatabase_();
@@ -3952,9 +4479,9 @@ function initializeDatabase_() {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     Logger.log('\n  Verifying Phase 3 sheets were created...');
     const verificationChecks = [
-      { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, expectedCols: 12 },
-      { name: DB_SHEET_NAMES.ISM_WORKFLOW, expectedCols: 15 },
-      { name: DB_SHEET_NAMES.DIV_HEAD_CONFIG, expectedCols: 10 },
+      { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, expectedCols: 15 },
+      { name: DB_SHEET_NAMES.ISM_WORKFLOW, expectedCols: 18 },
+      { name: DB_SHEET_NAMES.DIV_HEAD_CONFIG, expectedCols: 13 },
       { name: DB_SHEET_NAMES.ADMIN_NOTIFICATION, expectedCols: 5 }
     ];
     
@@ -4077,7 +4604,7 @@ function testPhase3DatabaseInitialization() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   Logger.log('╔════════════════════════════════════════════════════════════╗');
   Logger.log('║  PHASE 3 DATABASE INITIALIZATION TEST & FIX                 ║');
   Logger.log('╚════════════════════════════════════════════════════════════╝');
@@ -4101,9 +4628,9 @@ function testPhase3DatabaseInitialization() {
     // Verify Phase 3 sheets were created
     Logger.log('\nVERIFICATION - Phase 3 Sheets:');
     const sheets = [
-      { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, expectedCols: 12 },
-      { name: DB_SHEET_NAMES.ISM_WORKFLOW, expectedCols: 15 },
-      { name: DB_SHEET_NAMES.DIV_HEAD_CONFIG, expectedCols: 10 },
+      { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, expectedCols: 15 },
+      { name: DB_SHEET_NAMES.ISM_WORKFLOW, expectedCols: 18 },
+      { name: DB_SHEET_NAMES.DIV_HEAD_CONFIG, expectedCols: 13 },
       { name: DB_SHEET_NAMES.INFOSEC_CONFIG, expectedCols: 6 },
       { name: DB_SHEET_NAMES.EMAIL_QUEUE, expectedCols: 13 },
       { name: DB_SHEET_NAMES.ADMIN_NOTIFICATION, expectedCols: 5 }
@@ -4208,7 +4735,7 @@ function reinitializePhase3Database() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   Logger.log('  Attempting to reinitialize Phase 3 database...');
   const scriptProperties = PropertiesService.getScriptProperties();
   scriptProperties.deleteProperty(DB_INIT_FLAG_PROP);
@@ -4566,12 +5093,12 @@ function submitApplication_(appData) {
       
       if (hasDCSFlags) {
         const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
-        const dcsData = dcsSheet.getDataRange().getValues();
+        const dcsData = readSheetValues_(dcsSheet);
         for(let i=1; i<dcsData.length; i++) {
           if(dcsData[i][DCS_COLS.REQ_ID - 1] === appData.linkedReqId) {
             const dcsStatus = dcsData[i][DCS_COLS.STATUS - 1];
             if (dcsStatus === 'Returned') {
-              return { success: false, error: 'Your application has been returned back, you will need to check the DCS to review & resubmit.' };
+              return { ok: false, success: false, error: 'Your application has been returned back, you will need to check the DCS to review & resubmit.' };
             }
             break;
           }
@@ -4588,7 +5115,7 @@ function submitApplication_(appData) {
         lock.waitLock(LOCK_TIMEOUT_MS);
       } catch (e) {
         return {
-          success: false,
+          ok: false, success: false,
           error: 'System is busy. Please try again in a moment.'
         };
       }
@@ -4610,38 +5137,28 @@ function submitApplication_(appData) {
           Logger.log('SECURITY ALERT: User ' + userEmail + ' attempted to edit application ' + sessionId + ' owned by ' + existingEmail);
           lock.releaseLock();
           return {
-            success: false,
+            ok: false, success: false,
             error: 'You do not have permission to edit this application.'
           };
         }
         
-        // ── Snapshot the round about to be wiped, in two halves (both non-blocking) ──
-        // Both run BEFORE Approver_Flags is cleared and BEFORE the workflow rows are deleted.
+        // ── Snapshot the answers about to be overwritten (non-blocking) ──
         //
-        //   (a) Revision_History  — the DECISIONS of the round (who approved/returned, comments).
-        //   (b) Application_Snapshots — the SUBMISSION of the round (the PIA_1..5 answers those
-        //       approvers were actually looking at).
+        // Only ONE half is needed here now. The round's DECISIONS live permanently in the workflow
+        // sheets (nothing is deleted since the append-only change), so the old copy-before-delete
+        // into Revision_History is gone. What still gets destroyed is the SUBMISSION: PIA_1..5 are
+        // setValue'd over in place a few lines below, because Applications is a single-current-state
+        // row looked up by SessionID across all three apps and cannot be versioned into many rows.
         //
-        // (b) is the newer half and it closes a real audit gap: the resubmit path below OVERWRITES
-        // PIA_1..5 in place, so without this the question "what exactly did the Department Head
-        // approve in round 1?" had no answer anywhere in the system. For a Privacy Impact
-        // Assessment that is a compliance gap, not a nice-to-have.
+        // Without this, "what exactly did the Department Head approve in round 1?" has no answer
+        // anywhere. For a Privacy Impact Assessment that is a compliance gap, not a nice-to-have.
         //
-        // Read the whole row ONCE, before any write, and hand the same array to the snapshot.
+        // Runs BEFORE Approver_Flags is cleared. Read the whole row ONCE, before any write.
         let priorRow = null;
         try {
           priorRow = appSheet.getRange(freshRowNum, 1, 1, APPLICATIONS_COLS.APPROVER_FLAGS).getValues()[0];
         } catch (e) {
           Logger.log('⚠ Could not read the prior Applications row for snapshotting: ' + e.toString());
-        }
-
-        try {
-          let priorFlags = {};
-          const priorFlagsRaw = priorRow ? priorRow[APPLICATIONS_COLS.APPROVER_FLAGS - 1] : '';
-          try { priorFlags = JSON.parse(priorFlagsRaw || '{}'); } catch (e) { priorFlags = {}; }
-          writeRevisionHistorySnapshot_(sessionId, priorFlags);
-        } catch (e) {
-          Logger.log('Revision history snapshot skipped (non-blocking): ' + e.toString());
         }
 
         // Answers snapshot. Failures here self-report into Risk_Audit (see the function) rather
@@ -4670,34 +5187,27 @@ function submitApplication_(appData) {
         appSheet.getRange(freshRowNum, APPLICATIONS_COLS.APPROVER_FLAGS).setValue('');
 
         SpreadsheetApp.flush();
-        
-        // Reset approval workflow for resubmitted application
-        const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-        const apprData = apprSheet.getDataRange().getValues();
-        
-        // Clear existing approval records for this session (optimized)
-        const apprRowsToDelete = findRowsToDelete_(apprData, APPROVAL_COLS.SESSION_ID, sessionId);
-        batchDeleteRows_(apprSheet, apprRowsToDelete);
-        
-        // Clear ISM workflow records for this session (optimized)
-        const ismSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-        if (ismSheet) {
-          const ismData = ismSheet.getDataRange().getValues();
-          const ismRowsToDelete = findRowsToDelete_(ismData, ISM_WORKFLOW_COLS.SESSION_ID, sessionId);
-          batchDeleteRows_(ismSheet, ismRowsToDelete);
-        }
 
-        // Clear Division Head config records for this session (optimized)
-        const divHeadSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
-        if (divHeadSheet) {
-          const divHeadData = divHeadSheet.getDataRange().getValues();
-          const divHeadRowsToDelete = findRowsToDelete_(divHeadData, DIV_HEAD_CONFIG_COLS.SESSION_ID, sessionId);
-          batchDeleteRows_(divHeadSheet, divHeadRowsToDelete);
-        }
-        
-        // Re-initialize approval workflow
-        initializeApprovalWorkflow_(sessionId, appData);
-        
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 🔁 APPEND THE NEXT ROUND — nothing is deleted (2026-08-11)
+        //
+        // LAYMAN (Tropang Ex): Dati dito, BINUBURA lahat ng approval rows ng session na 'to sa
+        //   tatlong sheet, tapos gagawa ulit ng bago mula sa simula. Kaya kailangan pa ng
+        //   photocopy (Revision_History) bago mag-delete, at kapag pumalpak yung photocopy,
+        //   tuluyang nawawala yung buong round. Ngayon: hindi na tayo nagbubura. Dinadagdag
+        //   lang natin yung bagong round sa ibaba, may RoundNumber na nakatatak.
+        //
+        // TECHNICAL: The delete existed solely because there was no round discriminator, so a
+        //   `SessionID = X AND Status = 'Pending'` scan could match an abandoned row from a
+        //   previous round (e.g. an ISM member who was never reached before the return). With
+        //   ROUND_NUMBER present, routing scans scope to the current round and the old rows are
+        //   harmless — and they are now the authoritative history, so Revision_History and its
+        //   best-effort snapshot are gone.
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        const nextRound = getCurrentRound_(sessionId) + 1;
+        initializeApprovalWorkflow_(sessionId, appData, nextRound);
+        Logger.log('🔁 ' + sessionId + ': appended approval round ' + nextRound + ' (prior rounds retained)');
+
         // ── Risk_Audit: only log paranormal flag events ──
         if (hasParanormalFlags) {
           logAuditTrail_(sessionId, 'Application Resubmitted', internalFlagsStr);
@@ -4728,9 +5238,9 @@ function submitApplication_(appData) {
       ]);
 
       SpreadsheetApp.flush();
-      
-      // Initialize approval workflow with dynamic approvers from appData
-      initializeApprovalWorkflow_(sessionId, appData);
+
+      // Initialize approval workflow with dynamic approvers from appData (first round).
+      initializeApprovalWorkflow_(sessionId, appData, 1);
       
       // ── Risk_Audit: only log paranormal flag events ──
       if (hasParanormalFlags) {
@@ -4754,7 +5264,7 @@ function submitApplication_(appData) {
     }
     
     return {
-      success: true,
+      ok: true, success: true,
       appId: sessionId,
       timestamp: timestamp,
       message: 'Application ' + (isEditing ? 'resubmitted' : 'submitted') + ' successfully',
@@ -4762,10 +5272,7 @@ function submitApplication_(appData) {
     };
   } catch (e) {
     Logger.log('Error submitting application: ' + e.toString());
-    return {
-      success: false,
-      error: e.toString()
-    };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -4792,11 +5299,21 @@ function submitApplication_(appData) {
   RETURNS:   { success:true, message } or { success:false, error }.
 */
 function processDivHeadDecision_(sessionId, approverEmail, decision, comments, approverFlags = '{}') {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   // SECURITY (F-02): authorize the actual caller server-side (see apiPhase3_ProcessISMDecision).
+  // Widened for delegation (2026-08-11, made EXCLUSIVE 2026-08-12): canActAs_ accepts exactly
+  // ONE identity at a time — the named approver normally, or their admin-configured active
+  // delegate INSTEAD OF them while a delegation is running. It is not additive: the original is
+  // refused on their own row while delegated, which is what stops both of them approving the
+  // same Pending step. With an empty Delegations sheet this is the identical check it replaced.
+  // _actedBy carries the ORIGINAL approver when a delegate acted, and is written to the decision
+  // row so the audit trail stays honest.
   const _me = getNormalizedEmail_(Session.getActiveUser().getEmail());
-  if (_me !== getNormalizedEmail_(approverEmail)) {
-    return { success: false, error: 'Access denied: you may only submit your own decision.' };
+  const _act = canActAs_(_me, approverEmail);
+  if (!_act.allowed) {
+    return { ok: false, success: false, error: 'Access denied: you may only submit your own decision.' };
   }
+  const _actedBy = _act.onBehalfOf ? _me : '';
   const lock = LockService.getScriptLock();
   let lockAcquired = false;
 
@@ -4806,18 +5323,23 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
       lockAcquired = true;
     } catch (lockErr) {
       Logger.log('ERROR: Lock acquisition timeout - concurrent modification risk on DivHead decision');
-      return { success: false, error: 'System busy, please try again' };
+      return { ok: false, success: false, error: 'System busy, please try again' };
     }
 
     // CRITICAL: Re-read data after acquiring lock to prevent race conditions
     const divHeadSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
     const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
-    const divHeadData = divHeadSheet.getDataRange().getValues();
+    const divHeadData = readSheetValues_(divHeadSheet);
     let divHeadRow = -1;
 
     for (let i = 1; i < divHeadData.length; i++) {
-      if (divHeadData[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === sessionId &&
-          String(divHeadData[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1] || '').toLowerCase() === String(approverEmail || '').toLowerCase() &&
+      if (rowMatches_(divHeadData[i], DIV_HEAD_CONFIG_COLS, sessionId, __round) &&
+          // Was a raw .toLowerCase() compare while the other two decision paths used
+          // getNormalizedEmail_. That inconsistency meant a '+alias' address matched here but
+          // not there — and with delegation it would have been worse, because canActAs_
+          // normalizes, so the guard could pass and then this row lookup miss, producing a
+          // confusing "record not found" on a decision the caller was entitled to make.
+          getNormalizedEmail_(divHeadData[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1]) === getNormalizedEmail_(approverEmail) &&
           divHeadData[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') {
         divHeadRow = i + 1;
         break;
@@ -4825,7 +5347,7 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
     }
 
     if (divHeadRow === -1) {
-      return { success: false, error: 'Division Head approval record not found or already processed.' };
+      return { ok: false, success: false, error: 'Division Head approval record not found or already processed.' };
     }
 
     // Handle Division Head decision
@@ -4833,17 +5355,22 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
     divHeadSheet.getRange(divHeadRow, DIV_HEAD_CONFIG_COLS.DECISION).setValue(decision);
     divHeadSheet.getRange(divHeadRow, DIV_HEAD_CONFIG_COLS.COMMENTS).setValue(comments);
     divHeadSheet.getRange(divHeadRow, DIV_HEAD_CONFIG_COLS.DECISION_DATE).setValue(timestamp);
+    // Append-only workflow: persist what THIS approver flagged onto THEIR row. Applications
+    // .Approver_Flags is cleared on every resubmit, so this is the durable per-round record
+    // (it replaces Revision_History.FlaggedFields).
+    writeDecisionFlags_(divHeadSheet, divHeadRow, DIV_HEAD_CONFIG_COLS, approverFlags);
+    writeActedBy_(divHeadSheet, divHeadRow, DIV_HEAD_CONFIG_COLS, _actedBy);
     Logger.log(`[AUDIT] ${sessionId}: Division Head Decision: ${decision} by ${approverEmail}`);
     
     if (decision === 'Approve') {
       divHeadSheet.getRange(divHeadRow, DIV_HEAD_CONFIG_COLS.STATUS).setValue('Approved');
 
       const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-      const ismData = ismWorkflowSheet.getDataRange().getValues();
+      const ismData = readSheetValues_(ismWorkflowSheet);
       let escalatedStep = 1;
       
       for (let i = 1; i < ismData.length; i++) {
-        if (ismData[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId &&
+        if (rowMatches_(ismData[i], ISM_WORKFLOW_COLS, sessionId, __round) &&
             ismData[i][ISM_WORKFLOW_COLS.STATUS - 1] === 'EscalatedToDivisionHead') {
           ismWorkflowSheet.getRange(i + 1, ISM_WORKFLOW_COLS.STATUS).setValue('Approved');
           escalatedStep = Number(ismData[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] || 1);
@@ -4853,13 +5380,13 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
       }
 
       // Check if all ISM members are now approved
-      const freshData = ismWorkflowSheet.getDataRange().getValues();
+      const freshData = readSheetValues_(ismWorkflowSheet);
       let allApproved = true;
       let totalMembers = 0;
       let routingDest = 'BOTH';
 
       for (let i = 1; i < freshData.length; i++) {
-        if (freshData[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId) {
+        if (rowMatches_(freshData[i], ISM_WORKFLOW_COLS, sessionId, __round)) {
           totalMembers++;
           if (freshData[i][ISM_WORKFLOW_COLS.STATUS - 1] !== 'Approved') {
             allApproved = false;
@@ -4920,10 +5447,10 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
       }
       notifyApplicant_(sessionId, decision === 'Deny' ? 'denied' : 'returned');
     }
-    return { success: true, message: 'Division Head decision recorded successfully' };
+    return { ok: true, success: true, message: 'Division Head decision recorded successfully' };
   } catch (e) {
     Logger.log('Error processing Division Head approval: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   } finally {
     // CRITICAL FIX: Only release lock if it was actually acquired
     if (lockAcquired) {
@@ -5004,14 +5531,19 @@ function buildApproversFromAppData_(appData) {
              - appData — submission (source of the approver ladder).
   RETURNS:   undefined (writes rows). No rows if no approvers resolved.
 */
-function initializeApprovalWorkflow_(sessionId, appData) {
+function initializeApprovalWorkflow_(sessionId, appData, roundNumber) {
   const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-  
+
+  // Append-only workflow: rows from earlier rounds are never deleted, so every row must declare
+  // which round it belongs to or routing scans cannot tell a live row from an abandoned one.
+  const round = (Number(roundNumber) >= 1) ? Math.floor(Number(roundNumber)) : 1;
+
   // Build dynamic approvers from application data
   const approversToUse = appData ? buildApproversFromAppData_(appData) : [];
-  
+
   approversToUse.forEach((approver, index) => {
-    const approvalId = sessionId + '-' + (index + 1);
+    // ApprovalID must stay unique across rounds now that old rows survive — suffix round 2+.
+    const approvalId = sessionId + '-' + (index + 1) + (round > 1 ? ('-R' + round) : '');
     apprSheet.appendRow([
       approvalId,              // ApprovalID
       sessionId,               // SessionID
@@ -5024,7 +5556,10 @@ function initializeApprovalWorkflow_(sessionId, appData) {
       'Pending',               // Status
       '',                      // ReminderDate
       'Pending',               // EmailStatus
-      ''                       // EmailError
+      '',                      // EmailError
+      '',                      // NotifiedDate
+      round,                   // RoundNumber
+      ''                       // FlaggedFields
     ]);
   });
 }
@@ -5045,15 +5580,25 @@ function initializeApprovalWorkflow_(sessionId, appData) {
   RETURNS:   { success:true, message } or { success:false, error }.
 */
 function processApprovalDecision_(sessionId, approverEmail, decision, comments, stepParam = null, approverFlags = '{}') {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   // SECURITY (F-02): authorize the actual caller server-side (see apiPhase3_ProcessISMDecision).
+  // Widened for delegation (2026-08-11, made EXCLUSIVE 2026-08-12): canActAs_ accepts exactly
+  // ONE identity at a time — the named approver normally, or their admin-configured active
+  // delegate INSTEAD OF them while a delegation is running. It is not additive: the original is
+  // refused on their own row while delegated, which is what stops both of them approving the
+  // same Pending step. With an empty Delegations sheet this is the identical check it replaced.
+  // _actedBy carries the ORIGINAL approver when a delegate acted, and is written to the decision
+  // row so the audit trail stays honest.
   const _me = getNormalizedEmail_(Session.getActiveUser().getEmail());
-  if (_me !== getNormalizedEmail_(approverEmail)) {
-    return { success: false, error: 'Access denied: you may only submit your own decision.' };
+  const _act = canActAs_(_me, approverEmail);
+  if (!_act.allowed) {
+    return { ok: false, success: false, error: 'Access denied: you may only submit your own decision.' };
   }
+  const _actedBy = _act.onBehalfOf ? _me : '';
   try {
     const allowedDecisions = ['Approve', 'Return', 'Deny'];
     if (allowedDecisions.indexOf(decision) === -1) {
-      return { success: false, error: 'Invalid decision value' };
+      return { ok: false, success: false, error: 'Invalid decision value' };
     }
 
     const lock = LockService.getScriptLock();
@@ -5065,7 +5610,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
         lockAcquired = true;
       } catch (lockErr) {
         Logger.log('ERROR: Lock acquisition timeout - concurrent modification risk');
-        return { success: false, error: 'System busy, please try again' };
+        return { ok: false, success: false, error: 'System busy, please try again' };
       }
       
       try {
@@ -5073,8 +5618,8 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
       const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
       
       // CRITICAL FIX: Re-read data after acquiring lock to prevent race condition
-      const apprData = apprSheet.getDataRange().getValues();
-      const appData_values = appSheet.getDataRange().getValues();
+      const apprData = readSheetValues_(apprSheet);
+      const appData_values = readSheetValues_(appSheet);
       
       // Find the current approver record
       let currentRow = -1;
@@ -5083,7 +5628,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
       
       for (let i = 1; i < apprData.length; i++) {
         const rowEmail = String(getNormalizedEmail_(apprData[i][APPROVAL_COLS.APPROVER_EMAIL - 1]) || '').toLowerCase();
-        if (apprData[i][APPROVAL_COLS.SESSION_ID - 1] === sessionId && 
+        if (rowMatches_(apprData[i], APPROVAL_COLS, sessionId, __round) && 
             rowEmail === normalizedTarget && 
             apprData[i][APPROVAL_COLS.STATUS - 1] === 'Pending') {
 
@@ -5098,7 +5643,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
       }
       
       if (currentRow === -1) {
-        return { success: false, error: 'Approval record not found.' };
+        return { ok: false, success: false, error: 'Approval record not found.' };
       }
       
       const timestamp = new Date().toLocaleString('en-PH', {
@@ -5110,6 +5655,9 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
       apprSheet.getRange(currentRow, APPROVAL_COLS.DECISION).setValue(decision);
       apprSheet.getRange(currentRow, APPROVAL_COLS.COMMENTS).setValue(comments);
       apprSheet.getRange(currentRow, APPROVAL_COLS.DECISION_DATE).setValue(timestamp);
+      // Append-only workflow: durable per-round record of what THIS approver flagged.
+      writeDecisionFlags_(apprSheet, currentRow, APPROVAL_COLS, approverFlags);
+      writeActedBy_(apprSheet, currentRow, APPROVAL_COLS, _actedBy);
       
       if (decision === 'Approve') {
         /* Approve branch — when every approver row is Approved, hand off to the ISM stage;
@@ -5117,10 +5665,10 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
         apprSheet.getRange(currentRow, APPROVAL_COLS.STATUS).setValue('Approved');
 
         // Re-read fresh data after lock to check all approvals (prevents stale cache)
-        const freshApprData = apprSheet.getDataRange().getValues();
+        const freshApprData = readSheetValues_(apprSheet);
         let allApproved = true;
         for (let i = 1; i < freshApprData.length; i++) {
-          if (freshApprData[i][APPROVAL_COLS.SESSION_ID - 1] === sessionId) {
+          if (rowMatches_(freshApprData[i], APPROVAL_COLS, sessionId, __round)) {
             if (freshApprData[i][APPROVAL_COLS.STATUS - 1] !== 'Approved') {
               allApproved = false;
               break;
@@ -5130,7 +5678,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
         
         if (allApproved) {
           // Find app row using fresh sheet data (not stale appData_values)
-          const freshAppSheetData = appSheet.getDataRange().getValues();
+          const freshAppSheetData = readSheetValues_(appSheet);
           let appRow = -1;
           for (let i = 1; i < freshAppSheetData.length; i++) {
             if (freshAppSheetData[i][APPLICATIONS_COLS.SESSION_ID - 1] === sessionId) {
@@ -5178,7 +5726,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
         apprSheet.getRange(currentRow, APPROVAL_COLS.STATUS).setValue('Returned');
         apprSheet.getRange(currentRow, APPROVAL_COLS.DECISION).setValue('Return');
         // Re-read fresh data to prevent stale cache
-        const freshAppData = appSheet.getDataRange().getValues();
+        const freshAppData = readSheetValues_(appSheet);
         let appRow = -1;
         for (let i = 1; i < freshAppData.length; i++) {
           if (freshAppData[i][APPLICATIONS_COLS.SESSION_ID - 1] === sessionId) {
@@ -5220,7 +5768,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
         notifyApplicant_(sessionId, 'denied');
       }
       
-      return { success: true, message: 'Decision recorded successfully' };
+      return { ok: true, success: true, message: 'Decision recorded successfully' };
       } finally {
         // CRITICAL FIX: Only release lock if it was actually acquired
         if (lockAcquired) {
@@ -5229,11 +5777,11 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
       }
     } catch (e) {
       Logger.log('Error processing approval: ' + e.toString());
-      return { success: false, error: e.toString() };
+      return safeError_(e, ERR.INTERNAL);
     }
   } catch (e) {
     Logger.log('ERROR in processApprovalDecision_ (outer): ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -5246,12 +5794,13 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
   RETURNS:   Boolean (true also if there are no matching rows).
 */
 function checkAllApproved_(sessionId) {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-  const data = apprSheet.getDataRange().getValues();
+  const data = readSheetValues_(apprSheet);
   const validStatuses = ['Approved', 'Pending', 'Rejected', 'Returned', 'Denied'];
   
   for (let i = 1; i < data.length; i++) {
-    if (data[i][APPROVAL_COLS.SESSION_ID - 1] === sessionId) {
+    if (rowMatches_(data[i], APPROVAL_COLS, sessionId, __round)) {
       const status = data[i][APPROVAL_COLS.STATUS - 1];
       
       // Log unexpected status values
@@ -5296,7 +5845,7 @@ function updateDCSStatus_(reqId, newStatus, approverFlags) {
   }
 
   const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
-  const dcsData = dcsSheet.getDataRange().getValues();
+  const dcsData = readSheetValues_(dcsSheet);
   for (let j = 1; j < dcsData.length; j++) {
     if (dcsData[j][DCS_COLS.REQ_ID - 1] === reqId) {
       dcsSheet.getRange(j + 1, DCS_COLS.STATUS).setValue(newStatus);
@@ -5320,7 +5869,7 @@ function updateDCSStatus_(reqId, newStatus, approverFlags) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// � EMAIL QUEUE ENGINE — Decouples email sending from web requests
+// EMAIL QUEUE ENGINE — Decouples email sending from web requests
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Instead of calling GmailApp.sendEmail() during a web request (which
 // can fail silently under Gmail quota/throttling), all email functions
@@ -5369,28 +5918,28 @@ function queueEmail_(sessionId, recipient, subject, plainBody, type, htmlBody) {
     // ── Stamp EmailStatus='Pending' on the corresponding workflow row ──
     // This allows the admin panel to see which workflow rows have emails queued
     try {
-      var wfInfo = { sheetName: null, cols: null, emailCol: null };
-      if (type === 'approver') {
-        wfInfo.sheetName = DB_SHEET_NAMES.APPROVAL_WORKFLOW;
-        wfInfo.cols = APPROVAL_COLS;
-      } else if (type === 'ism') {
-        wfInfo.sheetName = DB_SHEET_NAMES.ISM_WORKFLOW;
-        wfInfo.cols = ISM_WORKFLOW_COLS;
-      } else if (type === 'divhead') {
-        wfInfo.sheetName = DB_SHEET_NAMES.DIV_HEAD_CONFIG;
-        wfInfo.cols = DIV_HEAD_CONFIG_COLS;
-      }
+      // Band-aid removed (2026-08-11): this used to hand-roll the sheet/cols mapping and then
+      // resolve the approver email by chaining
+      //     cols.APPROVER_EMAIL || cols.ISM_MEMBER_EMAIL || cols.DIV_HEAD_EMAIL
+      // across three DIFFERENT column maps — it only ever worked because the two wrong keys
+      // evaluate to `undefined`, making `row[undefined - 1]` undefined and falling through.
+      // getWorkflowInfoForType_ already returns the correct { name, cols, emailCol } triple, so
+      // use it instead of re-deriving (and mis-deriving) the same thing.
+      var wfInfo = getWorkflowInfoForType_(type);
 
-      if (wfInfo.sheetName) {
-        var wfSheet = getDatabaseSheet_(wfInfo.sheetName, true);
+      if (wfInfo) {
+        var wfSheet = getDatabaseSheet_(wfInfo.name, true);
         if (wfSheet) {
-          var wfData = wfSheet.getDataRange().getValues();
+          var wfData = readSheetValues_(wfSheet);
           var normRecipient = String(getNormalizedEmail_(recipient) || '').toLowerCase();
+          // Append-only: scope to the live round so an abandoned Pending row from an earlier
+          // round can never absorb this stamp instead of the row we actually just emailed.
+          var stampRound = getCurrentRound_(sessionId) || 1;
           for (var wr = 1; wr < wfData.length; wr++) {
-            var rowSid = String(wfData[wr][wfInfo.cols.SESSION_ID - 1] || '').trim();
-            var rowEmail = String(getNormalizedEmail_(wfData[wr][wfInfo.cols.APPROVER_EMAIL - 1] || wfData[wr][wfInfo.cols.ISM_MEMBER_EMAIL - 1] || wfData[wr][wfInfo.cols.DIV_HEAD_EMAIL - 1] || '') || '').toLowerCase();
+            if (!rowMatches_(wfData[wr], wfInfo.cols, sessionId, stampRound)) continue;
+            var rowEmail = String(getNormalizedEmail_(wfData[wr][wfInfo.emailCol - 1]) || '').toLowerCase();
             var rowStatus = String(wfData[wr][wfInfo.cols.STATUS - 1] || '').trim();
-            if (rowSid === sessionId && rowEmail === normRecipient && rowStatus === 'Pending') {
+            if (rowEmail === normRecipient && rowStatus === 'Pending') {
               wfSheet.getRange(wr + 1, wfInfo.cols.EMAIL_STATUS).setValue('Pending');
               break;
             }
@@ -5425,7 +5974,7 @@ function processEmailQueue() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   const MAX_SENDS_PER_CYCLE = 15;   // Cap to stay well within 30-min execution limit
   const SPACING_MS = 10000;         // 10 seconds between sends — safe for Gmail quota
 
@@ -5433,7 +5982,7 @@ function processEmailQueue() {
 
   try {
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
-    const data = queueSheet.getDataRange().getValues();
+    const data = readSheetValues_(queueSheet);
     let sentCount = 0;
 
     for (let i = 1; i < data.length; i++) {
@@ -5523,7 +6072,7 @@ function processEmailQueue() {
             if (wfInfo) {
               var wfSheet = getDatabaseSheet_(wfInfo.name, true);
               if (wfSheet) {
-                var wfData = wfSheet.getDataRange().getValues();
+                var wfData = readSheetValues_(wfSheet);
                 var normRecipient = String(getNormalizedEmail_(recipient) || '').toLowerCase();
                 for (var wr = 1; wr < wfData.length; wr++) {
                   var rowSid = String(wfData[wr][wfInfo.cols.SESSION_ID - 1] || '').trim();
@@ -5564,7 +6113,7 @@ function processEmailQueue() {
                 try {
                   var appsSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
                   if (appsSheet) {
-                    var appsData = appsSheet.getDataRange().getValues();
+                    var appsData = readSheetValues_(appsSheet);
                     for (var ar = 1; ar < appsData.length; ar++) {
                       if (String(appsData[ar][APPLICATIONS_COLS.SESSION_ID - 1] || '').trim() === sessionId) {
                         var requestorEmail = String(appsData[ar][APPLICATIONS_COLS.APPLICANT_EMAIL - 1] || '').trim();
@@ -5602,10 +6151,10 @@ function processEmailQueue() {
     }
 
     Logger.log('📬 Email Queue Processor — Cycle complete. Sent: ' + sentCount);
-    return { success: true, sent: sentCount };
+    return { ok: true, success: true, sent: sentCount };
   } catch (e) {
     Logger.log('ERROR: Email queue processor crashed: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -5621,7 +6170,7 @@ function setupEmailQueueTrigger() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   // Remove any existing trigger to prevent duplicates
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(t => {
@@ -5637,7 +6186,7 @@ function setupEmailQueueTrigger() {
     .create();
 
   Logger.log('✓ Email Queue trigger created — processEmailQueue() will run every 1 minute');
-  return { success: true, message: 'Email queue trigger created. processEmailQueue will run every 1 minute.' };
+  return { ok: true, success: true, message: 'Email queue trigger created. processEmailQueue will run every 1 minute.' };
 }
 
 /*
@@ -5719,7 +6268,7 @@ function stampNotifiedDate_(sheet, rowNum1, colNum) {
   RETURNS:   sendDailyReminders_()'s result, or { success:false, error } when not authorized.
 */
 function sendDailyReminders() {
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   return sendDailyReminders_();
 }
 
@@ -5728,7 +6277,7 @@ function sendDailyReminders_() {
   const config = getReminderConfig_();
   if (!config.enabled) {
     Logger.log('🔔 Daily Reminders — DISABLED via config. Skipping.');
-    return { success: true, skipped: true, reason: 'disabled' };
+    return { ok: true, success: true, skipped: true, reason: 'disabled' };
   }
 
   Logger.log('🔔 Daily Reminders — Starting scan...');
@@ -5800,9 +6349,9 @@ function sendDailyReminders_() {
     var appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
     if (!appSheet) {
       Logger.log('⛔ Daily Reminders — ABORTED: Applications sheet not found. No reminders sent this run.');
-      return { success: false, aborted: true, reason: 'prefilter_unavailable', detail: 'Applications sheet not found' };
+      return { ok: false, success: false, aborted: true, reason: 'prefilter_unavailable', detail: 'Applications sheet not found' };
     }
-    var appData = appSheet.getDataRange().getValues();
+    var appData = readSheetValues_(appSheet);
     for (var ai = 1; ai < appData.length; ai++) {
       var appStatus = String(appData[ai][APPLICATIONS_COLS.STATUS - 1] || '').trim();
       if (VALID_REMINDER_STATUSES.indexOf(appStatus) !== -1) {
@@ -5812,7 +6361,7 @@ function sendDailyReminders_() {
     Logger.log('🔔 Pre-filter: ' + Object.keys(validSessionIds).length + ' applications in active approval states');
   } catch (e) {
     Logger.log('⛔ Daily Reminders — ABORTED: Applications pre-filter read failed. No reminders sent this run: ' + e.toString());
-    return { success: false, aborted: true, reason: 'prefilter_unavailable', detail: String(e).substring(0, 300) };
+    return { ok: false, success: false, aborted: true, reason: 'prefilter_unavailable', detail: String(e).substring(0, 300) };
   }
 
   // Define the three sheets to scan
@@ -5853,7 +6402,7 @@ function sendDailyReminders_() {
     var sheet = getDatabaseSheet_(sheetDef.name, true);
     if (!sheet) continue;
 
-    var data = sheet.getDataRange().getValues();
+    var data = readSheetValues_(sheet);
 
     // ── FIRST PASS: Collect pending rows grouped by sessionId ──
     // For sheets with steps (Approval_Workflow, ISM_Workflow), only the
@@ -5873,10 +6422,18 @@ function sendDailyReminders_() {
       if (!validSessionIds[String(sessionId || '').trim()]) continue;
 
       var step = sheetDef.stepCol ? Number(data[i][sheetDef.stepCol - 1] || 999) : 0;
+      var rowRound = roundOf_(data[i], sheetDef.cols);
       var existing = pendingBySession[sessionId];
 
-      // For step-based sheets: keep only the row with the lowest step number
-      if (!existing || step < existing.step) {
+      // 🚩 APPEND-ONLY: rows from earlier rounds are no longer deleted, so a Pending row left over
+      // from an abandoned round (e.g. an ISM member never reached before a return) is still sitting
+      // in the sheet. Without the round comparison below this engine would happily nag that person
+      // forever about a round that is closed. Highest round wins; within a round, lowest step wins.
+      var isBetter = !existing ||
+                     rowRound > existing.round ||
+                     (rowRound === existing.round && step < existing.step);
+
+      if (isBetter) {
         // CRITICAL: Normalize reminderDate to YYYY-MM-DD string.
         // Sheets auto-converts "2026-06-04" into a Date object,
         // so String(dateObj) != "2026-06-04" and breaks the skip check below.
@@ -5894,6 +6451,7 @@ function sendDailyReminders_() {
         pendingBySession[sessionId] = {
           rowIndex: i,
           step: step,
+          round: rowRound,
           approverEmail: data[i][sheetDef.emailCol - 1],
           approverName: sheetDef.nameCol ? data[i][sheetDef.nameCol - 1] : 'Division Head',
           reminderDate: normalizedDate,
@@ -5912,7 +6470,7 @@ function sendDailyReminders_() {
       if (processedCount >= MAX_SCAN_ROWS) {
         cache.put(CONTINUATION_KEY, JSON.stringify({ sheetIdx: sIdx, row: row.rowIndex }), 3600);
         Logger.log('🔔 Daily Reminders — Capped at ' + MAX_SCAN_ROWS + ' rows. Resuming next cycle.');
-        return { success: true, capped: true, processed: processedCount, reminded: remindedCount };
+        return { ok: true, success: true, capped: true, processed: processedCount, reminded: remindedCount };
       }
       processedCount++;
 
@@ -5937,7 +6495,7 @@ function sendDailyReminders_() {
         if (remaining < 2) {
           Logger.log('🔔 Daily Reminders — Quota exhausted. Stopping.');
           cache.put(CONTINUATION_KEY, JSON.stringify({ sheetIdx: sIdx, row: row.rowIndex }), 3600);
-          return { success: true, quotaExhausted: true, processed: processedCount, reminded: remindedCount };
+          return { ok: true, success: true, quotaExhausted: true, processed: processedCount, reminded: remindedCount };
         }
       } catch (_) {}
 
@@ -5971,7 +6529,7 @@ function sendDailyReminders_() {
   } catch (_) {}
 
   Logger.log('🔔 Daily Reminders — Complete. Processed: ' + processedCount + ', Reminded: ' + remindedCount);
-  return { success: true, processed: processedCount, reminded: remindedCount };
+  return { ok: true, success: true, processed: processedCount, reminded: remindedCount };
 }
 
 /*
@@ -6003,7 +6561,11 @@ function buildReminderEmail_(sessionId, approverEmail, approverName, stepInfo) {
     }
 
     var ts = new Date().getTime().toString();
-    var normalizedEmail = getNormalizedEmail_(approverEmail);
+    // DELEGATION: nudge whoever is actually expected to act right now. Without this the daily
+    // reminder would keep chasing someone on leave while their delegate — who holds the only
+    // usable link — hears nothing, which is worse than not reminding at all.
+    var _routed = recipientFor_(approverEmail);
+    var normalizedEmail = getNormalizedEmail_(_routed.email);
     var token = generateAuthToken_(sessionId, normalizedEmail, ts, 'Review');
     var reviewUrl = webAppUrl +
       '?sessionId=' + encodeURIComponent(sessionId) +
@@ -6017,6 +6579,7 @@ function buildReminderEmail_(sessionId, approverEmail, approverName, stepInfo) {
     var htmlBody = buildPiaEmailHtml_({
       heading: 'Reminder — Review Pending',
       contentHtml: '' +
+        delegationNoticeHtml_(_routed.onBehalfOf, _routed.reason) +
         '<p style="margin:0 0 14px;font-size:14px;">This is a friendly reminder that your review is still pending for the following Privacy Impact Assessment.</p>' +
         '<div style="background:#fff8e1;color:#b46d14;border:1px solid rgba(180,109,20,0.2);padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:16px;">⏳ <strong>Pending Review</strong> — ' + escapeHtml_(stepInfo || 'Awaiting your action') + '</div>' +
         '<div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">' +
@@ -6033,11 +6596,13 @@ function buildReminderEmail_(sessionId, approverEmail, approverName, stepInfo) {
     });
 
     // Queue via existing email infrastructure — use 'reminder' type for all
-    queueEmail_(sessionId, approverEmail, subject,
+    queueEmail_(sessionId, _routed.email, subject,
       'Please view this email in an HTML-compatible client.',
       'reminder', htmlBody);
 
-    Logger.log('  🔔 Reminder queued: reminder → ' + approverEmail + ' [' + sessionId + ']');
+    Logger.log('  🔔 Reminder queued: reminder → ' + _routed.email +
+      (_routed.onBehalfOf ? ' (delegate for ' + _routed.onBehalfOf + ')' : '') +
+      ' [' + sessionId + ']');
   } catch (e) {
     Logger.log('  ⚠ buildReminderEmail_ failed for ' + sessionId + ': ' + e.toString());
     throw e; // Let caller handle
@@ -6103,6 +6668,7 @@ function buildPiaEmailHtml_(opts) {
   RETURNS:   undefined. No-op if no approver exists at that step.
 */
 function notifyApprover_(sessionId, approverIndex) {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   // FAILSAFE: Email failures must never crash the caller (DB already updated)
   try {
     // CRITICAL FIX C1: Get URL at runtime
@@ -6110,7 +6676,7 @@ function notifyApprover_(sessionId, approverIndex) {
     // Fetch the next pending approver from the approval workflow sheet
     // (not from hardcoded APPROVERS - respect dynamic approvers from form data)
     const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-    const apprData = apprSheet.getDataRange().getValues();
+    const apprData = readSheetValues_(apprSheet);
     
     // Find all approval records for this sessionId to determine total steps
     let totalSteps = 0;
@@ -6118,7 +6684,7 @@ function notifyApprover_(sessionId, approverIndex) {
     let approverRowIndex = -1; // 0-based index into apprData (sheet row = index + 1) for NOTIFIED_DATE stamping
 
     for (let i = 1; i < apprData.length; i++) {
-      if (apprData[i][APPROVAL_COLS.SESSION_ID - 1] === sessionId) {
+      if (rowMatches_(apprData[i], APPROVAL_COLS, sessionId, __round)) {
         totalSteps++;
         // Find the specific step we need to notify
         if (apprData[i][APPROVAL_COLS.CURRENT_STEP - 1] === approverIndex + 1) {
@@ -6141,7 +6707,11 @@ function notifyApprover_(sessionId, approverIndex) {
     const approver = approverToNotify;
     const ts = new Date().getTime().toString();
     // CRITICAL FIX: Normalize email before token generation to prevent authorization mismatch
-    const normalizedApproverEmail = getNormalizedEmail_(approver.email);
+    // DELEGATION: resolve who should actually receive this, then mint the token over THAT
+    // address. Both must move together — a link addressed to the delegate but signed for the
+    // original fails handleEmailAction_ identity check, and the reverse fails isTokenValid_.
+    const _routed = recipientFor_(approver.email);
+    const normalizedApproverEmail = getNormalizedEmail_(_routed.email);
     const token = generateAuthToken_(sessionId, normalizedApproverEmail, ts, 'Review');
 
     const baseUrl = `${webAppUrl}?sessionId=${sessionId}&email=${encodeURIComponent(normalizedApproverEmail)}&token=${token}&ts=${ts}&step=${stepCount}`;
@@ -6161,6 +6731,7 @@ function notifyApprover_(sessionId, approverIndex) {
       heading: 'Action Required — Review',
       contentHtml: `
         <p style="margin:0 0 14px;font-size:14px;">Hello, ${escapeHtml_(approver.name || 'Approver')},</p>
+        ${delegationNoticeHtml_(_routed.onBehalfOf, _routed.reason)}
         <p style="margin:0 0 14px;font-size:14px;">A new Privacy Impact Assessment (PIA) requires your review.</p>
         <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Approval chain — step ${stepCount} of ${totalSteps}</div>
         <div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">
@@ -6178,7 +6749,7 @@ function notifyApprover_(sessionId, approverIndex) {
     });
 
     // Queue email for deferred reliable delivery (avoids Gmail throttling in-request)
-    queueEmail_(sessionId, approver.email, subject, "Please view this email in an HTML-compatible client.", 'approver', htmlBody);
+    queueEmail_(sessionId, _routed.email, subject, "Please view this email in an HTML-compatible client.", 'approver', htmlBody);
 
     // Commit 6: mark when this approver was first notified (starts their 7-day reminder clock).
     if (approverRowIndex > 0) stampNotifiedDate_(apprSheet, approverRowIndex + 1, APPROVAL_COLS.NOTIFIED_DATE);
@@ -6227,7 +6798,7 @@ function notifyApplicant_(sessionId, status, options) {
     if (appData.linkedReqId) {
       const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, false);
       if (dcsSheet) {
-        const dcsVals = dcsSheet.getDataRange().getValues();
+        const dcsVals = readSheetValues_(dcsSheet);
         for (let i = 1; i < dcsVals.length; i++) {
           if (String(dcsVals[i][DCS_COLS.REQ_ID - 1] || '').trim() === String(appData.linkedReqId).trim()) {
             const md = JSON.parse(dcsVals[i][DCS_COLS.METADATA_JSON - 1] || '{}');
@@ -6354,7 +6925,7 @@ function notifyApplicant_(sessionId, status, options) {
         attachments: [opts.certBlob]
       });
     } catch (sendErr) {
-      certSend = { success: false, error: String(sendErr) };
+      certSend = { ok: false, success: false, error: String(sendErr) };
     }
     // L1: if the synchronous send (with attachment) ultimately fails, fall back to the reliable queue
     // (without the attachment) so the applicant is still notified of full approval. The certificate
@@ -6383,35 +6954,25 @@ function notifyApplicant_(sessionId, status, options) {
 // 📧 EMAIL HTML
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/*
-  Function: isLegacyDefaultComment_
-  LAYMAN:    Checks if a stored approver comment is just the old auto-inserted boilerplate
-             ("Approved via secure access review link.") rather than something a person wrote,
-             so displays can hide it. We stopped storing these, but old rows keep them forever.
-  TECHNICAL: Exact-match against the two legacy fallback strings (never rewrite sheet rows;
-             filtering is render-time only).
-  PARAMS:    - c — the comment string.
-  RETURNS:   true if it is legacy boilerplate.
-*/
-function isLegacyDefaultComment_(c) {
-  const s = String(c || '').trim();
-  return s === 'Approved via secure access review link.' || s === 'No additional comments provided.';
-}
 
 /*
   Function: getLatestPriorDecisionByEmail_
   LAYMAN:    "Did THIS approver already act on this request in an earlier round?" Walks the preserved
              return-cycle history newest-first and returns their most recent prior decision, if any.
-  TECHNICAL: getRevisionHistory_ rounds descending; matches getNormalizedEmail_(approverEmail) against
-             the target. Division Head rows have blank names but always carry the email, so matching
-             is email-only by design. Never throws.
+  TECHNICAL: getUnifiedHistory_ rounds strictly BELOW the current round, walked descending; matches
+             getNormalizedEmail_(approverEmail) against the target. Division Head rows have blank
+             names but always carry the email, so matching is email-only by design. Never throws.
   PARAMS:    - sessionId — application id.  - email — the approver being notified/reviewing.
   RETURNS:   { round, decision, status, dateStr } or null.
 */
 function getLatestPriorDecisionByEmail_(sessionId, email) {
   try {
     if (!email) return null;
-    const rounds = getRevisionHistory_(sessionId);
+    // Append-only: read the live rounds and drop the current one — "prior" means a round this
+    // approver already closed, not the one they are being asked to act on right now.
+    const currentRound = getCurrentRound_(sessionId);
+    const rounds = (getUnifiedHistory_(sessionId, false).rounds || [])
+      .filter(function (r) { return r.round < currentRound; });
     if (!rounds || rounds.length === 0) return null;
     const target = getNormalizedEmail_(String(email));
     for (let i = rounds.length - 1; i >= 0; i--) {
@@ -6478,7 +7039,6 @@ function buildPriorReviewChipHtml_(sessionId, email) {
   TECHNICAL: Consumes getUnifiedHistory_ output. Email-safe: inline styles, hex colors only.
              Status colors follow the unified matrix (approved green #065f46, returned amber
              #92400e, denied red #991b1b, escalated/pending blue #1e40af). Legacy boilerplate
-             comments are hidden via isLegacyDefaultComment_.
   PARAMS:    - unified — { rounds } from getUnifiedHistory_.
   RETURNS:   HTML string ('' when there are no rounds).
 */
@@ -6534,7 +7094,7 @@ function buildUnifiedHistoryHtml_(unified) {
           return escapeHtml_(k) + (reason && reason !== true ? ' (' + escapeHtml_(String(reason)) + ')' : '');
         }).join(', ') + '</div>';
       }
-      const showComment = d.comments && !isLegacyDefaultComment_(d.comments);
+      const showComment = !!d.comments;
       decisions += `
         <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f0f0f0;">
           <div style="font-size:13px;color:#333;"><strong>${escapeHtml_(d.approverName || d.approverEmail || 'Approver')}</strong> <span style="color:#6b7280;">(${escapeHtml_(d.role || 'Approver')})</span>: <span style="color:${colorFor(d.status, d.decision)};font-weight:600;">${escapeHtml_(labelFor(d.status))}</span></div>
@@ -6593,7 +7153,7 @@ function getApplicationData_(sessionId) {
   const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
 
   const searchId = String(sessionId || '').trim().toUpperCase();
-  const appData_values = appSheet.getDataRange().getValues();
+  const appData_values = readSheetValues_(appSheet);
 
   let rowData = null;
   for (let i = 1; i < appData_values.length; i++) {
@@ -6625,16 +7185,24 @@ function getApplicationData_(sessionId) {
   };
 
   // Fetch approver timeline rows
-  const apprData_values = apprSheet.getDataRange().getValues();
+  const apprData_values = readSheetValues_(apprSheet);
   let stepCounter = 0;
-  
+
   const poEmail = getNormalizedEmail_(PropertiesService.getScriptProperties().getProperty('PRIVACY_OFFICER_EMAIL'));
   const immEmail = getNormalizedEmail_(appData.pia1.immediateHeadEmail);
   const deptEmail = getNormalizedEmail_(appData.pia1.deptHeadEmail);
   const hasImmHead = !!immEmail;
 
+  // Append-only workflow: appData.approvers is the CURRENT ladder — one clean row per approver —
+  // so every existing consumer (review forms, certificate, status logic) keeps seeing exactly one
+  // set instead of one per round. Prior rounds are history and are read via getUnifiedHistory_.
+  // ⚠ Authorization does NOT rely on this list being complete: isAuthorizedForApplication_ scans
+  //   Approval_Workflow across ALL rounds so an approver from an earlier round keeps view access.
+  const __round = getCurrentRound_(sessionId) || 1;
+
   for (let i = 1; i < apprData_values.length; i++) {
-    if (String(apprData_values[i][APPROVAL_COLS.SESSION_ID - 1] || '').trim().toUpperCase() === searchId) {
+    if (String(apprData_values[i][APPROVAL_COLS.SESSION_ID - 1] || '').trim().toUpperCase() === searchId &&
+        roundOf_(apprData_values[i], APPROVAL_COLS) === __round) {
       const aData = apprData_values[i];
       const email = getNormalizedEmail_(aData[APPROVAL_COLS.APPROVER_EMAIL - 1]);
       const step = Number(aData[APPROVAL_COLS.CURRENT_STEP - 1]);
@@ -6690,7 +7258,7 @@ function getUserSubmissions_() {
     const lastRow = appSheet.getLastRow();
     if (lastRow < 2) return [];
     
-    const appData_values = appSheet.getDataRange().getValues();
+    const appData_values = readSheetValues_(appSheet);
 
     const submissions = [];
     const safeParse = (str) => { 
@@ -6734,6 +7302,202 @@ function getUserSubmissions_() {
   PARAMS:    - sessionId — application id.
   RETURNS:   Row number (>=2), or -1 if not found / sheet empty.
 */
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🔁 ROUND HELPERS — the core of the append-only workflow
+//
+// LAYMAN (Tropang Ex): Dati, tuwing nag-re-resubmit ang applicant, BINUBURA lahat ng lumang
+//   approval rows para malinis yung "sino ang susunod?" na tanong. Ngayon hindi na natin
+//   binubura — sa halip, may bagong column na RoundNumber, at nagdadagdag lang tayo ng
+//   bagong round sa ibaba. Yung dalawang helper dito ang nagsasabi kung anong round na tayo.
+//
+// TECHNICAL: The delete existed only because a scan for `SessionID = X AND Status = 'Pending'`
+//   could not distinguish a live row from an abandoned one in a previous round. With a round
+//   discriminator, routing reads scope to the current round and history reads take every round.
+//   Rows written before this change have a blank RoundNumber and are read as round 1.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/*
+  Function: roundOf_
+  LAYMAN:    Binabasa kung pang-ilang round yung isang row. Kapag blangko (luma pang data),
+             ituturing na round 1.
+  TECHNICAL: Reads the ROUND_NUMBER cell from a 0-indexed row array and coerces it to a positive
+             integer. Blank / 0 / non-numeric all normalize to 1, which is what makes this change
+             backward-compatible with rows written before the column existed.
+  PARAMS:    - row  — a workflow row as a 0-indexed array.
+             - cols — the matching column map (APPROVAL_COLS / ISM_WORKFLOW_COLS / DIV_HEAD_CONFIG_COLS).
+  RETURNS:   A positive integer round number (never 0, never NaN).
+*/
+function roundOf_(row, cols) {
+  const raw = Number(row[cols.ROUND_NUMBER - 1]);
+  return (isFinite(raw) && raw >= 1) ? Math.floor(raw) : 1;
+}
+
+/*
+  Function: rowMatches_
+
+  LAYMAN (Tropang Ex):
+  Isang tanong lang ang sinasagot nito: "kabilang ba itong row sa request na hinahanap ko, at sa
+  tamang round?" Kapag `round` ay null, ibig sabihin "kahit anong round" — ginagamit yon ng mga
+  history view na dapat makita LAHAT ng round.
+
+  TECHNICAL:
+  The single predicate every workflow scan should use, so the routing-vs-history distinction is
+  explicit at each call site instead of implied.
+
+    round = <number>  → ROUTING read. "Who acts next / is this actionable?" Must be scoped, or a
+                        stale Pending row from an abandoned round can hijack the routing. This is
+                        the exact failure the old delete-on-resubmit was hiding.
+    round = null      → HISTORY or AUTHZ read. "What happened?" / "was this person ever party to
+                        this request?" Must span every round.
+
+  PARAMS:
+    - row       — workflow row as a 0-indexed array.
+    - cols      — matching column map.
+    - sessionId — the application id being matched.
+    - round     — a round number to scope to, or null for all rounds.
+  RETURNS:   Boolean.
+*/
+function rowMatches_(row, cols, sessionId, round) {
+  if (String(row[cols.SESSION_ID - 1] || '').trim() !== String(sessionId || '').trim()) return false;
+  if (round === null || round === undefined) return true;
+  return roundOf_(row, cols) === round;
+}
+
+/*
+  Function: writeDecisionFlags_
+
+  LAYMAN (Tropang Ex):
+  Kapag nag-Return ang isang approver, may mga item siyang na-flag ("ayusin mo 'to"). Dati,
+  yung listahan na 'yon ay nakatago lang sa Applications.Approver_Flags — na BINUBURA tuwing
+  nag-re-resubmit ang applicant. Kaya kinailangan pa ng photocopy (Revision_History) para hindi
+  mawala. Ngayon, isinusulat natin diretso sa row mismo ng approver na nag-flag, kaya buhay siya
+  habambuhay kasama ng desisyon niya.
+
+  TECHNICAL:
+  Writes the approver's flag payload into FLAGGED_FIELDS on their own decision row. Replaces
+  Revision_History.FlaggedFields as the durable per-round record.
+
+  No-ops on an empty/blank/'{}' payload so an ordinary Approve does not stamp noise. Fully
+  guarded — a failure here must never break an already-committed decision, which is the same
+  rule the old snapshot followed.
+
+  PARAMS:
+    - sheet         — the workflow Sheet being written.
+    - rowNum1       — 1-based sheet row of the approver's decision row.
+    - cols          — matching column map (must expose FLAGGED_FIELDS).
+    - approverFlags — the flags payload; object or JSON string, as received by the decision fn.
+  RETURNS:   undefined.
+*/
+function writeDecisionFlags_(sheet, rowNum1, cols, approverFlags) {
+  try {
+    if (!sheet || !rowNum1 || !cols || !cols.FLAGGED_FIELDS) return;
+
+    let payload = '';
+    if (approverFlags && typeof approverFlags === 'object') {
+      payload = Object.keys(approverFlags).length ? JSON.stringify(approverFlags) : '';
+    } else {
+      const raw = String(approverFlags || '').trim();
+      payload = (raw && raw !== '{}' && raw !== 'null') ? raw : '';
+    }
+    if (!payload) return; // nothing flagged (e.g. a plain Approve) — leave the cell blank
+
+    sheet.getRange(rowNum1, cols.FLAGGED_FIELDS).setValue(payload);
+  } catch (e) {
+    Logger.log('writeDecisionFlags_ failed (non-blocking): ' + e.toString());
+  }
+}
+
+/*
+  Function: writeActedBy_
+
+  LAYMAN (Tropang Ex):
+  Kapag ang kapalit (delegate) ang pumindot, dito naitatala kung SINO talaga ang pumindot.
+  Yung row mismo, naka-pangalan pa rin sa orihinal na approver — kaya kung wala ito, mukhang
+  siya mismo ang umaksyon kahit naka-leave siya. Ito yung nagpapaliwanag sa audit trail.
+
+  TECHNICAL:
+  Writes ACTED_BY on a decision row. Called immediately after writeDecisionFlags_ at all three
+  decision sites, and only ever with a non-empty value when canActAs_ reported a delegation —
+  so a normal, personally-made decision leaves the cell blank and every pre-delegation row
+  stays meaningful.
+
+  🚩 Non-blocking by design, matching writeDecisionFlags_: a failure here must never roll back
+  a decision that has already been recorded. But unlike a silent Logger.log, it is loud enough
+  to find, because "who actually approved this" is exactly the question an auditor asks.
+
+  PARAMS:
+  - sheet — the workflow sheet.  - rowNum1 — 1-indexed row.
+  - cols — the matching *_COLS map (must carry ACTED_BY).
+  - actedBy — the delegate's email, or '' when the approver acted personally.
+
+  RETURNS:
+  undefined.
+*/
+function writeActedBy_(sheet, rowNum1, cols, actedBy) {
+  try {
+    if (!sheet || !rowNum1 || !cols || !cols.ACTED_BY) return;
+    const val = String(actedBy || '').trim();
+    if (!val) return;   // acted personally — leave blank, which is the overwhelming majority
+    sheet.getRange(rowNum1, cols.ACTED_BY).setValue(val);
+  } catch (e) {
+    Logger.log('writeActedBy_ FAILED (non-blocking) for row ' + rowNum1 + ': ' + e.toString());
+  }
+}
+
+/*
+  Function: getCurrentRound_
+
+  LAYMAN (Tropang Ex):
+  Sinasagot nito ang "pang-ilang beses na ba na-resubmit itong request?" Tinitingnan niya lahat
+  ng approval rows ng isang session sa tatlong sheet, tapos kukunin yung pinakamataas na round.
+
+  TECHNICAL:
+  Derives the active round as MAX(RoundNumber) across all three workflow sheets for one session.
+  Deliberately derived rather than stored on Applications: a stored copy is a second source of
+  truth that can drift from the rows it describes.
+
+  Scans all three sheets because a session's highest round can live in any of them — e.g. an
+  escalation creates a DivisionHead row for the current round while the ISM chain is paused.
+
+  Returns 0 when the session has no workflow rows at all, which is how callers distinguish
+  "never initialized" from "round 1".
+
+  PARAMS:    - sessionId — the application id.
+  RETURNS:   Integer: highest round found, or 0 if the session has no workflow rows.
+
+  EXAMPLE
+    getCurrentRound_('PIA-000075')  -> 2   (submitted once, returned, resubmitted once)
+    getCurrentRound_('PIA-999999')  -> 0   (no rows yet)
+*/
+function getCurrentRound_(sessionId) {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return 0;
+
+  const sheets = [
+    { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, cols: APPROVAL_COLS },
+    { name: DB_SHEET_NAMES.ISM_WORKFLOW,      cols: ISM_WORKFLOW_COLS },
+    { name: DB_SHEET_NAMES.DIV_HEAD_CONFIG,   cols: DIV_HEAD_CONFIG_COLS }
+  ];
+
+  let maxRound = 0;
+  sheets.forEach(function (def) {
+    try {
+      const sheet = getDatabaseSheet_(def.name, false);
+      if (!sheet || sheet.getLastRow() < 2) return;
+      const data = readSheetValues_(sheet);
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][def.cols.SESSION_ID - 1] || '').trim() !== sid) continue;
+        const r = roundOf_(data[i], def.cols);
+        if (r > maxRound) maxRound = r;
+      }
+    } catch (e) {
+      Logger.log('getCurrentRound_: could not scan ' + def.name + ': ' + e.toString());
+    }
+  });
+
+  return maxRound;
+}
+
 function findRowBySessionID_(sessionId) {
   const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
   const lastRow = appSheet.getLastRow();
@@ -6848,7 +7612,7 @@ function adminGetEmailLog_(sessionId) {
   try {
     const auditSheet = getDatabaseSheet_(DB_SHEET_NAMES.RISK_AUDIT, false);
     if (!auditSheet) return [];
-    var data = auditSheet.getDataRange().getValues();
+    var data = readSheetValues_(auditSheet);
     var results = [];
     for (var i = 1; i < data.length; i++) {
       if (data[i][AUDIT_COLS.SESSION_ID - 1] === sessionId && String(data[i][AUDIT_COLS.ACTION - 1] || '').startsWith('Email ')) {
@@ -6877,7 +7641,7 @@ function adminGetFailedEmails_(sinceDays) {
     sinceDays = Number(sinceDays) || 7;
     var auditSheet = getDatabaseSheet_(DB_SHEET_NAMES.RISK_AUDIT, false);
     if (!auditSheet) return [];
-    var data = auditSheet.getDataRange().getValues();
+    var data = readSheetValues_(auditSheet);
     var results = [];
     for (var i = 1; i < data.length; i++) {
       if (String(data[i][AUDIT_COLS.ACTION - 1] || '') === 'Email Failed') {
@@ -6904,21 +7668,22 @@ function adminGetFailedEmails_(sinceDays) {
   RETURNS:   { success, error, message }.
 */
 function adminResendEmail_(sessionId, recipient, type) {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
     var appData = getApplicationData_(sessionId);
-    if (!appData) return { success: false, error: 'Application not found: ' + sessionId, message: null };
+    if (!appData) return { ok: false, success: false, error: 'Application not found: ' + sessionId, message: null };
     var normalizedType = String(type || '').toLowerCase().trim();
     if (normalizedType === 'approver') {
       var apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-      var apprData = apprSheet.getDataRange().getValues();
+      var apprData = readSheetValues_(apprSheet);
       var foundStep = -1;
       for (var i = 1; i < apprData.length; i++) {
-        if (apprData[i][APPROVAL_COLS.SESSION_ID - 1] === sessionId && getNormalizedEmail_(String(apprData[i][APPROVAL_COLS.APPROVER_EMAIL - 1] || '')) === getNormalizedEmail_(recipient) && apprData[i][APPROVAL_COLS.STATUS - 1] === 'Pending') {
+        if (rowMatches_(apprData[i], APPROVAL_COLS, sessionId, __round) && getNormalizedEmail_(String(apprData[i][APPROVAL_COLS.APPROVER_EMAIL - 1] || '')) === getNormalizedEmail_(recipient) && apprData[i][APPROVAL_COLS.STATUS - 1] === 'Pending') {
           foundStep = Number(apprData[i][APPROVAL_COLS.CURRENT_STEP - 1]) - 1;
           break;
         }
       }
-      if (foundStep < 0) return { success: false, error: 'No pending approval step for: ' + recipient, message: null };
+      if (foundStep < 0) return { ok: false, success: false, error: 'No pending approval step for: ' + recipient, message: null };
       notifyApprover_(sessionId, foundStep);
     } else if (normalizedType === 'applicant') {
       var currentStatus = String(appData.status || '').toLowerCase();
@@ -6929,29 +7694,29 @@ function adminResendEmail_(sessionId, recipient, type) {
       notifyApplicant_(sessionId, nstatus);
     } else if (normalizedType === 'ism') {
       var ismSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-      var ismData = ismSheet.getDataRange().getValues();
+      var ismData = readSheetValues_(ismSheet);
       var foundStep = -1;
       for (var i = 1; i < ismData.length; i++) {
-        if (ismData[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId && getNormalizedEmail_(String(ismData[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1] || '')) === getNormalizedEmail_(recipient) && ismData[i][ISM_WORKFLOW_COLS.STATUS - 1] === 'Pending') {
+        if (rowMatches_(ismData[i], ISM_WORKFLOW_COLS, sessionId, __round) && getNormalizedEmail_(String(ismData[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1] || '')) === getNormalizedEmail_(recipient) && ismData[i][ISM_WORKFLOW_COLS.STATUS - 1] === 'Pending') {
           foundStep = Number(ismData[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1]);
           break;
         }
       }
-      if (foundStep < 0) return { success: false, error: 'No pending ISM step for: ' + recipient, message: null };
+      if (foundStep < 0) return { ok: false, success: false, error: 'No pending ISM step for: ' + recipient, message: null };
       notifyISMember_(sessionId, foundStep);
     } else {
-      return { success: false, error: 'Invalid type: ' + type + '. Must be approver, applicant, or ism.', message: null };
+      return { ok: false, success: false, error: 'Invalid type: ' + type + '. Must be approver, applicant, or ism.', message: null };
     }
     logAuditTrail_(sessionId, 'Email Resend', JSON.stringify({ recipient: recipient, type: normalizedType, attempts: 1, error: null, source: 'admin' }));
-    return { success: true, error: null, message: 'Notification resent to ' + recipient + ' for ' + sessionId };
+    return { ok: true, success: true, error: null, message: 'Notification resent to ' + recipient + ' for ' + sessionId };
   } catch (e) {
     Logger.log('Error in adminResendEmail_: ' + e.toString());
-    return { success: false, error: e.toString(), message: null };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// �️ ADMIN API — EMAIL QUEUE MANAGEMENT
+// ADMIN API — EMAIL QUEUE MANAGEMENT
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
@@ -6968,7 +7733,7 @@ function adminGetEmailQueue_(filter) {
     const sessionFilter = String(filter.sessionId || '').trim();
     
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
-    const data = queueSheet.getDataRange().getValues();
+    const data = readSheetValues_(queueSheet);
     const results = [];
 
     for (let i = 1; i < data.length; i++) {
@@ -6993,10 +7758,10 @@ function adminGetEmailQueue_(filter) {
       });
     }
 
-    return { success: true, data: results, total: results.length };
+    return { ok: true, success: true, data: results, total: results.length };
   } catch (e) {
     Logger.log('Error in adminGetEmailQueue_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7010,10 +7775,10 @@ function adminGetEmailQueue_(filter) {
 */
 function adminRetryQueuedEmail_(queueId) {
   try {
-    if (!queueId) return { success: false, error: 'queueId is required' };
+    if (!queueId) return { ok: false, success: false, error: 'queueId is required' };
 
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
-    const data = queueSheet.getDataRange().getValues();
+    const data = readSheetValues_(queueSheet);
     let found = false;
 
     for (let i = 1; i < data.length; i++) {
@@ -7029,11 +7794,11 @@ function adminRetryQueuedEmail_(queueId) {
     }
 
     return found
-      ? { success: true, message: 'Queue item ' + queueId + ' reset to Pending. It will be sent on the next trigger cycle.' }
-      : { success: false, error: 'Queue item not found: ' + queueId };
+      ? { ok: true, success: true, message: 'Queue item ' + queueId + ' reset to Pending. It will be sent on the next trigger cycle.' }
+      : { ok: false, success: false, error: 'Queue item not found: ' + queueId };
   } catch (e) {
     Logger.log('Error in adminRetryQueuedEmail_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7047,11 +7812,11 @@ function adminRetryQueuedEmail_(queueId) {
 */
 function adminRetryAllForSession_(sessionId, status) {
   try {
-    if (!sessionId) return { success: false, error: 'sessionId is required' };
+    if (!sessionId) return { ok: false, success: false, error: 'sessionId is required' };
     const targetStatus = String(status || 'Failed').trim();
 
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
-    const data = queueSheet.getDataRange().getValues();
+    const data = readSheetValues_(queueSheet);
     let retriedCount = 0;
 
     for (let i = 1; i < data.length; i++) {
@@ -7068,13 +7833,13 @@ function adminRetryAllForSession_(sessionId, status) {
     }
 
     return {
-      success: true,
+      ok: true, success: true,
       message: retriedCount + ' queue items for ' + sessionId + ' reset to Pending.',
       retried: retriedCount
     };
   } catch (e) {
     Logger.log('Error in adminRetryAllForSession_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7088,11 +7853,11 @@ function adminRetryAllForSession_(sessionId, status) {
 */
 function adminCancelQueuedEmails_(sessionId, type) {
   try {
-    if (!sessionId) return { success: false, error: 'sessionId is required' };
+    if (!sessionId) return { ok: false, success: false, error: 'sessionId is required' };
     const typeFilter = String(type || '').trim();
 
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
-    const data = queueSheet.getDataRange().getValues();
+    const data = readSheetValues_(queueSheet);
     let cancelled = 0;
 
     for (let i = 1; i < data.length; i++) {
@@ -7107,10 +7872,10 @@ function adminCancelQueuedEmails_(sessionId, type) {
       }
     }
 
-    return { success: true, message: cancelled + ' pending queue items cancelled for ' + sessionId, cancelled: cancelled };
+    return { ok: true, success: true, message: cancelled + ' pending queue items cancelled for ' + sessionId, cancelled: cancelled };
   } catch (e) {
     Logger.log('Error in adminCancelQueuedEmails_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7125,7 +7890,7 @@ function adminCancelQueuedEmails_(sessionId, type) {
 function adminGetQueueSummary_() {
   try {
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
-    const data = queueSheet.getDataRange().getValues();
+    const data = readSheetValues_(queueSheet);
     const summary = { total: 0, pending: 0, sent: 0, failed: 0, cancelled: 0, byType: {} };
 
     for (let i = 1; i < data.length; i++) {
@@ -7142,10 +7907,10 @@ function adminGetQueueSummary_() {
       summary.byType[type]++;
     }
 
-    return { success: true, data: summary };
+    return { ok: true, success: true, data: summary };
   } catch (e) {
     Logger.log('Error in adminGetQueueSummary_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7180,10 +7945,10 @@ function adminGetReminderConfig_() {
       var lastRun = PropertiesService.getScriptProperties().getProperty('PIA_LAST_REMINDER_RUN');
       if (lastRun) config.lastRun = lastRun;
     } catch (_) {}
-    return { success: true, data: config };
+    return { ok: true, success: true, data: config };
   } catch (e) {
     Logger.log('Error in adminGetReminderConfig_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7221,10 +7986,10 @@ function adminSetReminderConfig_(config) {
     }
 
     Logger.log('🔔 Reminder config updated: ' + JSON.stringify(updated));
-    return { success: true, data: updated, message: 'Reminder configuration updated.' };
+    return { ok: true, success: true, data: updated, message: 'Reminder configuration updated.' };
   } catch (e) {
     Logger.log('Error in adminSetReminderConfig_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7242,10 +8007,10 @@ function adminSetReminderConfig_(config) {
 function adminGetNotificationConfig_() {
   try {
     var config = getAdminNotificationConfig_();
-    return { success: true, data: config };
+    return { ok: true, success: true, data: config };
   } catch (e) {
     Logger.log('Error in adminGetNotificationConfig_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7260,10 +8025,10 @@ function adminGetNotificationConfig_() {
 */
 function adminSetNotificationConfig_(config) {
   try {
-    if (!config) return { success: false, error: 'Missing config object' };
+    if (!config) return { ok: false, success: false, error: 'Missing config object' };
 
     var sheet = getDatabaseSheet_(DB_SHEET_NAMES.ADMIN_NOTIFICATION, true);
-    if (!sheet) return { success: false, error: 'Admin_Notification_Config sheet not found' };
+    if (!sheet) return { ok: false, success: false, error: 'Admin_Notification_Config sheet not found' };
 
     // Ensure at least one data row exists
     if (sheet.getLastRow() < 2) {
@@ -7283,10 +8048,10 @@ function adminSetNotificationConfig_(config) {
 
     var updated = getAdminNotificationConfig_();
     Logger.log('📋 Admin notification config updated: ' + JSON.stringify(updated));
-    return { success: true, data: updated, message: 'Notification configuration updated.' };
+    return { ok: true, success: true, data: updated, message: 'Notification configuration updated.' };
   } catch (e) {
     Logger.log('Error in adminSetNotificationConfig_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7307,18 +8072,18 @@ function adminSetNotificationConfig_(config) {
 function adminResendToStage_(sessionId, stageType, approverEmail) {
   try {
     if (!sessionId || !stageType || !approverEmail) {
-      return { success: false, error: 'Missing sessionId, stageType, or approverEmail' };
+      return { ok: false, success: false, error: 'Missing sessionId, stageType, or approverEmail' };
     }
 
     var wfInfo = getWorkflowInfoForType_(stageType);
     if (!wfInfo) {
-      return { success: false, error: 'Invalid stageType. Use: approver, ism, or divhead' };
+      return { ok: false, success: false, error: 'Invalid stageType. Use: approver, ism, or divhead' };
     }
 
     var wfSheet = getDatabaseSheet_(wfInfo.name, true);
-    if (!wfSheet) return { success: false, error: 'Workflow sheet not found: ' + wfInfo.name };
+    if (!wfSheet) return { ok: false, success: false, error: 'Workflow sheet not found: ' + wfInfo.name };
 
-    var data = wfSheet.getDataRange().getValues();
+    var data = readSheetValues_(wfSheet);
     var normEmail = String(getNormalizedEmail_(approverEmail) || '').toLowerCase();
     var foundRow = -1;
 
@@ -7333,7 +8098,7 @@ function adminResendToStage_(sessionId, stageType, approverEmail) {
     }
 
     if (foundRow < 0) {
-      return { success: false, error: 'No matching Pending row found for session ' + sessionId + ' / ' + approverEmail + ' / ' + stageType };
+      return { ok: false, success: false, error: 'No matching Pending row found for session ' + sessionId + ' / ' + approverEmail + ' / ' + stageType };
     }
 
     // Determine approver name based on stage type
@@ -7348,7 +8113,7 @@ function adminResendToStage_(sessionId, stageType, approverEmail) {
     }
 
     var appsSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
-    var appData = appsSheet ? appsSheet.getDataRange().getValues() : [];
+    var appData = appsSheet ? readSheetValues_(appsSheet) : [];
     var piaTitle = 'PIA-' + sessionId;
     for (var ar = 1; ar < appData.length; ar++) {
       if (String(appData[ar][APPLICATIONS_COLS.SESSION_ID - 1] || '').trim() === sessionId) {
@@ -7386,10 +8151,10 @@ function adminResendToStage_(sessionId, stageType, approverEmail) {
     wfSheet.getRange(foundRow, wfInfo.cols.EMAIL_ERROR).setValue('');
 
     Logger.log('🔄 Admin resend to ' + stageType + ' → ' + approverEmail + ' [' + queueId + ']');
-    return { success: true, queueId: queueId, message: 'Email re-queued to ' + approverEmail + ' (' + stageType + ')' };
+    return { ok: true, success: true, queueId: queueId, message: 'Email re-queued to ' + approverEmail + ' (' + stageType + ')' };
   } catch (e) {
     Logger.log('Error in adminResendToStage_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7410,8 +8175,26 @@ function adminResendToStage_(sessionId, stageType, approverEmail) {
              emailQueue[], auditTrail[] } } or { success:false, error }.
 */
 function adminGetPipelineView_(sessionId) {
+  // PERF: this is the heaviest read in the file — one full pull of every sheet (6), plus
+  // getCurrentRound_ which reads the three workflow sheets again (3), so the workflow
+  // sheets are fetched twice each. Read-only diagnostic view, nothing here writes, so the
+  // whole body runs under one cache and the nine reads collapse to six.
+  return withSheetCache_(function () { return adminGetPipelineViewImpl_(sessionId); });
+}
+
+/*
+  Function: adminGetPipelineViewImpl_
+  LAYMAN:    The actual pipeline-snapshot builder. Split out only so its caller can wrap it
+             in one sheet cache; the logic is unchanged.
+  TECHNICAL: See adminGetPipelineView_ above for contract. Kept private and never called
+             directly — go through the wrapper so the cache is always applied.
+  PARAMS:    - sessionId — the PIA session to snapshot.
+  RETURNS:   {success:true, pipeline} or {success:false, error}.
+*/
+function adminGetPipelineViewImpl_(sessionId) {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
-    if (!sessionId) return { success: false, error: 'Missing sessionId' };
+    if (!sessionId) return { ok: false, success: false, error: 'Missing sessionId' };
 
     var pipeline = {
       sessionId: sessionId,
@@ -7426,7 +8209,7 @@ function adminGetPipelineView_(sessionId) {
     // 1. Application row
     var appsSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
     if (appsSheet) {
-      var appsData = appsSheet.getDataRange().getValues();
+      var appsData = readSheetValues_(appsSheet);
       for (var i = 1; i < appsData.length; i++) {
         if (String(appsData[i][APPLICATIONS_COLS.SESSION_ID - 1] || '').trim() === sessionId) {
           pipeline.application = {
@@ -7443,9 +8226,9 @@ function adminGetPipelineView_(sessionId) {
     // 2. Approval Workflow rows
     var apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
     if (apprSheet) {
-      var apprData = apprSheet.getDataRange().getValues();
+      var apprData = readSheetValues_(apprSheet);
       for (var j = 1; j < apprData.length; j++) {
-        if (String(apprData[j][APPROVAL_COLS.SESSION_ID - 1] || '').trim() === sessionId) {
+        if (rowMatches_(apprData[j], APPROVAL_COLS, sessionId, __round)) {
           pipeline.approvalWorkflow.push({
             approvalId: apprData[j][APPROVAL_COLS.APPROVAL_ID - 1],
             step: apprData[j][APPROVAL_COLS.CURRENT_STEP - 1],
@@ -7464,9 +8247,9 @@ function adminGetPipelineView_(sessionId) {
     // 3. ISM Workflow rows
     var ismSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
     if (ismSheet) {
-      var ismData = ismSheet.getDataRange().getValues();
+      var ismData = readSheetValues_(ismSheet);
       for (var k = 1; k < ismData.length; k++) {
-        if (String(ismData[k][ISM_WORKFLOW_COLS.SESSION_ID - 1] || '').trim() === sessionId) {
+        if (rowMatches_(ismData[k], ISM_WORKFLOW_COLS, sessionId, __round)) {
           pipeline.ismWorkflow.push({
             ismApprovalId: ismData[k][ISM_WORKFLOW_COLS.ISM_APPROVAL_ID - 1],
             step: ismData[k][ISM_WORKFLOW_COLS.CURRENT_STEP - 1],
@@ -7485,9 +8268,9 @@ function adminGetPipelineView_(sessionId) {
     // 4. Div Head Workflow rows
     var divSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
     if (divSheet) {
-      var divData = divSheet.getDataRange().getValues();
+      var divData = readSheetValues_(divSheet);
       for (var m = 1; m < divData.length; m++) {
-        if (String(divData[m][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] || '').trim() === sessionId) {
+        if (rowMatches_(divData[m], DIV_HEAD_CONFIG_COLS, sessionId, __round)) {
           pipeline.divHeadWorkflow.push({
             escalationId: divData[m][DIV_HEAD_CONFIG_COLS.ESCALATION_ID - 1],
             divHeadEmail: divData[m][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1],
@@ -7504,7 +8287,7 @@ function adminGetPipelineView_(sessionId) {
     // 5. Email Queue entries
     var queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
     if (queueSheet) {
-      var queueData = queueSheet.getDataRange().getValues();
+      var queueData = readSheetValues_(queueSheet);
       for (var n = 1; n < queueData.length; n++) {
         if (String(queueData[n][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '').trim() === sessionId) {
           pipeline.emailQueue.push({
@@ -7523,7 +8306,7 @@ function adminGetPipelineView_(sessionId) {
     // 6. Audit trail
     var auditSheet = getDatabaseSheet_(DB_SHEET_NAMES.RISK_AUDIT, true);
     if (auditSheet) {
-      var auditData = auditSheet.getDataRange().getValues();
+      var auditData = readSheetValues_(auditSheet);
       for (var p = 1; p < auditData.length; p++) {
         if (String(auditData[p][AUDIT_COLS.SESSION_ID - 1] || '').trim() === sessionId) {
           pipeline.auditTrail.push({
@@ -7536,10 +8319,10 @@ function adminGetPipelineView_(sessionId) {
       }
     }
 
-    return { success: true, data: pipeline };
+    return { ok: true, success: true, data: pipeline };
   } catch (e) {
     Logger.log('Error in adminGetPipelineView_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7569,7 +8352,7 @@ function adminGetPipelineView_(sessionId) {
   RETURNS:   setupReminderTrigger_()'s result, or { success:false, error } when not authorized.
 */
 function setupReminderTrigger() {
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   return setupReminderTrigger_();
 }
 
@@ -7577,7 +8360,7 @@ function setupReminderTrigger_() {
   var config = getReminderConfig_();
   if (!config.enabled) {
     Logger.log('🔔 Reminder trigger NOT created — reminders are disabled.');
-    return { success: true, message: 'Reminders are disabled. No trigger created.' };
+    return { ok: true, success: true, message: 'Reminders are disabled. No trigger created.' };
   }
 
   // Remove any existing reminder trigger to prevent duplicates
@@ -7600,14 +8383,14 @@ function setupReminderTrigger_() {
     String(config.hour).padStart(2, '0') + ':00 (' + (config.timezone || 'script default') + ')');
 
   return {
-    success: true,
+    ok: true, success: true,
     message: 'Reminder trigger created. sendDailyReminders_() will run daily at ' +
       String(config.hour).padStart(2, '0') + ':00.'
   };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// �🔐 SECURITY, VALIDATION, SANITAZION
+// SECURITY, VALIDATION, SANITAZION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
@@ -7818,7 +8601,7 @@ function sanitizeInput_(data, maxLength = 10000, depth = 0) {
   return str.trim().slice(0, maxLength);
 }
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// � PHASE 3 API - DATA FETCHING MODULE
+// PHASE 3 API - DATA FETCHING MODULE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
@@ -7846,27 +8629,150 @@ function isAuthorizedForApplication_(sessionId, appData) {
   if (!me || !appData) return false;
   // Owner (applicant)
   if (me === getNormalizedEmail_(appData.applicantEmail)) return true;
+
+  // 🚩 SCOPED-EXCLUSIVE DELEGATION (2026-08-12). canActAs_ makes a handoff exclusive for
+  // DECIDING; this makes it exclusive for LOOKING, but only as narrowly as that actually
+  // means. `handedOff` is true for exactly one shape of row: one that is mine AND still
+  // Pending, while I have an active delegation. Those rows are the ones someone else is
+  // now responsible for, so they drop out of my view.
+  //
+  // Everything else stays visible, deliberately:
+  //   - a row I already decided (any status other than Pending), on this request or any
+  //     other — that is settled history, not a live handoff;
+  //   - an earlier round of THIS request that I decided before it was returned;
+  //   - the whole request, if any of my rows on it survive the filter.
+  // Blanket-hiding instead would mean a two-week leave silently blanks out months of the
+  // approver's own past work, which is a side effect nobody asked for and would read as
+  // data loss.
+  //
+  // ⚠️ resolveDelegate_ fails OPEN (null on a broken/unreadable table), so a failure here
+  // hides nothing rather than hiding everything. That is the safe direction for this
+  // specific check: the caller is only reached at all if they are already named on the
+  // request, so failing open restores the previous behaviour instead of granting anything
+  // new. The decide-side guard (canActAs_) is where a delegation failure actually matters.
+  const myDelegate = resolveDelegate_(me);        // non-null only while I am delegating away
+  const handedOff = function (status) {
+    return !!myDelegate && String(status || '').trim() === 'Pending';
+  };
+
   // Stage-A heads (Immediate / Department) — already enumerated on appData.approvers
-  if ((appData.approvers || []).some(function (a) { return getNormalizedEmail_(a.email) === me; })) return true;
+  if ((appData.approvers || []).some(function (a) {
+        return getNormalizedEmail_(a.email) === me && !handedOff(a.status);
+      })) return true;
   // ISM members + Division Heads — scan their workflow sheets for this session
+  //
+  // 🚩 APPEND-ONLY NOTE: these scans are deliberately NOT scoped to the current round. Authorization
+  // asks "was this person ever party to this request?", not "are they the one due to act now."
+  // appData.approvers only carries the CURRENT round's Stage-A ladder, so scoping here as well
+  // would silently revoke view access from anyone who approved an earlier round. Access to read a
+  // request you already decided on must survive a resubmission. Hence Approval_Workflow is scanned
+  // directly below, across every round, rather than trusting appData.approvers alone.
   const searchId = String(sessionId || '').trim().toUpperCase();
-  const scanSheet = function (sheetName, sessionCol, emailCol) {
+  const scanSheet = function (sheetName, sessionCol, emailCol, statusCol) {
     try {
       const sh = getDatabaseSheet_(sheetName, false);
       if (!sh) return false;
-      const vals = sh.getDataRange().getValues();
+      const vals = readSheetValues_(sh);
       for (let i = 1; i < vals.length; i++) {
         if (String(vals[i][sessionCol - 1] || '').trim().toUpperCase() === searchId &&
             getNormalizedEmail_(vals[i][emailCol - 1]) === me) {
+          // `continue`, not `return false` — a handed-off Pending row must not end the scan.
+          // An earlier round of this same request may still be mine to see, and it is further
+          // down the sheet.
+          if (handedOff(vals[i][statusCol - 1])) continue;
           return true;
         }
       }
     } catch (e) { /* sheet missing → not authorized via this path */ }
     return false;
   };
-  if (scanSheet(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL)) return true;
-  if (scanSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL)) return true;
+  if (scanSheet(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS.SESSION_ID, APPROVAL_COLS.APPROVER_EMAIL, APPROVAL_COLS.STATUS)) return true;
+  if (scanSheet(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL, ISM_WORKFLOW_COLS.STATUS)) return true;
+  if (scanSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL, DIV_HEAD_CONFIG_COLS.STATUS)) return true;
+
+  // 🚩 DELEGATION (2026-08-11). A delegate has to be able to READ the request they are being
+  // asked to decide — the review screen calls this before it will render anything. Rather than
+  // scan the sheets a second time under the delegate's identity, ask the cheaper question: is
+  // there anyone who has delegated TO me, and would THEY have been authorized? One hop only,
+  // matching resolveDelegate_.
+  try {
+    const delegators = delegatorsFor_(me);
+    for (let d = 0; d < delegators.length; d++) {
+      const orig = delegators[d];
+      if ((appData.approvers || []).some(function (a) { return getNormalizedEmail_(a.email) === orig; })) return true;
+      if (scanSheetFor_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS.SESSION_ID, APPROVAL_COLS.APPROVER_EMAIL, searchId, orig)) return true;
+      if (scanSheetFor_(DB_SHEET_NAMES.ISM_WORKFLOW, ISM_WORKFLOW_COLS.SESSION_ID, ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL, searchId, orig)) return true;
+      if (scanSheetFor_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL, searchId, orig)) return true;
+    }
+  } catch (e) {
+    // Fail CLOSED here — unlike resolveDelegate_, which fails open to "no delegate". This is an
+    // authorization decision, so a broken delegation table must deny, never grant.
+    Logger.log('isAuthorizedForApplication_: delegation check failed, denying — ' + e);
+  }
   return false;
+}
+
+/*
+  Function: scanSheetFor_
+  LAYMAN:    Tinitignan kung may row ba sa isang sheet para sa request na ito na naka-pangalan sa
+             isang partikular na email.
+  TECHNICAL: The parameterised form of isAuthorizedForApplication_'s inner scanSheet closure,
+             extracted so the delegation branch can ask the same question about a DIFFERENT
+             address than Session.getActiveUser(). Returns false on a missing sheet.
+  PARAMS:    - sheetName, sessionCol, emailCol — where to look.
+             - searchId — the UPPERCASED, trimmed session id.
+             - normalizedEmail — the address to match, already through getNormalizedEmail_.
+  RETURNS:   boolean.
+*/
+function scanSheetFor_(sheetName, sessionCol, emailCol, searchId, normalizedEmail) {
+  try {
+    const sh = getDatabaseSheet_(sheetName, false);
+    if (!sh) return false;
+    const vals = readSheetValues_(sh);
+    for (let i = 1; i < vals.length; i++) {
+      if (String(vals[i][sessionCol - 1] || '').trim().toUpperCase() === searchId &&
+          getNormalizedEmail_(vals[i][emailCol - 1]) === normalizedEmail) {
+        return true;
+      }
+    }
+  } catch (e) { /* sheet missing → not authorized via this path */ }
+  return false;
+}
+
+/*
+  Function: delegatorsFor_
+  LAYMAN:    "Sino ang mga taong ako ang kapalit ngayon?" Kabaliktaran ito ng resolveDelegate_.
+  TECHNICAL: Reverse lookup over the Delegations sheet — every currently-active From_Email whose
+             To_Email is this person. Used only by the authorization path; the notify path uses
+             the forward direction. Returns [] on any error, which denies rather than grants.
+  PARAMS:    - normalizedEmail — the delegate's address, already normalized.
+  RETURNS:   Array of normalized From_Email addresses (possibly empty).
+*/
+function delegatorsFor_(normalizedEmail) {
+  const out = [];
+  if (!normalizedEmail) return out;
+  let rows;
+  try {
+    const sheet = getDelegationsSheet_();
+    if (!sheet) return out;
+    rows = readSheetValues_(sheet);
+  } catch (e) { return out; }
+  if (!rows || rows.length < 2) return out;
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (String(r[DELEGATION_COLS.IS_ACTIVE - 1] || '').trim().toUpperCase() !== 'YES') continue;
+    if (getNormalizedEmail_(r[DELEGATION_COLS.TO_EMAIL - 1]) !== normalizedEmail) continue;
+    const start = parseDelegationDate_(r[DELEGATION_COLS.START_DATE - 1]);
+    const end   = parseDelegationDate_(r[DELEGATION_COLS.END_DATE - 1]);
+    if (start && today < start) continue;
+    if (end && today > end) continue;
+    const from = getNormalizedEmail_(r[DELEGATION_COLS.FROM_EMAIL - 1]);
+    if (from && out.indexOf(from) === -1) out.push(from);
+  }
+  return out;
 }
 
 /*
@@ -7882,16 +8788,16 @@ function apiPhase3_FetchPIAData(sessionId) {
   try {
     const appData = getApplicationData_(sessionId);
     if (!appData) {
-      return { success: false, error: 'Application not found' };
+      return { ok: false, success: false, error: 'Application not found' };
     }
 
     // SECURITY (F-05): authorize — only the applicant or someone on the approval chain may view this.
     if (!isAuthorizedForApplication_(sessionId, appData)) {
-      return { success: false, error: 'Access denied: you are not authorized to view this application.' };
+      return { ok: false, success: false, error: 'Access denied: you are not authorized to view this application.' };
     }
 
     return {
-      success: true,
+      ok: true, success: true,
       data: {
         sessionId: sessionId,
         program: appData.pia1?.program || 'Unknown Program',
@@ -7905,7 +8811,7 @@ function apiPhase3_FetchPIAData(sessionId) {
     };
   } catch (e) {
     Logger.log('Error in apiPhase3_FetchPIAData: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7922,23 +8828,23 @@ function apiPhase3_FetchDCSData(sessionId) {
   try {
     const appData = getApplicationData_(sessionId);
     if (!appData || !appData.linkedReqId) {
-      return { success: false, error: 'No DCS request linked to this application' };
+      return { ok: false, success: false, error: 'No DCS request linked to this application' };
     }
 
     // SECURITY (F-05): authorize — only the applicant or someone on the approval chain may view this.
     if (!isAuthorizedForApplication_(sessionId, appData)) {
-      return { success: false, error: 'Access denied: you are not authorized to view this application.' };
+      return { ok: false, success: false, error: 'Access denied: you are not authorized to view this application.' };
     }
 
     const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
-    const dcsData = dcsSheet.getDataRange().getValues();
+    const dcsData = readSheetValues_(dcsSheet);
 
     for (let i = 1; i < dcsData.length; i++) {
       if (dcsData[i][DCS_COLS.REQ_ID - 1] === appData.linkedReqId) {
         const metadata = JSON.parse(dcsData[i][DCS_COLS.METADATA_JSON - 1] || '{}');
         
         return {
-          success: true,
+          ok: true, success: true,
           data: {
             requestId: appData.linkedReqId,
             status: dcsData[i][DCS_COLS.STATUS - 1],
@@ -7965,10 +8871,10 @@ function apiPhase3_FetchDCSData(sessionId) {
       }
     }
 
-    return { success: false, error: 'DCS request data not found' };
+    return { ok: false, success: false, error: 'DCS request data not found' };
   } catch (e) {
     Logger.log('Error in apiPhase3_FetchDCSData: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -7983,13 +8889,13 @@ function apiPhase3_FetchDCSData(sessionId) {
 function apiPhase3_GetDivisionHeadConfig_(divisionHeadEmail) {
   try {
     const divHeadSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
-    const data = divHeadSheet.getDataRange().getValues();
+    const data = readSheetValues_(divHeadSheet);
 
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1] || '').toLowerCase() === 
           String(divisionHeadEmail || '').toLowerCase()) {
         return {
-          success: true,
+          ok: true, success: true,
           config: {
             divHeadEmail: data[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1],
             isActive: data[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Active'
@@ -8000,7 +8906,7 @@ function apiPhase3_GetDivisionHeadConfig_(divisionHeadEmail) {
 
     // Return default config if not found
     return {
-      success: true,
+      ok: true, success: true,
       config: {
         divHeadEmail: divisionHeadEmail,
         isActive: true
@@ -8008,7 +8914,7 @@ function apiPhase3_GetDivisionHeadConfig_(divisionHeadEmail) {
     };
   } catch (e) {
     Logger.log('Error in apiPhase3_GetDivisionHeadConfig_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -8026,7 +8932,7 @@ function apiPhase3_GetDivisionHeadConfig_(divisionHeadEmail) {
 function apiPhase3_GetInfoSecMembers_() {
   try {
     const infoSecSheet = getDatabaseSheet_(DB_SHEET_NAMES.INFOSEC_CONFIG, true);
-    var data = infoSecSheet.getDataRange().getValues();
+    var data = readSheetValues_(infoSecSheet);
     
     // SELF-HEAL: Ensure InfoSec_Email_Config has at least 2 active InfoSec members
     var infoSecCount = 0;
@@ -8056,7 +8962,7 @@ function apiPhase3_GetInfoSecMembers_() {
         }
       }
       Logger.log('  ✓ InfoSec_Email_Config self-healed. Re-reading data...');
-      data = infoSecSheet.getDataRange().getValues();
+      data = readSheetValues_(infoSecSheet);
     }
 
     const members = [];
@@ -8130,7 +9036,7 @@ function apiPhase3_GetInfoSecMembers_() {
     });
 
     return {
-      success: true,
+      ok: true, success: true,
       data: {
         members: activeMembers,
         destinationEmails: {
@@ -8145,7 +9051,7 @@ function apiPhase3_GetInfoSecMembers_() {
     };
   } catch (e) {
     Logger.log('Error in apiPhase3_GetInfoSecMembers_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -8224,12 +9130,17 @@ function apiPhase3_InitializeISMWorkflow_(sessionId) {
     const ismInfo = apiPhase3_GetInfoSecMembers_();
 
     if (!ismInfo.success || !ismInfo.data.members.length) {
-      return { success: false, error: 'No InfoSec members configured' };
+      return { ok: false, success: false, error: 'No InfoSec members configured' };
     }
+
+    // Append-only workflow: stamp the round so a later resubmission's ISM rows never collide
+    // with these. Reuses the round already established by the Stage-A rows for this session.
+    const round = getCurrentRound_(sessionId) || 1;
 
     // Create ISM approval records
     ismInfo.data.members.forEach((member, index) => {
-      const ismApprovalId = `${sessionId}-ISM-${index + 1}`;
+      // Suffix round 2+ so the id stays unique now that earlier rounds' rows survive.
+      const ismApprovalId = `${sessionId}-ISM-${index + 1}` + (round > 1 ? `-R${round}` : '');
       ismWorkflowSheet.appendRow([
         ismApprovalId,                    // ISM_APPROVAL_ID
         sessionId,                        // SESSION_ID
@@ -8245,7 +9156,10 @@ function apiPhase3_InitializeISMWorkflow_(sessionId) {
         '',                               // ROUTING_DESTINATION
         '',                               // REMINDER_DATE
         'Pending',                        // EMAIL_STATUS
-        ''                                // EMAIL_ERROR
+        '',                               // EMAIL_ERROR
+        '',                               // NOTIFIED_DATE
+        round,                            // ROUND_NUMBER
+        ''                                // FLAGGED_FIELDS
       ]);
     });
     
@@ -8253,13 +9167,13 @@ function apiPhase3_InitializeISMWorkflow_(sessionId) {
     SpreadsheetApp.flush();
 
     return {
-      success: true,
+      ok: true, success: true,
       message: `ISM workflow initialized with ${ismInfo.data.members.length} members`,
       members: ismInfo.data.members
     };
   } catch (e) {
     Logger.log('Error in apiPhase3_InitializeISMWorkflow_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -8275,24 +9189,25 @@ function apiPhase3_InitializeISMWorkflow_(sessionId) {
   RETURNS:   { success:true, message, members } or { success:false, error }.
 */
 function apiPhase3_RetryISMWorkflow_(sessionId) {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
     // Validate that the application exists and is in the expected state
     const appData = getApplicationData_(sessionId);
     if (!appData) {
-      return { success: false, error: 'Application not found: ' + sessionId };
+      return { ok: false, success: false, error: 'Application not found: ' + sessionId };
     }
     
     const currentStatus = String(appData.status || '');
     if (currentStatus !== 'Approved (ISM Pending)' && currentStatus !== 'Approved') {
-      return { success: false, error: 'Application is not in a retryable state. Current status: ' + currentStatus };
+      return { ok: false, success: false, error: 'Application is not in a retryable state. Current status: ' + currentStatus };
     }
     
     // Check if ISM workflow records already exist for this session
     const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-    const existingData = ismWorkflowSheet.getDataRange().getValues();
+    const existingData = readSheetValues_(ismWorkflowSheet);
     for (let i = 1; i < existingData.length; i++) {
-      if (existingData[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId) {
-        return { success: false, error: 'ISM workflow already exists for this session. Cannot re-initialize.' };
+      if (rowMatches_(existingData[i], ISM_WORKFLOW_COLS, sessionId, __round)) {
+        return { ok: false, success: false, error: 'ISM workflow already exists for this session. Cannot re-initialize.' };
       }
     }
     
@@ -8314,13 +9229,13 @@ function apiPhase3_RetryISMWorkflow_(sessionId) {
     notifyISMember_(sessionId, 1);
     
     return {
-      success: true,
+      ok: true, success: true,
       message: 'ISM workflow initialized successfully for ' + sessionId,
       members: result.members
     };
   } catch (e) {
     Logger.log('Error in apiPhase3_RetryISMWorkflow_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -8340,19 +9255,23 @@ function apiPhase3_RetryISMWorkflow_(sessionId) {
   RETURNS:   { success:true, message, nextAction } or { success:false, error }.
 */
 function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comments, routingDestination = '', stepParam = null, approverFlags = '{}') {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   // SECURITY (F-02): authorize the actual caller server-side — a direct google.script.run call must not
   // be able to submit a decision as someone else. The legit email-link/inline-panel path already verified
   // activeUser == targetEmail in handleEmailAction_ before reaching here, so this always passes there.
+  // Widened for delegation (2026-08-11) — see the note on processApprovalDecision_.
   const _me = getNormalizedEmail_(Session.getActiveUser().getEmail());
-  if (_me !== getNormalizedEmail_(ismMemberEmail)) {
-    return { success: false, error: 'Access denied: you may only submit your own decision.' };
+  const _act = canActAs_(_me, ismMemberEmail);
+  if (!_act.allowed) {
+    return { ok: false, success: false, error: 'Access denied: you may only submit your own decision.' };
   }
+  const _actedBy = _act.onBehalfOf ? _me : '';
   try {
     // CRITICAL FIX C1: Get URL at runtime
     const webAppUrl = getWebAppUrl_() || ScriptApp.getService().getUrl();
     const allowedDecisions = ['Approve', 'Deny', 'Return', 'EscalateToDivisionHead'];
     if (!allowedDecisions.includes(decision)) {
-      return { success: false, error: 'Invalid decision value' };
+      return { ok: false, success: false, error: 'Invalid decision value' };
     }
 
     // CRITICAL FIX: Validate routingDestination against whitelist to prevent injection
@@ -8360,7 +9279,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     const normalizedDestination = String(routingDestination || '').toUpperCase();
     if (!allowedDestinations.includes(normalizedDestination)) {
       Logger.log('SECURITY ALERT: Invalid routing destination attempted: ' + routingDestination);
-      return { success: false, error: 'Invalid routing destination' };
+      return { ok: false, success: false, error: 'Invalid routing destination' };
     }
 
     // CRITICAL FIX: Acquire lock to prevent race condition on concurrent ISM decisions
@@ -8373,11 +9292,11 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
         lockAcquired = true;
       } catch (lockErr) {
         Logger.log('ERROR: Could not acquire lock after 30s - concurrent modification risk');
-        return { success: false, error: 'System busy, please try again' };
+        return { ok: false, success: false, error: 'System busy, please try again' };
       }
 
       const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-      const data = ismWorkflowSheet.getDataRange().getValues();
+      const data = readSheetValues_(ismWorkflowSheet);
       const timestamp = new Date().toLocaleString('en-PH', {
         dateStyle: 'medium',
         timeStyle: 'short'
@@ -8389,7 +9308,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     const normalizedTarget = String(getNormalizedEmail_(ismMemberEmail) || '').toLowerCase();
     
     for (let i = 1; i < data.length; i++) {
-      if (data[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId &&
+      if (rowMatches_(data[i], ISM_WORKFLOW_COLS, sessionId, __round) &&
           String(getNormalizedEmail_(data[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]) || '').toLowerCase() === normalizedTarget &&
           data[i][ISM_WORKFLOW_COLS.STATUS - 1] === 'Pending') {
 
@@ -8406,13 +9325,16 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     }
 
     if (currentRow === -1) {
-      return { success: false, error: 'ISM approval record not found' };
+      return { ok: false, success: false, error: 'ISM approval record not found' };
     }
 
     // Update ISM member decision
     ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.DECISION).setValue(decision);
     ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.COMMENTS).setValue(comments);
     ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.DECISION_DATE).setValue(timestamp);
+    // Append-only workflow: durable per-round record of what THIS reviewer flagged.
+    writeDecisionFlags_(ismWorkflowSheet, currentRow, ISM_WORKFLOW_COLS, approverFlags);
+    writeActedBy_(ismWorkflowSheet, currentRow, ISM_WORKFLOW_COLS, _actedBy);
     ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.ROUTING_DESTINATION).setValue(normalizedDestination);
 
     /* Approve branch — unanimous requirement: finalize + route only when every ISM row is Approved,
@@ -8421,12 +9343,12 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.STATUS).setValue('Approved');
 
       // Check if all ISM members have approved (unanimous requirement)
-      const freshData = ismWorkflowSheet.getDataRange().getValues();
+      const freshData = readSheetValues_(ismWorkflowSheet);
       let allApproved = true;
       let totalMembers = 0;
 
       for (let i = 1; i < freshData.length; i++) {
-        if (freshData[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId) {
+        if (rowMatches_(freshData[i], ISM_WORKFLOW_COLS, sessionId, __round)) {
           totalMembers++;
           if (freshData[i][ISM_WORKFLOW_COLS.STATUS - 1] !== 'Approved') {
             allApproved = false;
@@ -8437,7 +9359,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       if (allApproved && totalMembers > 0) {
         // All ISM members approved - update application status and route to destination
         const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
-        const appData = appSheet.getDataRange().getValues();
+        const appData = readSheetValues_(appSheet);
         
         for (let i = 1; i < appData.length; i++) {
           if (appData[i][APPLICATIONS_COLS.SESSION_ID - 1] === sessionId) {
@@ -8474,7 +9396,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       
       // Mark application as rejected
       const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
-      const appData = appSheet.getDataRange().getValues();
+      const appData = readSheetValues_(appSheet);
       
       for (let i = 1; i < appData.length; i++) {
         if (appData[i][APPLICATIONS_COLS.SESSION_ID - 1] === sessionId) {
@@ -8488,7 +9410,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       
       // Update both PIA and DCS to Returned status
       const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
-      const appData = appSheet.getDataRange().getValues();
+      const appData = readSheetValues_(appSheet);
       let linkedReqId = null;
       
       for (let i = 1; i < appData.length; i++) {
@@ -8530,7 +9452,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.DIV_HEAD_ESCALATION_ID).setValue(escalationId);
       
       const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
-      const appData = appSheet.getDataRange().getValues();
+      const appData = readSheetValues_(appSheet);
       let divHeadEmail = '';
       let divHeadName = '';
       let programName = 'Unknown Program';
@@ -8554,21 +9476,30 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       
       // CRITICAL FIX: Check if a Pending DivHead record already exists for this session
       // Prevents duplicate escalation records when multiple ISM members escalate
-      const existingDivData = divHeadSheet.getDataRange().getValues();
+      // Append-only workflow: scope the dedup check to the CURRENT round. A Pending escalation
+      // left over from an earlier round must not suppress a legitimate new one.
+      const escalationRound = getCurrentRound_(sessionId) || 1;
+      const existingDivData = readSheetValues_(divHeadSheet);
       let hasPendingEscalation = false;
       let divHeadRowNum = -1; // 1-based sheet row of the Pending DivHead escalation (for NOTIFIED_DATE stamping)
       for (let di = 1; di < existingDivData.length; di++) {
-        if (existingDivData[di][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === sessionId &&
+        if (rowMatches_(existingDivData[di], DIV_HEAD_CONFIG_COLS, sessionId, __round) &&
+            roundOf_(existingDivData[di], DIV_HEAD_CONFIG_COLS) === escalationRound &&
             existingDivData[di][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') {
           hasPendingEscalation = true;
           divHeadRowNum = di + 1;
-          Logger.log(`[AUDIT] ${sessionId}: Pending DivHead escalation already exists — skipping duplicate creation`);
+          Logger.log(`[AUDIT] ${sessionId}: Pending DivHead escalation already exists for round ${escalationRound} — skipping duplicate creation`);
           break;
         }
       }
 
       if (!hasPendingEscalation) {
-        divHeadSheet.appendRow([escalationId, sessionId, divHeadEmail, '', '', '', 'Pending', '', 'Pending', '']);
+        divHeadSheet.appendRow([
+          escalationId, sessionId, divHeadEmail, '', '', '', 'Pending', '', 'Pending', '',
+          '',                // NOTIFIED_DATE
+          escalationRound,   // ROUND_NUMBER
+          ''                 // FLAGGED_FIELDS
+        ]);
         divHeadRowNum = divHeadSheet.getLastRow();
       }
 
@@ -8579,7 +9510,9 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
         try {
           const ts = new Date().getTime().toString();
           // CRITICAL FIX: Normalize email before token generation to prevent authorization mismatch
-          const normalizedDivHeadEmail = getNormalizedEmail_(divHeadEmail);
+          // DELEGATION: see notifyApprover_ — recipient and token subject must match.
+          const _routed = recipientFor_(divHeadEmail);
+          const normalizedDivHeadEmail = getNormalizedEmail_(_routed.email);
           const token = generateAuthToken_(sessionId, normalizedDivHeadEmail, ts, 'Review');
           const baseUrl = `${webAppUrl}?sessionId=${sessionId}&email=${encodeURIComponent(normalizedDivHeadEmail)}&token=${token}&ts=${ts}&step=1`;
           const reviewUrl = `${baseUrl}&action=Review&approverType=divhead`;
@@ -8588,6 +9521,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
           const htmlBody = buildPiaEmailHtml_({
             heading: 'Action Required — Division Head Review',
             contentHtml: `
+              ${delegationNoticeHtml_(_routed.onBehalfOf, _routed.reason)}
               <p style="margin:0 0 14px;font-size:14px;">A Privacy Impact Assessment requires your review as Division Head following an InfoSec escalation.</p>
               <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Division Head Escalation</div>
               <div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">
@@ -8602,7 +9536,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
               </div>
               <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
           });
-          queueEmail_(sessionId, divHeadEmail, subject, "Please view this email in an HTML-compatible client.", 'divhead', htmlBody);
+          queueEmail_(sessionId, _routed.email, subject, "Please view this email in an HTML-compatible client.", 'divhead', htmlBody);
           // Commit 6: mark when the Division Head was first notified (starts their 7-day reminder clock).
           if (divHeadRowNum > 0) stampNotifiedDate_(divHeadSheet, divHeadRowNum, DIV_HEAD_CONFIG_COLS.NOTIFIED_DATE);
         } catch(e) {
@@ -8618,7 +9552,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     }
 
       return {
-        success: true,
+        ok: true, success: true,
         message: `ISM decision recorded: ${decision}`,
         nextAction: decision === 'Approve' && currentStep < 2 ? 'NOTIFY_NEXT_MEMBER' : 'PROCESS_COMPLETE'
       };
@@ -8630,7 +9564,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     }
   } catch (e) {
     Logger.log('Error in apiPhase3_ProcessISMDecision: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -8645,6 +9579,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
   RETURNS:   undefined. No-op (audited) if no Pending member at that step.
 */
 function notifyISMember_(sessionId, stepNumber) {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
     // CRITICAL FIX C1: Get URL at runtime
     const webAppUrl = getWebAppUrl_() || ScriptApp.getService().getUrl();
@@ -8653,12 +9588,12 @@ function notifyISMember_(sessionId, stepNumber) {
     SpreadsheetApp.flush();
     
     const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-    const data = ismWorkflowSheet.getDataRange().getValues();
+    const data = readSheetValues_(ismWorkflowSheet);
 
     let ismMember = null;
     let ismRowIndex = -1; // 0-based index into data (sheet row = index + 1) for NOTIFIED_DATE stamping
     for (let i = 1; i < data.length; i++) {
-      if (data[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId &&
+      if (rowMatches_(data[i], ISM_WORKFLOW_COLS, sessionId, __round) &&
           Number(data[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1]) === Number(stepNumber) &&
           data[i][ISM_WORKFLOW_COLS.STATUS - 1] === 'Pending') {
         ismMember = {
@@ -8683,7 +9618,9 @@ function notifyISMember_(sessionId, stepNumber) {
 
     const ts = new Date().getTime().toString();
     // CRITICAL FIX: Normalize email before token generation to prevent authorization mismatch
-    const normalizedIsmEmail = getNormalizedEmail_(ismMember.email);
+    // DELEGATION: see notifyApprover_ — recipient and token subject must be the same address.
+    const _routed = recipientFor_(ismMember.email);
+    const normalizedIsmEmail = getNormalizedEmail_(_routed.email);
     const token = generateAuthToken_(sessionId, normalizedIsmEmail, ts, 'ISMReview');
     const baseUrl = `${webAppUrl}?sessionId=${sessionId}&email=${encodeURIComponent(normalizedIsmEmail)}&token=${token}&ts=${ts}&step=${stepNumber}`;
     const reviewUrl = `${baseUrl}&action=ISMReview`;
@@ -8693,6 +9630,7 @@ function notifyISMember_(sessionId, stepNumber) {
     const htmlBody = buildPiaEmailHtml_({
       heading: 'ISM InfoSec Review Required',
       contentHtml: `
+        ${delegationNoticeHtml_(_routed.onBehalfOf, _routed.reason)}
         <p style="margin:0 0 14px;font-size:14px;">An access request requires your InfoSec review.</p>
         <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">ISM InfoSec Approval — step ${stepNumber} of 2</div>
         <div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">
@@ -8710,7 +9648,7 @@ function notifyISMember_(sessionId, stepNumber) {
     });
 
     // Queue for deferred delivery (avoids Gmail throttling in-request)
-    queueEmail_(sessionId, ismMember.email, subject, "Please view this email in an HTML-compatible client.", 'ism', htmlBody);
+    queueEmail_(sessionId, _routed.email, subject, "Please view this email in an HTML-compatible client.", 'ism', htmlBody);
     // Commit 6: mark when this ISM member was first notified (starts their 7-day reminder clock).
     if (ismRowIndex > 0) stampNotifiedDate_(ismWorkflowSheet, ismRowIndex + 1, ISM_WORKFLOW_COLS.NOTIFIED_DATE);
     Logger.log('✓ ISM review notification queued for ' + ismMember.email + ' step ' + stepNumber);
@@ -8740,13 +9678,14 @@ function notifyISMember_(sessionId, stepNumber) {
   RETURNS:   { success:true, message, sentTo } or { success:false, error }.
 */
 function routeApprovedRequest_(sessionId, destination) {
+  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
     // Normalize destination to handle case sensitivity from frontend radio buttons
     const normalizedDest = String(destination || '').toUpperCase();
     const validDestinations = ['DCOPS', 'TECHSERVE', 'BOTH'];
     
     if (!validDestinations.includes(normalizedDest)) {
-      return { success: false, error: 'Invalid destination routing: ' + destination };
+      return { ok: false, success: false, error: 'Invalid destination routing: ' + destination };
     }
 
     // Human-friendly routing label for the certificate (BOTH → "DCOPS and TechServe").
@@ -8755,12 +9694,12 @@ function routeApprovedRequest_(sessionId, destination) {
 
     const ismInfo = apiPhase3_GetInfoSecMembers_();
     if (!ismInfo.success) {
-      return { success: false, error: 'Could not retrieve destination email configuration' };
+      return { ok: false, success: false, error: 'Could not retrieve destination email configuration' };
     }
 
     const appData = getApplicationData_(sessionId);
     if (!appData) {
-      return { success: false, error: 'Application not found' };
+      return { ok: false, success: false, error: 'Application not found' };
     }
 
     // SECURITY (F-02): a certificate may only be built for a fully-approved request. Both legitimate
@@ -8771,7 +9710,7 @@ function routeApprovedRequest_(sessionId, destination) {
     if (String(appData.status || '').trim() !== 'Approved by ISM') {
       Logger.log('SECURITY ALERT: routeApprovedRequest_ called for ' + sessionId +
                  ' with status "' + appData.status + '" (expected "Approved by ISM")');
-      return { success: false, error: 'This request is not fully approved.' };
+      return { ok: false, success: false, error: 'This request is not fully approved.' };
     }
 
     // Fetch DCS Data for extended fields
@@ -8807,7 +9746,7 @@ function routeApprovedRequest_(sessionId, destination) {
 
     const validEmails = destinationEmails.filter(e => e).join(',');
     if (!validEmails) {
-      return { success: false, error: 'No destination email configured for ' + destination };
+      return { ok: false, success: false, error: 'No destination email configured for ' + destination };
     }
 
     // Prepare Accountable Persons HTML
@@ -8844,7 +9783,7 @@ function routeApprovedRequest_(sessionId, destination) {
               <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
-              ${escapeHtml_((a.comment && !isLegacyDefaultComment_(a.comment)) ? a.comment : '—')}
+              ${escapeHtml_(a.comment || '—')}
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
               ${escapeHtml_(dateStr)}
@@ -8856,9 +9795,9 @@ function routeApprovedRequest_(sessionId, destination) {
 
     // 2. Division Head (if escalated)
     const divHeadSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
-    const divHeadData = divHeadSheet.getDataRange().getValues();
+    const divHeadData = readSheetValues_(divHeadSheet);
     for (let i = 1; i < divHeadData.length; i++) {
-      if (divHeadData[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === sessionId && divHeadData[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Approved') {
+      if (rowMatches_(divHeadData[i], DIV_HEAD_CONFIG_COLS, sessionId, __round) && divHeadData[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Approved') {
         const divHeadEmailFromSheet = divHeadData[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1];
         const divHeadName = (appData.pia1 && getNormalizedEmail_(appData.pia1.divHeadEmail) === getNormalizedEmail_(divHeadEmailFromSheet))
           ? (appData.pia1.divHead || divHeadEmailFromSheet)
@@ -8875,7 +9814,7 @@ function routeApprovedRequest_(sessionId, destination) {
               <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
-              ${escapeHtml_((divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1] && !isLegacyDefaultComment_(divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1])) ? divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1] : '—')}
+              ${escapeHtml_(divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1] || '—')}
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
               ${escapeHtml_(dateStr)}
@@ -8892,11 +9831,11 @@ function routeApprovedRequest_(sessionId, destination) {
     // 3. ISM Members
     let ismApproversHtml = '';
     const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-    const ismData = ismWorkflowSheet.getDataRange().getValues();
+    const ismData = readSheetValues_(ismWorkflowSheet);
     
     // Look up JobPos from InfoSec_Email_Config for ISM members
     const infosecSheet = getDatabaseSheet_(DB_SHEET_NAMES.INFOSEC_CONFIG, true);
-    const infosecData = infosecSheet.getDataRange().getValues();
+    const infosecData = readSheetValues_(infosecSheet);
     const getJobPosForMember = (memberName) => {
       const normalizedName = String(memberName || '').trim().toLowerCase();
       for (let j = 1; j < infosecData.length; j++) {
@@ -8909,7 +9848,7 @@ function routeApprovedRequest_(sessionId, destination) {
     };
     
     for (let i = 1; i < ismData.length; i++) {
-      if (ismData[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === sessionId && ismData[i][ISM_WORKFLOW_COLS.STATUS - 1] === 'Approved') {
+      if (rowMatches_(ismData[i], ISM_WORKFLOW_COLS, sessionId, __round) && ismData[i][ISM_WORKFLOW_COLS.STATUS - 1] === 'Approved') {
         const dateStr = ismData[i][ISM_WORKFLOW_COLS.DECISION_DATE - 1] ? new Date(ismData[i][ISM_WORKFLOW_COLS.DECISION_DATE - 1]).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
         const memberName = ismData[i][ISM_WORKFLOW_COLS.ISM_MEMBER_NAME - 1];
         const jobPos = getJobPosForMember(memberName) || 'ISM InfoSec Member';
@@ -8923,7 +9862,7 @@ function routeApprovedRequest_(sessionId, destination) {
               <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
-              ${escapeHtml_((ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1] && !isLegacyDefaultComment_(ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1])) ? ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1] : '—')}
+              ${escapeHtml_(ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1] || '—')}
             </td>
             <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
               ${escapeHtml_(dateStr)}
@@ -9199,7 +10138,7 @@ function routeApprovedRequest_(sessionId, destination) {
     // requester their request is fully approved; sending 'routed_implementation' too caused a duplicate.
 
     return {
-      success: true,
+      ok: true, success: true,
       message: `Request successfully routed to ${destination}`,
       sentTo: validEmails,
       pdfBlob: pdfBlob,
@@ -9207,12 +10146,12 @@ function routeApprovedRequest_(sessionId, destination) {
     };
   } catch (e) {
     Logger.log('Error in routeApprovedRequest_: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// �🔗 CLIENT-SIDE API ENDPOINTS
+// CLIENT-SIDE API ENDPOINTS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
@@ -9230,7 +10169,7 @@ function apiSubmitApplication(appData) {
   const validation = validateApplicationData_(cleanData);
   if (!validation.isValid) {
     return {
-      success: false,
+      ok: false, success: false,
       errors: validation.errors
     };
   }
@@ -9255,20 +10194,20 @@ function apiGetDCSContext(parentID) {
   try {
     // Defensive check to prevent createTextFinder from failing on null input.
     if (!parentID) {
-      return { success: false, error: 'The parentID parameter was not provided or is empty.' };
+      return { ok: false, success: false, error: 'The parentID parameter was not provided or is empty.' };
     }
 
     const userEmail = Session.getActiveUser().getEmail().toLowerCase();
     const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
     const lastRow = dcsSheet.getLastRow();
     if (lastRow < 2) {
-      return { success: false, error: 'Data Collection sheet is empty.' };
+      return { ok: false, success: false, error: 'Data Collection sheet is empty.' };
     }
 
     // Normalize parentID: trim whitespace and ensure proper formatting
     const normalizedParentID = String(parentID).trim();
     if (!normalizedParentID) {
-      return { success: false, error: 'The parentID parameter is empty after trimming.' };
+      return { ok: false, success: false, error: 'The parentID parameter is empty after trimming.' };
     }
 
     // Use TextFinder for performance - skip header row (row 1) and search data only
@@ -9282,7 +10221,7 @@ function apiGetDCSContext(parentID) {
     if (!foundCell) {
       // Enhanced logging for debugging
       Logger.log(`DEBUG: Parent ID '${normalizedParentID}' not found in DCS sheet (lastRow=${lastRow})`);
-      return { success: false, error: 'Parent ID not found in Data Collection sheet. Please verify the DCS link.' };
+      return { ok: false, success: false, error: 'Parent ID not found in Data Collection sheet. Please verify the DCS link.' };
     }
 
     const rowNum = foundCell.getRow();
@@ -9294,7 +10233,7 @@ function apiGetDCSContext(parentID) {
     
     if (ownerEmail !== normalizedUserEmail) {
       Logger.log(`SECURITY ALERT: Unauthorized access attempt to DCS context for ${normalizedParentID} by ${normalizedUserEmail}. Owner is ${ownerEmail}.`);
-      return { success: false, error: 'You are not authorized to access this context.' };
+      return { ok: false, success: false, error: 'You are not authorized to access this context.' };
     }
 
     const status = String(rowData[DCS_COLS.STATUS - 1] || '');
@@ -9390,7 +10329,7 @@ function apiGetDCSContext(parentID) {
 
           // 1. Try Approval_Workflow sheet first (main workflow approvers)
           const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-          const apprData = apprSheet.getDataRange().getValues();
+          const apprData = readSheetValues_(apprSheet);
           for (let i = apprData.length - 1; i >= 1; i--) {
             if (apprData[i][APPROVAL_COLS.SESSION_ID - 1] === existingSubmissionId &&
                 (apprData[i][APPROVAL_COLS.STATUS - 1] === 'Rejected' || apprData[i][APPROVAL_COLS.STATUS - 1] === 'Returned' || apprData[i][APPROVAL_COLS.DECISION - 1] === 'Return')) {
@@ -9405,7 +10344,7 @@ function apiGetDCSContext(parentID) {
             try {
               const ismSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, false);
               if (ismSheet) {
-                const ismData = ismSheet.getDataRange().getValues();
+                const ismData = readSheetValues_(ismSheet);
                 for (let i = ismData.length - 1; i >= 1; i--) {
                   if (ismData[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === existingSubmissionId &&
                       ismData[i][ISM_WORKFLOW_COLS.STATUS - 1] === 'Returned') {
@@ -9423,7 +10362,7 @@ function apiGetDCSContext(parentID) {
             try {
               const divSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, false);
               if (divSheet) {
-                const divData = divSheet.getDataRange().getValues();
+                const divData = readSheetValues_(divSheet);
                 for (let i = divData.length - 1; i >= 1; i--) {
                   if (divData[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === existingSubmissionId &&
                       (divData[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Rejected' || divData[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Returned')) {
@@ -9469,7 +10408,7 @@ function apiGetDCSContext(parentID) {
     }
 
     return { 
-      success: true, 
+      ok: true, success: true, 
       context: context,
       existingSubmissionId: existingSubmissionId,
       existingSubmissionStatus: existingSubmissionStatus,
@@ -9480,7 +10419,7 @@ function apiGetDCSContext(parentID) {
 
   } catch (e) {
     Logger.log('ERROR in apiGetDCSContext: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -9497,7 +10436,7 @@ function apiGetUserDCSRequests() {
     const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
     const lastRow = dcsSheet.getLastRow();
     if (lastRow < 2) return {
-      success: true,
+      ok: true, success: true,
       requests: []
     };
 
@@ -9510,15 +10449,12 @@ function apiGetUserDCSRequests() {
       }));
 
     return {
-      success: true,
+      ok: true, success: true,
       requests: requests
     };
   } catch (e) {
     Logger.log('ERROR in apiGetUserDCSRequests: ' + e.toString());
-    return {
-      success: false,
-      error: e.toString()
-    };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -9533,14 +10469,14 @@ function apiGetUserEmail() {
   try {
     const email = Session.getActiveUser().getEmail();
     return {
-      success: true,
+      ok: true, success: true,
       email: email,
       isAuthorized: isAuthorizedDomain_(email)
     };
   } catch (error) {
     Logger.log('ERROR in apiGetUserEmail: ' + error.toString());
     return {
-      success: false,
+      ok: false, success: false,
       email: ''
     };
   }
@@ -9578,16 +10514,13 @@ function apiGenerateNewSessionId() {
     const newSessionId = nextBaseSessionId_();
     Logger.log('  New sessionId generated: ' + newSessionId);
     return {
-      success: true,
+      ok: true, success: true,
       sessionId: newSessionId,
       message: 'Application session started'
     };
   } catch (error) {
     Logger.log('  ERROR in apiGenerateNewSessionId: ' + error.toString());
-    return {
-      success: false,
-      error: error.toString()
-    };
+    return safeError_(error, ERR.INTERNAL);
   }
 }
 
@@ -9635,7 +10568,7 @@ function apiSaveDraft(sessionId, stateData) {
     Logger.log('State JSON created, length: ' + stateJSON.length);
     
     // Check if draft already exists for this session
-    const data = draftsSheet.getDataRange().getValues();
+    const data = readSheetValues_(draftsSheet);
     Logger.log('Drafts sheet data retrieved, rows: ' + data.length);
     let foundRow = -1;
     let existingDraftId = '';
@@ -9692,10 +10625,10 @@ function apiSaveDraft(sessionId, stateData) {
     }
     
     Logger.log('  Draft saved successfully');
-    return { success: true, draftId: foundRow > 0 ? existingDraftId : draftId, message: 'Draft saved successfully' };
+    return { ok: true, success: true, draftId: foundRow > 0 ? existingDraftId : draftId, message: 'Draft saved successfully' };
   } catch (e) {
     Logger.log('  ERROR in apiSaveDraft: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -9717,7 +10650,7 @@ function apiRestoreDraft(sessionId) {
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
     Logger.log('📋 Drafts sheet retrieved');
-    const data = draftsSheet.getDataRange().getValues();
+    const data = readSheetValues_(draftsSheet);
     Logger.log('  Data retrieved, rows: ' + data.length);
     
     for (let i = 1; i < data.length; i++) {
@@ -9746,19 +10679,19 @@ function apiRestoreDraft(sessionId) {
         try {
           const stateData = JSON.parse(stateJSON);
           Logger.log('✓ Draft parsed successfully, state keys: ' + Object.keys(stateData).join(', '));
-          return { success: true, state: stateData };
+          return { ok: true, success: true, state: stateData };
         } catch (e) {
           Logger.log('  ERROR parsing draft state: ' + e.toString());
-          return { success: false, error: 'Corrupted draft data' };
+          return { ok: false, success: false, error: 'Corrupted draft data' };
         }
       }
     }
     
     Logger.log('   No draft found for this session (first load)');
-    return { success: false, state: null }; // No draft found (not an error)
+    return { ok: false, success: false, state: null }; // No draft found (not an error)
   } catch (e) {
     Logger.log('  ERROR in apiRestoreDraft: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -9778,7 +10711,7 @@ function apiListUserDrafts() {
     Logger.log('👤 User: ' + userEmail);
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
-    const data = draftsSheet.getDataRange().getValues();
+    const data = readSheetValues_(draftsSheet);
     const now = new Date();
     const userDrafts = [];
     
@@ -9821,10 +10754,10 @@ function apiListUserDrafts() {
     }
     
     Logger.log('  Found ' + userDrafts.length + ' incomplete drafts');
-    return { success: true, drafts: userDrafts };
+    return { ok: true, success: true, drafts: userDrafts };
   } catch (e) {
     Logger.log('  ERROR in apiListUserDrafts: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -9843,7 +10776,7 @@ function apiLoadDraft(draftId) {
     if (!userEmail) throw new Error('User not authenticated');
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
-    const data = draftsSheet.getDataRange().getValues();
+    const data = readSheetValues_(draftsSheet);
     
     for (let i = 1; i < data.length; i++) {
       const rowEmail = String(data[i][1] || '').trim().toLowerCase();
@@ -9860,19 +10793,19 @@ function apiLoadDraft(draftId) {
           stateData.draftStatus = 'editing';  // Mark as editing
           stateData.isLoadingExistingDraft = true;  // Lock this draft
           Logger.log('✓ Draft loaded and locked for editing');
-          return { success: true, state: stateData };
+          return { ok: true, success: true, state: stateData };
         } catch (e) {
           Logger.log('  ERROR parsing draft: ' + e.toString());
-          return { success: false, error: 'Corrupted draft data' };
+          return { ok: false, success: false, error: 'Corrupted draft data' };
         }
       }
     }
     
     Logger.log('  Draft not found or not owned by user');
-    return { success: false, error: 'Draft not found' };
+    return { ok: false, success: false, error: 'Draft not found' };
   } catch (e) {
     Logger.log('  ERROR in apiLoadDraft: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -9890,7 +10823,7 @@ function apiDeleteDraft(draftId) {
     if (!userEmail) throw new Error('User not authenticated');
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
-    const data = draftsSheet.getDataRange().getValues();
+    const data = readSheetValues_(draftsSheet);
     
     for (let i = 1; i < data.length; i++) {
       const rowEmail = String(data[i][1] || '').trim().toLowerCase();
@@ -9900,15 +10833,15 @@ function apiDeleteDraft(draftId) {
       if (rowEmail === userEmail.toLowerCase() && rowDraftId === draftId && rowType === 'PIA') {
         draftsSheet.deleteRow(i + 1);
         Logger.log('✓ Draft deleted at row ' + (i+1));
-        return { success: true, message: 'Draft deleted' };
+        return { ok: true, success: true, message: 'Draft deleted' };
       }
     }
     
     Logger.log('  Draft not found or not owned by user');
-    return { success: false, error: 'Draft not found' };
+    return { ok: false, success: false, error: 'Draft not found' };
   } catch (e) {
     Logger.log('  ERROR in apiDeleteDraft: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -9927,7 +10860,7 @@ function apiMarkDraftComplete(draftId, sessionId) {
     const userEmail = Session.getActiveUser().getEmail();
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
-    const data = draftsSheet.getDataRange().getValues();
+    const data = readSheetValues_(draftsSheet);
     
     for (let i = 1; i < data.length; i++) {
       const rowEmail = String(data[i][1] || '').trim().toLowerCase();
@@ -9939,15 +10872,15 @@ function apiMarkDraftComplete(draftId, sessionId) {
       if (rowEmail === userEmail.toLowerCase() && rowType === 'PIA' && (rowDraftId === draftId || rowSessionId === sessionId)) {
         draftsSheet.deleteRow(i + 1);
         Logger.log('✓ Draft removed successfully (converted to submission) at row ' + (i+1));
-        return { success: true, message: 'Draft removed' };
+        return { ok: true, success: true, message: 'Draft removed' };
       }
     }
     
     Logger.log('   Draft not found for cleanup');
-    return { success: false, error: 'Draft not found' };
+    return { ok: false, success: false, error: 'Draft not found' };
   } catch (e) {
     Logger.log('  ERROR in apiMarkDraftComplete: ' + e.toString());
-    return { success: false, error: e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -9963,10 +10896,10 @@ function cleanupExpiredDrafts() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   try {
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
-    const data = draftsSheet.getDataRange().getValues();
+    const data = readSheetValues_(draftsSheet);
     if (data.length <= 1) return;
     
     const today = new Date();
@@ -10018,7 +10951,7 @@ function apiGenerateRevisionSessionId(baseSessionId) {
   }
 
   const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
-  const data = appSheet.getDataRange().getValues();
+  const data = readSheetValues_(appSheet);
   let latest = null;
 
   for (let i = 1; i < data.length; i++) {
@@ -10063,7 +10996,7 @@ function apiGenerateRevisionSessionId(baseSessionId) {
     
     if (hasDCSFlags) {
       const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
-      const dcsData = dcsSheet.getDataRange().getValues();
+      const dcsData = readSheetValues_(dcsSheet);
       for (let i = 1; i < dcsData.length; i++) {
         if (dcsData[i][DCS_COLS.REQ_ID - 1] === latest.linkedReqId) {
           if (dcsData[i][DCS_COLS.STATUS - 1] === 'Returned') {
@@ -10075,7 +11008,7 @@ function apiGenerateRevisionSessionId(baseSessionId) {
     }
   }
 
-  return { success: true, sessionId: getNextRevisionSessionId_(baseId) };
+  return { ok: true, success: true, sessionId: getNextRevisionSessionId_(baseId) };
 }
 
 /*
@@ -10089,7 +11022,11 @@ function apiGenerateRevisionSessionId(baseSessionId) {
   RETURNS:   The (serialization-safe) app object; null if not found; throws on unauthorized access.
 */
 function apiGetApplicationData(sessionId) {
-  const appData = getApplicationData_(sessionId);
+  // PERF: getApplicationData_ reads Applications + Approval_Workflow, and the
+  // getCurrentRound_ inside it reads all three workflow sheets — so Approval_Workflow
+  // gets pulled twice on every call. This is a pure read path, so the sheet-value cache
+  // is safe to switch on for the gather; it is torn down before anything else runs.
+  const appData = withSheetCache_(function () { return getApplicationData_(sessionId); });
   if (!appData) {
     return null;
   }
@@ -10162,7 +11099,7 @@ function migrateAddReminderColumns() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   var sheets = [
     { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, headers: ['ReminderDate', 'EmailStatus', 'EmailError'] },
     { name: DB_SHEET_NAMES.ISM_WORKFLOW, headers: ['ReminderDate', 'EmailStatus', 'EmailError'] },
@@ -10200,7 +11137,7 @@ function migrateAddReminderColumns() {
   });
 
   Logger.log('Migration complete. Run setupReminderTrigger_() to enable daily reminders.');
-  return { success: true, message: 'Reminder and failsafe columns migrated. Run setupReminderTrigger_() next.' };
+  return { ok: true, success: true, message: 'Reminder and failsafe columns migrated. Run setupReminderTrigger_() next.' };
 }
 
 /*
@@ -10218,7 +11155,7 @@ function testReminderEngine() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   Logger.log('╔════════════════════════════════════════════════════════════╗');
   Logger.log('║  REMINDER ENGINE — COMPREHENSIVE TEST                      ║');
   Logger.log('╚════════════════════════════════════════════════════════════╝');
@@ -10353,7 +11290,7 @@ function testReminderEngine() {
     // ── STEP 5: Validate Email_Queue results ──
     Logger.log('\n📋 STEP 5: Validating Email_Queue...');
     var queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
-    var queueData = queueSheet.getDataRange().getValues();
+    var queueData = readSheetValues_(queueSheet);
 
     // Count 'reminder' type entries for our test sessionIds
     var remindedIds = {};
@@ -10424,7 +11361,7 @@ function testReminderEngine() {
 
       cleanupSheets.forEach(function(cs) {
         if (!cs.sheet) return;
-        var cd = cs.sheet.getDataRange().getValues();
+        var cd = readSheetValues_(cs.sheet);
         var rowsToDelete = [];
         for (var ci = 1; ci < cd.length; ci++) {
           var val = String(cd[ci][cs.col - 1] || '').trim();
@@ -10463,7 +11400,7 @@ function testFullSystemFlow() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   Logger.log('╔══════════════════════════════════════════════════════════════╗');
   Logger.log('║  ULTIMATE SYSTEM FLOW — COMPREHENSIVE END-TO-END TEST       ║');
   Logger.log('╚══════════════════════════════════════════════════════════════╝');
@@ -10503,7 +11440,7 @@ function testFullSystemFlow() {
     ];
     cleanupSheets.forEach(function(cs) {
       if (!cs.sheet) return;
-      var cd = cs.sheet.getDataRange().getValues();
+      var cd = readSheetValues_(cs.sheet);
       var rows = [];
       for (var ci = 1; ci < cd.length; ci++) {
         for (var ti = 0; ti < allTestIds.length; ti++) {
@@ -10515,7 +11452,7 @@ function testFullSystemFlow() {
     // Also clean Email_Queue by Type
     try {
       var eqSheet = getSheet(DB_SHEET_NAMES.EMAIL_QUEUE);
-      var eqData = eqSheet.getDataRange().getValues();
+      var eqData = readSheetValues_(eqSheet);
       var eqRows = [];
       for (var ei = 1; ei < eqData.length; ei++) {
         var eqType = String(eqData[ei][EMAIL_QUEUE_COLS.TYPE - 1] || '');
@@ -10559,7 +11496,7 @@ function testFullSystemFlow() {
     SpreadsheetApp.flush();
 
     // Verify Step 1 is Approved
-    var d = apprSheet.getDataRange().getValues();
+    var d = readSheetValues_(apprSheet);
     var step1ok = false, step2stillPending = false, appStatusApproved = false;
     for (var i = 1; i < d.length; i++) {
       if (d[i][APPROVAL_COLS.SESSION_ID - 1] === aId && d[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) step1ok = (d[i][APPROVAL_COLS.STATUS - 1] === 'Approved');
@@ -10574,7 +11511,7 @@ function testFullSystemFlow() {
     SpreadsheetApp.flush();
 
     // Check app is Approved (Phase 3 init)
-    var apps = appSheet.getDataRange().getValues();
+    var apps = readSheetValues_(appSheet);
     for (var i = 1; i < apps.length; i++) {
       if (apps[i][APPLICATIONS_COLS.SESSION_ID - 1] === aId) { appStatusApproved = (String(apps[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved') === 0); break; }
     }
@@ -10582,12 +11519,12 @@ function testFullSystemFlow() {
 
     // Verify ISM workflow was initialized (2 rows in ISM sheet)
     var ismRows = 0;
-    var ismD = ismSheet.getDataRange().getValues();
+    var ismD = readSheetValues_(ismSheet);
     for (var i = 1; i < ismD.length; i++) { if (ismD[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === aId) ismRows++; }
     check('ISM workflow initialized (2 rows)', ismRows === 2, 'found ' + ismRows);
 
     // Verify email was queued for applicant "approved_main"
-    var queueData = queueSheet.getDataRange().getValues();
+    var queueData = readSheetValues_(queueSheet);
     var foundApplicantEmail = false;
     for (var i = 1; i < queueData.length; i++) {
       if (String(queueData[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === aId && String(queueData[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'applicant') {
@@ -10605,7 +11542,7 @@ function testFullSystemFlow() {
     var r3 = processApprovalDecision_(bId, E, 'Return', 'Please fix the scope section. This is a detailed comment explaining what needs to be changed. It needs to be at least 100 characters so adding more text here to meet the limit.', null, '{"PIA 1 - Scope":"Scope section is too vague"}');
     check('Return succeeds', r3.success, r3.error);
 
-    var appsB = appSheet.getDataRange().getValues();
+    var appsB = readSheetValues_(appSheet);
     var retRow = null, retStatus = '';
     for (var i = 1; i < appsB.length; i++) { if (appsB[i][APPLICATIONS_COLS.SESSION_ID - 1] === bId) { retRow = i; retStatus = String(appsB[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
     check('Application status becomes Returned', retStatus === 'Returned', retStatus);
@@ -10620,13 +11557,13 @@ function testFullSystemFlow() {
     var r4 = processApprovalDecision_(cId, E, 'Deny', 'This project does not meet compliance requirements. The policy framework is not fully established and data handling procedures are undefined. Additional work is needed before resubmission.', null, '{}');
     check('Deny succeeds', r4.success, r4.error);
 
-    var appsC = appSheet.getDataRange().getValues();
+    var appsC = readSheetValues_(appSheet);
     var denyStatus = '';
     for (var i = 1; i < appsC.length; i++) { if (appsC[i][APPLICATIONS_COLS.SESSION_ID - 1] === cId) { denyStatus = String(appsC[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
     check('Application status becomes Denied', denyStatus === 'Denied', denyStatus);
 
     // Verify Step 1 status is Denied
-    var dC = apprSheet.getDataRange().getValues();
+    var dC = readSheetValues_(apprSheet);
     var step1Denied = false;
     for (var i = 1; i < dC.length; i++) { if (dC[i][APPROVAL_COLS.SESSION_ID - 1] === cId && dC[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) { step1Denied = (dC[i][APPROVAL_COLS.STATUS - 1] === 'Denied'); break; } }
     check('Approval record set to Denied', step1Denied, '');
@@ -10654,7 +11591,7 @@ function testFullSystemFlow() {
     // ── TEST E: ISM Person 1 Approves → Person 2 notified ──
     Logger.log('\n📌 E. ISM Person 1 Approve (triggers routing)');
     // Get the ISM member emails
-    var ismData2 = ismSheet.getDataRange().getValues();
+    var ismData2 = readSheetValues_(ismSheet);
     var p1Email = '', p2Email = '';
     for (var i = 1; i < ismData2.length; i++) {
       if (ismData2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismData2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) p1Email = ismData2[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
@@ -10668,7 +11605,7 @@ function testFullSystemFlow() {
     SpreadsheetApp.flush();
 
     // Check Person 2 is still Pending
-    var ismD2 = ismSheet.getDataRange().getValues();
+    var ismD2 = readSheetValues_(ismSheet);
     var p2Status = '';
     for (var i = 1; i < ismD2.length; i++) { if (ismD2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId && ismD2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) p2Status = String(ismD2[i][ISM_WORKFLOW_COLS.STATUS - 1] || ''); break; }
     // Person 2 should still be Pending (needs unanimous approval)
@@ -10685,7 +11622,7 @@ function testFullSystemFlow() {
     SpreadsheetApp.flush();
 
     // Check app status becomes Approved by ISM
-    var appD2 = appSheet.getDataRange().getValues();
+    var appD2 = readSheetValues_(appSheet);
     var ismFinalStatus = '';
     for (var i = 1; i < appD2.length; i++) { if (appD2[i][APPLICATIONS_COLS.SESSION_ID - 1] === dId) { ismFinalStatus = String(appD2[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
     check('App status after ISM approval', ismFinalStatus.indexOf('Approved by ISM') >= 0 || ismFinalStatus.indexOf('Approved') >= 0, ismFinalStatus);
@@ -10697,14 +11634,14 @@ function testFullSystemFlow() {
     apiPhase3_InitializeISMWorkflow_(gId);
 
     // Find the ISM emails for this new app
-    var ismG = ismSheet.getDataRange().getValues();
+    var ismG = readSheetValues_(ismSheet);
     var p1G = '';
     for (var i = 1; i < ismG.length; i++) { if (ismG[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === gId && ismG[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1G = ismG[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
     var r9 = apiPhase3_ProcessISMDecision(gId, p1G, 'Deny', 'This application has security risks that cannot be mitigated. Comprehensive review indicates multiple compliance gaps in data handling procedures. This decision is final.', '', 1, '{}');
     check('ISM Deny succeeds', r9.success, r9.error);
 
-    var appG = appSheet.getDataRange().getValues();
+    var appG = readSheetValues_(appSheet);
     var ismDenyStatus = '';
     for (var i = 1; i < appG.length; i++) { if (appG[i][APPLICATIONS_COLS.SESSION_ID - 1] === gId) { ismDenyStatus = String(appG[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
     check('App becomes Rejected by ISM', ismDenyStatus.indexOf('Rejected') >= 0, ismDenyStatus);
@@ -10715,14 +11652,14 @@ function testFullSystemFlow() {
     appSheet.appendRow([hId, E, 'Approved', pia1,'{}','{}','{}',pia5,'',new Date().toLocaleString('en-PH'),'NO','','','{}']);
     apiPhase3_InitializeISMWorkflow_(hId);
 
-    var ismH = ismSheet.getDataRange().getValues();
+    var ismH = readSheetValues_(ismSheet);
     var p1H = '';
     for (var i = 1; i < ismH.length; i++) { if (ismH[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === hId && ismH[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1H = ismH[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
     var r10 = apiPhase3_ProcessISMDecision(hId, p1H, 'Return', 'Please update the scope section and add more detail about data retention policies. The current description is too brief. Also ensure the DCS fields are updated accordingly. This requires at least fifty characters.', '', 1, '{}');
     check('ISM Return succeeds', r10.success, r10.error);
 
-    var appH = appSheet.getDataRange().getValues();
+    var appH = readSheetValues_(appSheet);
     var ismRetStatus = '';
     for (var i = 1; i < appH.length; i++) { if (appH[i][APPLICATIONS_COLS.SESSION_ID - 1] === hId) { ismRetStatus = String(appH[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
     check('App becomes Returned after ISM return', ismRetStatus === 'Returned', ismRetStatus);
@@ -10736,7 +11673,7 @@ function testFullSystemFlow() {
     apiPhase3_InitializeISMWorkflow_(iId);
     SpreadsheetApp.flush();
 
-    var ismI = ismSheet.getDataRange().getValues();
+    var ismI = readSheetValues_(ismSheet);
     var p1I = '';
     for (var i = 1; i < ismI.length; i++) { if (ismI[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === iId && ismI[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1I = ismI[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
@@ -10745,7 +11682,7 @@ function testFullSystemFlow() {
     SpreadsheetApp.flush();
 
     // Check Div Head record was created
-    var divI = divSheet.getDataRange().getValues();
+    var divI = readSheetValues_(divSheet);
     var divPending = false;
     for (var i = 1; i < divI.length; i++) { if (divI[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === iId && divI[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') { divPending = true; break; } }
     check('DivHead escalation record created', divPending, '');
@@ -10756,20 +11693,20 @@ function testFullSystemFlow() {
     SpreadsheetApp.flush();
 
     // App stays "Escalated to Division Head" until Person 2 also approves
-    var appI = appSheet.getDataRange().getValues();
+    var appI = readSheetValues_(appSheet);
     var escStatus = '';
     for (var i = 1; i < appI.length; i++) { if (appI[i][APPLICATIONS_COLS.SESSION_ID - 1] === iId) { escStatus = String(appI[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
     check('App still Escalated after DivHead (waiting for Person 2)', escStatus.indexOf('Escalated') >= 0, escStatus);
 
     // Now Person 2 approves → full approval reached
-    var ismI2 = ismSheet.getDataRange().getValues();
+    var ismI2 = readSheetValues_(ismSheet);
     var p2I = '';
     for (var i = 1; i < ismI2.length; i++) { if (ismI2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === iId && ismI2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) { p2I = ismI2[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
     var r13 = apiPhase3_ProcessISMDecision(iId, p2I, 'Approve', 'Person 2 approves after DivHead resolution.', 'BOTH', 2, '{}');
     check('ISM Person 2 Approve after Escalation succeeds', r13.success, r13.error);
     SpreadsheetApp.flush();
 
-    var appI2 = appSheet.getDataRange().getValues();
+    var appI2 = readSheetValues_(appSheet);
     var escFinal = '';
     for (var i = 1; i < appI2.length; i++) { if (appI2[i][APPLICATIONS_COLS.SESSION_ID - 1] === iId) { escFinal = String(appI2[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
     check('App reaches Approved by ISM after full Escalation chain', escFinal.indexOf('Approved by ISM') >= 0, escFinal);
@@ -10833,7 +11770,7 @@ function testFullSystemFlow() {
     check('Reminder ran for sequence test', rem2.success, rem2.error);
 
     // Check Email_Queue: should have exactly 1 reminder entry for seqId (Step 1 only)
-    var eqD = queueSheet.getDataRange().getValues();
+    var eqD = readSheetValues_(queueSheet);
     var seqReminders = [];
     for (var i = 1; i < eqD.length; i++) {
       if (String(eqD[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === seqId && String(eqD[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'reminder') {
@@ -10904,7 +11841,7 @@ function testUltimateSystem() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   Logger.log('╔══════════════════════════════════════════════════════════════════╗');
   Logger.log('║  🔥 ULTIMATE MEGA-TEST — ALL PATHS, 20 CONCURRENT USERS          ║');
   Logger.log('╚══════════════════════════════════════════════════════════════════╝');
@@ -10943,7 +11880,7 @@ function testUltimateSystem() {
     cleanupDefs.forEach(function(d) {
       var s = getDatabaseSheet_(d.sheet, false);
       if (!s || s.getLastRow() < 2) return;
-      var data = s.getDataRange().getValues();
+      var data = readSheetValues_(s);
       var rows = [];
       for (var i = 1; i < data.length; i++) {
         var cellVal = String(data[i][d.col - 1] || '').trim();
@@ -10981,7 +11918,7 @@ function testUltimateSystem() {
     SpreadsheetApp.flush();
 
     // Verify EmailStatus was stamped on Step 1 row
-    var ad = apprSheet.getDataRange().getValues();
+    var ad = readSheetValues_(apprSheet);
     var step1EmailStamped = false;
     for (var i = 1; i < ad.length; i++) {
       if (ad[i][APPROVAL_COLS.SESSION_ID - 1] === aId && ad[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) {
@@ -10996,7 +11933,7 @@ function testUltimateSystem() {
     SpreadsheetApp.flush();
 
     // Verify app status becomes Approved
-    var apps = appSheet.getDataRange().getValues();
+    var apps = readSheetValues_(appSheet);
     var appApproved = false;
     for (var i = 1; i < apps.length; i++) {
       if (apps[i][APPLICATIONS_COLS.SESSION_ID - 1] === aId) {
@@ -11008,7 +11945,7 @@ function testUltimateSystem() {
 
     // Verify ISM workflow initialized
     var ismCount = 0;
-    var ismD = ismSheet.getDataRange().getValues();
+    var ismD = readSheetValues_(ismSheet);
     for (var i = 1; i < ismD.length; i++) { if (ismD[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === aId) ismCount++; }
     check('S1: ISM workflow initialized (2 rows)', ismCount === 2, 'found ' + ismCount);
 
@@ -11024,7 +11961,7 @@ function testUltimateSystem() {
     var r3 = processApprovalDecision_(bId, E, 'Return', 'Please fix the scope section. This is a detailed comment explaining what needs to be changed. It must be at least one hundred characters to pass the validation check. Adding more text here to meet the requirement.', null, '{"PIA 1 - Scope":"Scope section is too vague"}');
     check('S2: Return succeeds', r3.success, r3.error);
 
-    var appsB = appSheet.getDataRange().getValues();
+    var appsB = readSheetValues_(appSheet);
     var retStatus = '', retFlags = '';
     for (var i = 1; i < appsB.length; i++) {
       if (appsB[i][APPLICATIONS_COLS.SESSION_ID - 1] === bId) {
@@ -11048,7 +11985,7 @@ function testUltimateSystem() {
     var r4 = processApprovalDecision_(cId, E, 'Deny', 'This project does not meet compliance requirements. The policy framework is not fully established and data handling procedures are completely undefined. Additional work is needed.', null, '{}');
     check('S3: Deny succeeds', r4.success, r4.error);
 
-    var appsC = appSheet.getDataRange().getValues();
+    var appsC = readSheetValues_(appSheet);
     var denyOk = false;
     for (var i = 1; i < appsC.length; i++) { if (appsC[i][APPLICATIONS_COLS.SESSION_ID - 1] === cId) { denyOk = (String(appsC[i][APPLICATIONS_COLS.STATUS - 1] || '') === 'Denied'); break; } }
     check('S3: App status is Denied', denyOk, '');
@@ -11076,7 +12013,7 @@ function testUltimateSystem() {
     check('S5: ISM init succeeds', initR.success, initR.error);
 
     // Verify ISM rows have EmailStatus='Pending'
-    var ismD5 = ismSheet.getDataRange().getValues();
+    var ismD5 = readSheetValues_(ismSheet);
     var ismEmailStamped = 0;
     for (var i = 1; i < ismD5.length; i++) {
       if (ismD5[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === dId) {
@@ -11102,7 +12039,7 @@ function testUltimateSystem() {
     check('S5: ISM P2 Approve succeeds', r8.success, r8.error);
     SpreadsheetApp.flush();
 
-    var appsD = appSheet.getDataRange().getValues();
+    var appsD = readSheetValues_(appSheet);
     var ismFinalOk = false;
     for (var i = 1; i < appsD.length; i++) {
       if (appsD[i][APPLICATIONS_COLS.SESSION_ID - 1] === dId) {
@@ -11113,7 +12050,7 @@ function testUltimateSystem() {
     check('S5: App reaches Approved by ISM', ismFinalOk, '');
 
     // Check that queueEmail_ stamped ISM rows when notifications were sent
-    var queueCheck = queueSheet.getDataRange().getValues();
+    var queueCheck = readSheetValues_(queueSheet);
     var ismQueueCount = 0;
     for (var i = 1; i < queueCheck.length; i++) {
       if (String(queueCheck[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === dId && String(queueCheck[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'ism') {
@@ -11130,14 +12067,14 @@ function testUltimateSystem() {
     var eId = genId('ISMDN');
     appSheet.appendRow([eId, E, 'Approved', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
     apiPhase3_InitializeISMWorkflow_(eId);
-    var ismE = ismSheet.getDataRange().getValues();
+    var ismE = readSheetValues_(ismSheet);
     var p1E2 = '';
     for (var i = 1; i < ismE.length; i++) { if (ismE[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === eId && ismE[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1E2 = ismE[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
     var r9 = apiPhase3_ProcessISMDecision(eId, p1E2, 'Deny', 'This application has critical security risks that cannot be mitigated. Comprehensive review indicates multiple compliance gaps in data handling procedures. This decision is final and binding.', '', 1, '{}');
     check('S6: ISM Deny succeeds', r9.success, r9.error);
 
-    var appsE = appSheet.getDataRange().getValues();
+    var appsE = readSheetValues_(appSheet);
     var ismDenyOk = false;
     for (var i = 1; i < appsE.length; i++) { if (appsE[i][APPLICATIONS_COLS.SESSION_ID - 1] === eId) { ismDenyOk = (String(appsE[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Rejected') >= 0); break; } }
     check('S6: App becomes Rejected by ISM', ismDenyOk, '');
@@ -11150,14 +12087,14 @@ function testUltimateSystem() {
     var fId = genId('ISMRT');
     appSheet.appendRow([fId, E, 'Approved', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
     apiPhase3_InitializeISMWorkflow_(fId);
-    var ismF = ismSheet.getDataRange().getValues();
+    var ismF = readSheetValues_(ismSheet);
     var p1F = '';
     for (var i = 1; i < ismF.length; i++) { if (ismF[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === fId && ismF[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1F = ismF[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
     var r10 = apiPhase3_ProcessISMDecision(fId, p1F, 'Return', 'Please update the scope section and add more detail about data retention policies. The current description is too brief. Also ensure DCS fields are updated accordingly.', '', 1, '{}');
     check('S7: ISM Return succeeds', r10.success, r10.error);
 
-    var appsF = appSheet.getDataRange().getValues();
+    var appsF = readSheetValues_(appSheet);
     var ismRetOk = false;
     for (var i = 1; i < appsF.length; i++) { if (appsF[i][APPLICATIONS_COLS.SESSION_ID - 1] === fId) { ismRetOk = (String(appsF[i][APPLICATIONS_COLS.STATUS - 1] || '') === 'Returned'); break; } }
     check('S7: App becomes Returned after ISM return', ismRetOk, '');
@@ -11173,7 +12110,7 @@ function testUltimateSystem() {
     apiPhase3_InitializeISMWorkflow_(gId);
     SpreadsheetApp.flush();
 
-    var ismG = ismSheet.getDataRange().getValues();
+    var ismG = readSheetValues_(ismSheet);
     var p1G = '', p2G = '';
     for (var i = 1; i < ismG.length; i++) {
       if (ismG[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === gId && ismG[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) p1G = ismG[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1];
@@ -11185,7 +12122,7 @@ function testUltimateSystem() {
     SpreadsheetApp.flush();
 
     // Check DivHead record created
-    var divD = divSheet.getDataRange().getValues();
+    var divD = readSheetValues_(divSheet);
     var divCreated = false;
     for (var i = 1; i < divD.length; i++) { if (divD[i][DIV_HEAD_CONFIG_COLS.SESSION_ID - 1] === gId && divD[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') { divCreated = true; break; } }
     check('S8: DivHead escalation record created', divCreated, '');
@@ -11206,7 +12143,7 @@ function testUltimateSystem() {
     SpreadsheetApp.flush();
 
     // App should still be Escalated (waiting for Person 2)
-    var appsG = appSheet.getDataRange().getValues();
+    var appsG = readSheetValues_(appSheet);
     var escStatus = '';
     for (var i = 1; i < appsG.length; i++) { if (appsG[i][APPLICATIONS_COLS.SESSION_ID - 1] === gId) { escStatus = String(appsG[i][APPLICATIONS_COLS.STATUS - 1] || ''); break; } }
     check('S8: App still Escalated after DivHead (waiting P2)', escStatus.indexOf('Escalated') >= 0, escStatus);
@@ -11216,7 +12153,7 @@ function testUltimateSystem() {
     check('S8: ISM P2 Approve after escalation succeeds', r13.success, r13.error);
     SpreadsheetApp.flush();
 
-    var appsG2 = appSheet.getDataRange().getValues();
+    var appsG2 = readSheetValues_(appSheet);
     var escFinalOk = false;
     for (var i = 1; i < appsG2.length; i++) { if (appsG2[i][APPLICATIONS_COLS.SESSION_ID - 1] === gId) { escFinalOk = (String(appsG2[i][APPLICATIONS_COLS.STATUS - 1] || '').indexOf('Approved by ISM') >= 0); break; } }
     check('S8: App reaches Approved by ISM after full escalation chain', escFinalOk, '');
@@ -11263,7 +12200,7 @@ function testUltimateSystem() {
     check('S11: Resend returns queueId', !!resendR.queueId, '');
 
     // Verify EmailStatus was reset to Pending
-    var ad2 = apprSheet.getDataRange().getValues();
+    var ad2 = readSheetValues_(apprSheet);
     var resetOk = false;
     for (var i = 1; i < ad2.length; i++) {
       if (ad2[i][APPROVAL_COLS.SESSION_ID - 1] === resendId && ad2[i][APPROVAL_COLS.CURRENT_STEP - 1] == 1) {
@@ -11286,7 +12223,7 @@ function testUltimateSystem() {
     check('S12: sendDailyReminders succeeds', remResult.success, remResult.error);
 
     // Check if a reminder was queued for our test entry
-    var qD = queueSheet.getDataRange().getValues();
+    var qD = readSheetValues_(queueSheet);
     var reminded = false;
     for (var i = 1; i < qD.length; i++) {
       if (String(qD[i][EMAIL_QUEUE_COLS.SESSION_ID - 1] || '') === remId && String(qD[i][EMAIL_QUEUE_COLS.TYPE - 1] || '') === 'reminder') {
@@ -11296,7 +12233,7 @@ function testUltimateSystem() {
     check('S12: Reminder queued for pending entry', reminded, '');
 
     // Verify ReminderDate was stamped
-    var adR = apprSheet.getDataRange().getValues();
+    var adR = readSheetValues_(apprSheet);
     var stamped = false;
     var todayStr = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0');
     for (var i = 1; i < adR.length; i++) {
@@ -11336,7 +12273,7 @@ function testUltimateSystem() {
 
     // Verify no row corruption (check all 20 have correct column counts)
     var corruptedCount = 0;
-    var apprData = apprSheet.getDataRange().getValues();
+    var apprData = readSheetValues_(apprSheet);
     for (var u = 0; u < batchIds.length; u++) {
       var found = false;
       for (var i = 1; i < apprData.length; i++) {
@@ -11364,7 +12301,7 @@ function testUltimateSystem() {
     check('S13: All 20 concurrent approvals succeed', approveSuccess === CONCURRENT, 'success=' + approveSuccess);
 
     // Verify all 20 have status Approved
-    var appsCheck = appSheet.getDataRange().getValues();
+    var appsCheck = readSheetValues_(appSheet);
     var approvedCount = 0;
     for (var u = 0; u < batchIds.length; u++) {
       for (var i = 1; i < appsCheck.length; i++) {
@@ -11442,6 +12379,395 @@ function testUltimateSystem() {
   return results;
 }
 
+/*
+  Function: testDelegationResolution
+
+  LAYMAN (Tropang Ex):
+  Test para sa delegation. Ang pinakaimportanteng sinisigurado niya ay yung NEGATIBO: kapag
+  WALANG delegation, dapat WALANG nagbago — parehong-pareho sa dati. Tapos: gumagana ba yung
+  petsa (hindi pa nagsisimula = hindi pa; tapos na = hindi na), gumagana ba yung pag-pause,
+  at hindi ba nagcha-chain (kung si A kay B, at si B kay C, si A ay kay B pa rin — HINDI kay C).
+
+  TECHNICAL:
+  Regression test for resolveDelegate_ / canActAs_ / delegatorsFor_. Asserts:
+    (a) no delegation → resolveDelegate_ null, canActAs_ identical to a plain equality check;
+    (b) an active delegation resolves, and canActAs_ reports onBehalfOf = the ORIGINAL;
+    (c) a future-dated delegation does not apply yet, a past-dated one no longer applies;
+    (d) Is_Active = NO overrides an otherwise-valid window;
+    (e) delegation does NOT chain — A→B and B→C means A resolves to B, never to C;
+    (f) a third party is still refused (the guard did not simply become permissive);
+    (g) delegatorsFor_ is the exact inverse of resolveDelegate_.
+
+  Editor-run only. Writes namespaced rows to Delegations and removes them afterwards.
+
+  PARAMS:    (none)
+  RETURNS:   { success, passed, failed, total, details }
+*/
+function testDelegationResolution() {
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+
+  const details = [];
+  let passed = 0, failed = 0;
+  function check(name, cond, extra) {
+    if (cond) { passed++; details.push('PASS  ' + name); }
+    else { failed++; details.push('FAIL  ' + name + (extra ? ' — ' + extra : '')); }
+  }
+
+  const dom = getAllowedDomain_() || 'example.com';
+  const A = 'deltest-a@' + dom, B = 'deltest-b@' + dom, C = 'deltest-c@' + dom, X = 'deltest-x@' + dom;
+  const TAG = 'DELTEST-' + Date.now();
+  const sheet = getDelegationsSheet_();
+  if (!sheet) return { ok: false, success: false, error: 'Delegations sheet unavailable.' };
+
+  const fmt = (d) => Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return fmt(d); };
+
+  try {
+    // (a) BASELINE — nothing configured yet.
+    check('no delegation → resolveDelegate_ returns null', resolveDelegate_(A) === null);
+    check('no delegation → self still allowed', canActAs_(A, A).allowed === true);
+    check('no delegation → self reports no onBehalfOf', canActAs_(A, A).onBehalfOf === '');
+    check('no delegation → stranger refused', canActAs_(B, A).allowed === false);
+
+    // (b) ACTIVE: A is away, B covers.
+    sheet.appendRow([TAG + '-1', A, B, day(-1), day(+7), 'Leave', 'YES', 'test', new Date().toISOString()]);
+    SpreadsheetApp.flush();
+    const r1 = resolveDelegate_(A);
+    check('active delegation resolves to the delegate', !!r1 && getNormalizedEmail_(r1.email) === getNormalizedEmail_(B),
+      r1 ? r1.email : 'null');
+    const act = canActAs_(B, A);
+    check('delegate is allowed to act', act.allowed === true);
+    check('delegate acts ON BEHALF OF the original', getNormalizedEmail_(act.onBehalfOf) === getNormalizedEmail_(A),
+      act.onBehalfOf);
+    // 🚩 EXCLUSIVITY — the load-bearing assertion. While delegated, the ORIGINAL is refused
+    // too. If this ever flips back to true, two people can approve the same Pending row.
+    check('EXCLUSIVE: original is refused while delegated', canActAs_(A, A).allowed === false);
+    check('EXCLUSIVE: exactly one identity may act',
+      [canActAs_(A, A).allowed, canActAs_(B, A).allowed, canActAs_(X, A).allowed]
+        .filter(Boolean).length === 1);
+    // (f) the guard must not have become generally permissive
+    check('unrelated third party still refused', canActAs_(X, A).allowed === false);
+    // (g) inverse lookup
+    check('delegatorsFor_ is the inverse', delegatorsFor_(getNormalizedEmail_(B)).indexOf(getNormalizedEmail_(A)) !== -1);
+    check('recipientFor_ routes mail to the delegate',
+      getNormalizedEmail_(recipientFor_(A).email) === getNormalizedEmail_(B));
+
+    // (d) PAUSED via the flag, window still valid.
+    sheet.getRange(sheet.getLastRow(), DELEGATION_COLS.IS_ACTIVE).setValue('NO');
+    SpreadsheetApp.flush();
+    check('Is_Active=NO overrides a valid window', resolveDelegate_(A) === null);
+    // Pausing must hand authority straight BACK — otherwise a paused delegation would leave
+    // the row with nobody able to act on it at all, which is worse than the original problem.
+    check('pausing restores the original', canActAs_(A, A).allowed === true);
+    check('pausing revokes the delegate', canActAs_(B, A).allowed === false);
+    sheet.getRange(sheet.getLastRow(), DELEGATION_COLS.IS_ACTIVE).setValue('YES');
+
+    // (c) WINDOW: not started yet, then already finished.
+    sheet.getRange(sheet.getLastRow(), DELEGATION_COLS.START_DATE).setValue(day(+3));
+    SpreadsheetApp.flush();
+    check('future-dated delegation does not apply yet', resolveDelegate_(A) === null);
+    sheet.getRange(sheet.getLastRow(), DELEGATION_COLS.START_DATE).setValue(day(-10));
+    sheet.getRange(sheet.getLastRow(), DELEGATION_COLS.END_DATE).setValue(day(-2));
+    SpreadsheetApp.flush();
+    check('expired delegation no longer applies', resolveDelegate_(A) === null);
+    sheet.getRange(sheet.getLastRow(), DELEGATION_COLS.END_DATE).setValue(day(+7));
+    SpreadsheetApp.flush();
+
+    // (e) NO CHAINING — B also delegates to C. A must still resolve to B.
+    sheet.appendRow([TAG + '-2', B, C, day(-1), day(+7), 'Also away', 'YES', 'test', new Date().toISOString()]);
+    SpreadsheetApp.flush();
+    const r2 = resolveDelegate_(A);
+    check('delegation does NOT chain (A→B, not A→C)',
+      !!r2 && getNormalizedEmail_(r2.email) === getNormalizedEmail_(B), r2 ? r2.email : 'null');
+    check('C cannot act for A through the chain', canActAs_(C, A).allowed === false);
+    check('C CAN act for B directly', canActAs_(C, B).allowed === true);
+
+  } catch (e) {
+    failed++;
+    details.push('FAIL  unexpected exception — ' + e.toString());
+  } finally {
+    try {
+      const data = sheet.getDataRange().getValues();
+      for (let i = data.length - 1; i >= 1; i--) {
+        if (String(data[i][DELEGATION_COLS.DELEGATION_ID - 1] || '').indexOf(TAG) === 0) sheet.deleteRow(i + 1);
+      }
+    } catch (cleanupErr) {
+      details.push('WARN  cleanup failed, remove ' + TAG + '* rows by hand — ' + cleanupErr.toString());
+    }
+  }
+
+  details.forEach(function (d) { Logger.log(d); });
+  Logger.log('testDelegationResolution: ' + passed + ' passed, ' + failed + ' failed');
+  return { ok: failed === 0, success: failed === 0, passed: passed, failed: failed,
+           total: passed + failed, details: details };
+}
+
+/*
+  Function: testSheetReadCache
+
+  LAYMAN (Tropang Ex):
+  Test para sa bagong read cache. Tatlong bagay ang sinisigurado niya, at yung una ang
+  pinakaimportante: kapag PATAY ang cache (default), dapat pareho lang siya sa dating code —
+  walang naiba. Pangalawa: kapag BUKAS, hindi na siya nagdo-download ulit ng parehong tab.
+  Pangatlo: kapag may sinulat ka habang bukas ang cache, kailangan mong sabihin sa cache na
+  kalimutan yung luma (invalidateSheetCache_), kung hindi luma pa rin ang makikita mo — at
+  yun mismo yung dahilan kung bakit hindi natin binubuksan ang cache sa mga write path.
+
+  TECHNICAL:
+  Regression test for withSheetCache_ / readSheetValues_ / invalidateSheetCache_. Asserts:
+    (a) cache OFF is byte-equal to a direct getDataRange().getValues();
+    (b) cache ON returns the SAME array reference on the second read (proving one fetch);
+    (c) the cache is torn down after withSheetCache_ returns, including when fn throws;
+    (d) a write made while the cache is ON is invisible until invalidateSheetCache_ —
+        this is the documented hazard, asserted deliberately so it stays documented;
+    (e) nesting composes: an inner withSheetCache_ does not tear down the outer one.
+
+  Editor-run only. Writes one namespaced row to Risk_Audit and deletes it afterwards.
+
+  PARAMS:    (none)
+  RETURNS:   { success, passed, failed, total, details }
+*/
+function testSheetReadCache() {
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+
+  const details = [];
+  let passed = 0, failed = 0;
+  function check(name, cond, extra) {
+    if (cond) { passed++; details.push('PASS  ' + name); }
+    else { failed++; details.push('FAIL  ' + name + (extra ? ' — ' + extra : '')); }
+  }
+
+  const MARK = 'CACHETEST-' + Date.now();
+  const sheet = getDatabaseSheet_(DB_SHEET_NAMES.RISK_AUDIT, true);
+  if (!sheet) return { ok: false, success: false, error: 'Risk_Audit sheet unavailable.' };
+
+  try {
+    // (a) OFF is identical to the raw call it replaced.
+    check('cache starts OFF', __SHEET_CACHE === null);
+    const raw = sheet.getDataRange().getValues();
+    const viaHelper = readSheetValues_(sheet);
+    check('OFF matches direct read (row count)', raw.length === viaHelper.length,
+      raw.length + ' vs ' + viaHelper.length);
+    check('OFF returns a FRESH array each time', readSheetValues_(sheet) !== viaHelper);
+
+    // (b) + (e) ON dedupes, and nesting does not tear the outer cache down.
+    withSheetCache_(function () {
+      const first = readSheetValues_(sheet);
+      const second = readSheetValues_(sheet);
+      check('ON returns the SAME reference (one fetch)', first === second);
+      withSheetCache_(function () {
+        check('nested call reuses the outer cache', readSheetValues_(sheet) === first);
+      });
+      check('cache survives the nested call', __SHEET_CACHE !== null &&
+        readSheetValues_(sheet) === first);
+
+      // (d) the documented staleness hazard — a write is invisible until invalidated.
+      const before = first.length;
+      sheet.appendRow([MARK, '', '', 'CacheTest', '', '', new Date().toISOString()]);
+      SpreadsheetApp.flush();
+      check('stale-by-design: write NOT visible while cached',
+        readSheetValues_(sheet).length === before);
+      invalidateSheetCache_(sheet);
+      check('write visible after invalidateSheetCache_',
+        readSheetValues_(sheet).length === before + 1);
+    });
+
+    // (c) torn down on the normal path.
+    check('cache OFF again after withSheetCache_', __SHEET_CACHE === null);
+
+    // (c) torn down on the throwing path too.
+    try {
+      withSheetCache_(function () { throw new Error('boom'); });
+    } catch (ignored) { /* expected */ }
+    check('cache OFF again after a throw', __SHEET_CACHE === null);
+
+  } catch (e) {
+    failed++;
+    details.push('FAIL  unexpected exception — ' + e.toString());
+  } finally {
+    // Clean up the marker row regardless of outcome.
+    try {
+      const data = sheet.getDataRange().getValues();
+      for (let i = data.length - 1; i >= 1; i--) {
+        if (String(data[i][0]) === MARK) sheet.deleteRow(i + 1);
+      }
+    } catch (cleanupErr) {
+      details.push('WARN  cleanup failed — ' + cleanupErr.toString());
+    }
+    __SHEET_CACHE = null; // never leave the cache on for the next execution
+  }
+
+  details.forEach(function (d) { Logger.log(d); });
+  Logger.log('testSheetReadCache: ' + passed + ' passed, ' + failed + ' failed');
+  return { ok: failed === 0, success: failed === 0, passed: passed, failed: failed,
+           total: passed + failed, details: details };
+}
+
+/*
+  Function: testAppendOnlyRounds
+
+  LAYMAN (Tropang Ex):
+  Ito yung test para sa pinakabagong pagbabago: hindi na binubura ang lumang approval rows tuwing
+  may resubmit. Ginagaya niya yung totoong senaryo — may na-approve, may na-return habang may
+  approver na hindi pa nakakaaksyon, tapos nag-resubmit. Sinisiguro niyang (a) buhay pa rin yung
+  round 1, (b) may bagong round 2, at (c) yung pinaka-importante: hindi na-route pabalik sa
+  natengga na approver ng round 1. Yun mismo yung bug na tinatakpan ng lumang delete.
+
+  TECHNICAL:
+  Focused regression test for the append-only workflow. Builds a session with a Stage-A ladder and
+  an ISM row that stays Pending (the abandoned-row case), drives a Return, calls submitApplication_
+  to force a resubmit, then asserts round retention, round increment, and — the load-bearing one —
+  that getCurrentRound_-scoped routing does NOT match the round-1 leftover.
+
+  Editor-run only. Writes to the live DB under a namespaced session id and cleans up after itself.
+
+  PARAMS:    (none)
+  RETURNS:   { success, passed, failed, total, details }
+*/
+function testAppendOnlyRounds() {
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+
+  var T = 'ROUNDTEST-' + new Date().getTime().toString(36).toUpperCase();
+  var E = Session.getActiveUser().getEmail();
+  var r = { passed: 0, failed: 0, total: 0, details: [] };
+
+  function check(label, ok, detail) {
+    r.total++;
+    if (ok) { r.passed++; Logger.log('  ✅ ' + label); }
+    else { r.failed++; Logger.log('  ❌ ' + label + (detail ? ' → ' + detail : '')); }
+    r.details.push({ label: label, pass: !!ok, detail: detail || '' });
+  }
+
+  var appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
+  var apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
+  var ismSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
+
+  Logger.log('🔁 Append-only round test — ' + T);
+
+  try {
+    var pia1 = JSON.stringify({
+      program: 'Round Test', dept: 'QA',
+      immediateHead: 'Head One', immediateHeadEmail: E,
+      deptHead: 'Head Two', deptHeadEmail: E, drafterEmail: E
+    });
+
+    // ── Round 1: two Stage-A approvers, plus an ISM row that never gets actioned ──
+    appSheet.appendRow([T, E, 'Pending', pia1, '{}', '{}', '{}', '[]', '',
+      new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
+    apprSheet.appendRow([T + '-1', T, 1, 'Head One', E, '', '', '', 'Pending', '', 'Pending', '', '', 1, '']);
+    apprSheet.appendRow([T + '-2', T, 2, 'Head Two', E, '', '', '', 'Pending', '', 'Pending', '', '', 1, '']);
+    ismSheet.appendRow([T + '-ISM-1', T, 1, 'ISM One', E, '', '', '', 'Pending', 'NO', '', '', '', 'Pending', '', '', 1, '']);
+    SpreadsheetApp.flush();
+
+    check('S1: round 1 detected', getCurrentRound_(T) === 1, 'got ' + getCurrentRound_(T));
+
+    // Return at step 1 with a flag — this is what bounces it back to the applicant.
+    var ret = processApprovalDecision_(T, E, 'Return', 'Returning for corrections. This comment is deliberately long enough to satisfy the minimum-length validation applied to Return decisions.', 1, JSON.stringify({ 'Program Name': 'please correct this' }));
+    check('S2: Return accepted', ret && ret.success, ret && ret.error);
+    SpreadsheetApp.flush();
+
+    // Flags must be persisted on the approver's OWN row (replaces Revision_History.FlaggedFields).
+    var ad = readSheetValues_(apprSheet);
+    var flagFound = false;
+    for (var i = 1; i < ad.length; i++) {
+      if (String(ad[i][APPROVAL_COLS.SESSION_ID - 1]) === T &&
+          Number(ad[i][APPROVAL_COLS.CURRENT_STEP - 1]) === 1 &&
+          String(ad[i][APPROVAL_COLS.FLAGGED_FIELDS - 1] || '').indexOf('Program Name') !== -1) {
+        flagFound = true; break;
+      }
+    }
+    check('S3: flags stored on the returning approver row', flagFound);
+
+    // ── Resubmit → should APPEND round 2, not delete round 1 ──
+    var resub = submitApplication_({
+      sessionId: T, appId: T, pia1: JSON.parse(pia1), pia2: {}, pia3: {}, pia4: {}, pia5: [],
+      linkedReqId: '', isFlagged: false
+    });
+    check('S4: resubmit accepted', resub && resub.success, resub && resub.error);
+    SpreadsheetApp.flush();
+
+    var after = readSheetValues_(apprSheet);
+    var round1 = 0, round2 = 0, pendingRound1Steps = [];
+    for (var j = 1; j < after.length; j++) {
+      if (String(after[j][APPROVAL_COLS.SESSION_ID - 1]) !== T) continue;
+      var rd = roundOf_(after[j], APPROVAL_COLS);
+      if (rd === 1) {
+        round1++;
+        if (String(after[j][APPROVAL_COLS.STATUS - 1]) === 'Pending') {
+          pendingRound1Steps.push(Number(after[j][APPROVAL_COLS.CURRENT_STEP - 1]));
+        }
+      }
+      if (rd === 2) round2++;
+    }
+
+    check('S5: round 1 rows RETAINED (not deleted)', round1 >= 2, 'found ' + round1);
+    check('S6: round 2 rows appended', round2 >= 2, 'found ' + round2);
+    check('S7: current round is now 2', getCurrentRound_(T) === 2, 'got ' + getCurrentRound_(T));
+
+    // The whole point: a round-1 row left Pending must NOT be reachable by round-2 routing.
+    check('S8: round 1 left an abandoned Pending row (the hazard exists)',
+      pendingRound1Steps.length > 0, 'none found — test would be vacuous');
+
+    var leaked = false;
+    for (var k = 1; k < after.length; k++) {
+      if (rowMatches_(after[k], APPROVAL_COLS, T, 2) && roundOf_(after[k], APPROVAL_COLS) !== 2) leaked = true;
+    }
+    check('S9: round-scoped matcher never returns a non-round-2 row', !leaked);
+
+    // The ISM row abandoned in round 1 must also be invisible to round-2 routing.
+    var ismAfter = readSheetValues_(ismSheet);
+    var ismLeak = false;
+    for (var m = 1; m < ismAfter.length; m++) {
+      if (rowMatches_(ismAfter[m], ISM_WORKFLOW_COLS, T, 2) &&
+          String(ismAfter[m][ISM_WORKFLOW_COLS.STATUS - 1]) === 'Pending') ismLeak = true;
+    }
+    check('S10: abandoned round-1 ISM row is NOT matched at round 2', !ismLeak);
+
+    // History must span BOTH rounds.
+    var hist = getUnifiedHistory_(T, true);
+    check('S11: unified history spans 2 rounds', hist && hist.rounds && hist.rounds.length >= 2,
+      'rounds=' + (hist && hist.rounds ? hist.rounds.length : 'n/a'));
+
+    // The answers snapshot must have captured the pre-overwrite submission.
+    var snapSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATION_SNAPSHOTS, false);
+    var snapCount = 0;
+    if (snapSheet && snapSheet.getLastRow() > 1) {
+      var sd = readSheetValues_(snapSheet);
+      for (var n = 1; n < sd.length; n++) {
+        if (String(sd[n][APPLICATION_SNAPSHOT_COLS.SESSION_ID - 1]) === T) snapCount++;
+      }
+    }
+    check('S12: one Application_Snapshots row written on resubmit', snapCount === 1, 'got ' + snapCount);
+
+  } catch (e) {
+    check('FATAL: test threw', false, e.toString());
+  } finally {
+    // ── Cleanup: remove every row this test created ──
+    try {
+      [{ s: appSheet, c: APPLICATIONS_COLS.SESSION_ID },
+       { s: apprSheet, c: APPROVAL_COLS.SESSION_ID },
+       { s: ismSheet, c: ISM_WORKFLOW_COLS.SESSION_ID },
+       { s: getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, false), c: DIV_HEAD_CONFIG_COLS.SESSION_ID },
+       { s: getDatabaseSheet_(DB_SHEET_NAMES.APPLICATION_SNAPSHOTS, false), c: APPLICATION_SNAPSHOT_COLS.SESSION_ID },
+       { s: getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, false), c: EMAIL_QUEUE_COLS.SESSION_ID },
+       { s: getDatabaseSheet_(DB_SHEET_NAMES.RISK_AUDIT, false), c: AUDIT_COLS.SESSION_ID }
+      ].forEach(function (def) {
+        if (!def.s || def.s.getLastRow() < 2) return;
+        var vals = readSheetValues_(def.s);
+        var rows = [];
+        for (var x = 1; x < vals.length; x++) {
+          if (String(vals[x][def.c - 1] || '').indexOf(T) === 0) rows.push(x + 1);
+        }
+        if (rows.length) batchDeleteRows_(def.s, rows);
+      });
+      Logger.log('  🧹 cleanup complete');
+    } catch (ce) { Logger.log('  ⚠ cleanup failed: ' + ce.toString()); }
+  }
+
+  Logger.log('🔁 Append-only round test — ' + r.passed + '/' + r.total + ' passed, ' + r.failed + ' failed');
+  return { ok: r.failed === 0, success: r.failed === 0, passed: r.passed, failed: r.failed, total: r.total, details: r.details };
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // END
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -11458,7 +12784,7 @@ function checkProperties() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
   var key = PropertiesService.getScriptProperties().getProperty('ADMIN_API_KEY');
   Logger.log('ADMIN_API_KEY: ' + (key ? '✅ SET (' + key.substring(0, 6) + '...)' : '❌ MISSING'));
 }
