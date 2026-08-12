@@ -1,5 +1,5 @@
 // ============================================================
-//  Code.js  (DCS / Privacy Impact Assessment — Phase 1 backend)
+//  Code.js  (DCS / Privacy Impact Assessment: Phase 1 backend)
 // ============================================================
 /* mema
   [ OUTLINE ]
@@ -10,7 +10,7 @@
     database, autosaves drafts while the user types, scans each request for suspicious
     patterns, emails the requester a "Proceed to Phase 2" link, and tells the Phase 2 (PIA)
     app whether a given user is cleared to continue. The employee never touches the database
-    or the document vault directly — this script does it all on the developer's authority.
+    or the document vault directly, this script does it all on the developer's authority.
   TECHNICAL: Google Apps Script web app backend (server tier of a 3-phase system that shares
     ONE spreadsheet as its only integration point). Key patterns: a per-execution in-memory
     CACHE for Script Properties and opened Spreadsheets; LockService write locks (with
@@ -85,16 +85,16 @@
 */
 
 // ============================================================
-//  DATA COLLECTION SYSTEM (DCS) — Code.gs
+//  DATA COLLECTION SYSTEM (DCS): Code.gs
 //  Phase 1 of the Risk Assessment & Routing System (RARS)
 //
 //  Architecture  : Google Apps Script Web App
-//  Execute as    : Me (developer)  — Least Privilege / Identity Isolation
+//  Execute as    : Me (developer): Least Privilege / Identity Isolation
 //  Access        : Anyone in the domain
 //
 //  Sheet targets (all in the DB spreadsheet):
-//    • Data_Collection  — primary DCS record store
-//    • Drafts           — temporary JSON store shared with PIA
+//    • Data_Collection: primary DCS record store
+//    • Drafts: temporary JSON store shared with PIA
 //
 //  PIA handshake: Status column drives the gate.
 //    PENDING         → Immediate Head has not yet approved
@@ -104,16 +104,16 @@
 
 
 // ============================================================
-// 0. CONFIGURATION — set these in Script Properties (File → 
+// 0. CONFIGURATION: set these in Script Properties (File → 
 //    Project Properties → Script Properties) so secrets are
 //    never hardcoded in source.
 //
 //    Required keys:
-//      DB_ID             — Spreadsheet ID of the PIA_System_Database
-//      ADMIN_FOLDER_ID   — Drive folder ID for vaulted document storage
-//      HMAC_SECRET       — Random secret string for approval token signing
-//      PIA_APP_URL       — Deployment URL of the PIA Web App (e.g., https://script.google.com/a/macros/domain.com/s/..../exec)
-//      DOMAIN            — e.g. "companycorp.com"  (no leading @)
+//      DB_ID: Spreadsheet ID of the PIA_System_Database
+//      ADMIN_FOLDER_ID: Drive folder ID for vaulted document storage
+//      HMAC_SECRET: Random secret string for approval token signing
+//      PIA_APP_URL: Deployment URL of the PIA Web App (e.g., https://script.google.com/a/macros/domain.com/s/..../exec)
+//      DOMAIN: e.g. "companycorp.com"  (no leading @)
 // ============================================================
 
 // ============================================================
@@ -129,7 +129,7 @@ const FILENAME_SANITIZE_REGEX = /[/\\<>:"|?*\x00-\x1f]/g;
 const EMAIL_VALIDATE_REGEX = /^[a-zA-Z0-9._+%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
 // ============================================================
-// Fix 3: Lock Timeouts — Define timeouts based on operation
+// Fix 3: Lock Timeouts: Define timeouts based on operation
 // ============================================================
 const LOCK_TIMEOUTS = {
   DRAFT: 30000,        // 30s for draft operations
@@ -142,7 +142,7 @@ const LOCK_TIMEOUTS = {
   Function: initializePropertyCache_
   LAYMAN:    On the first call of an execution it grabs every Script Property in one shot and
              stashes them in memory, so later code never has to ask Apps Script for them again.
-  TECHNICAL: Idempotent — returns immediately if CACHE.initialized is already true. Copies
+  TECHNICAL: Idempotent, returns immediately if CACHE.initialized is already true. Copies
              PropertiesService.getScriptProperties().getProperties() into CACHE.properties.
              Failures are swallowed (logged as a warning) so a missing-cache never hard-crashes.
   PARAMS:    (none)
@@ -166,7 +166,7 @@ function initializePropertyCache_() {
   TECHNICAL: Lazily initializes the property cache, then reads from CACHE.properties. Any
              falsy value (missing/empty) throws a descriptive Error naming the key.
   PARAMS:
-    - key — Script Property name (e.g. 'DB_ID', 'ADMIN_FOLDER_ID', 'PIA_APP_URL', 'DOMAIN').
+    - key: Script Property name (e.g. 'DB_ID', 'ADMIN_FOLDER_ID', 'PIA_APP_URL', 'DOMAIN').
   RETURNS:   The string value, or throws Error if unset.
 */
 function getProp_(key) {
@@ -178,11 +178,11 @@ function getProp_(key) {
 
 /*
   Function: getCachedSpreadsheet_
-  LAYMAN:    Opens the database spreadsheet — but only the first time. After that it reuses the
+  LAYMAN:    Opens the database spreadsheet, but only the first time. After that it reuses the
              already-open handle, so we don't pay the cost of re-opening it again and again.
   TECHNICAL: Memoizes SpreadsheetApp.openById() results in CACHE.spreadsheets keyed by ID.
   PARAMS:
-    - spreadsheetId — the Spreadsheet ID to open (usually getProp_('DB_ID')).
+    - spreadsheetId: the Spreadsheet ID to open (usually getProp_('DB_ID')).
   RETURNS:   A SpreadsheetApp Spreadsheet object (cached for the rest of the execution).
 */
 function getCachedSpreadsheet_(spreadsheetId) {
@@ -204,16 +204,16 @@ function getCachedSpreadsheet_(spreadsheetId) {
 
   TECHNICAL: Execution-scoped memo of getDataRange().getValues(), keyed by sheet name.
     1. __SHEET_CACHE is null (OFF) by default, so readSheetValues_ degrades to exactly the
-       call it replaced — converting every read site is therefore a behaviour-preserving
+       call it replaced, converting every read site is therefore a behaviour-preserving
        no-op on its own and cannot regress anything.
     2. Enabled ONLY around READ-ONLY entry points, never on a path that writes, which makes
        write-then-stale-read structurally impossible instead of a discipline problem.
     3. A cache hit returns the SAME array reference, not a copy. Never mutate a cached read.
-    Nesting composes — the outermost withSheetCache_ owns the lifetime.
+    Nesting composes: the outermost withSheetCache_ owns the lifetime.
     Distinct from CACHE.spreadsheets above: that memoizes a live handle (always safe), this
     memoizes VALUES (safe only under rules 1-3).
     Phase 1 only has 3 read sites, so the win here is small; the copy exists so the three
-    projects stay identical. They cannot share code — edit all three together.
+    projects stay identical. They cannot share code, edit all three together.
 */
 let __SHEET_CACHE = null;
 
@@ -222,7 +222,7 @@ let __SHEET_CACHE = null;
   LAYMAN:    Turn the cache on for the duration of one function, then turn it off again.
   TECHNICAL: Restores the previous state in a finally block so a throw cannot leave caching
              switched on. Re-entrant: a nested call yields lifetime ownership to the outer one.
-  PARAMS:    - fn — zero-arg function to run with caching enabled.
+  PARAMS:    - fn: zero-arg function to run with caching enabled.
   RETURNS:   Whatever fn returns (exceptions propagate untouched).
 */
 function withSheetCache_(fn) {
@@ -240,11 +240,11 @@ function withSheetCache_(fn) {
   LAYMAN:    Read every row of a tab, reusing the copy from earlier in this same run if the
              cache happens to be on.
   TECHNICAL: Drop-in replacement for `sheet.getDataRange().getValues()`.
-             🚩 A null sheet THROWS, deliberately — the call this replaced threw a TypeError
+             🚩 A null sheet THROWS, deliberately, the call this replaced threw a TypeError
              in that case, and returning [] instead would quietly turn a fail-loud path into
              a fail-silent one. Same control flow as before, just a readable message.
-  PARAMS:    - sheet — a Sheet object.
-  RETURNS:   2-D array of cell values. Shared reference on a cache hit — do not mutate.
+  PARAMS:    - sheet: a Sheet object.
+  RETURNS:   2-D array of cell values. Shared reference on a cache hit, do not mutate.
 */
 function readSheetValues_(sheet) {
   if (!sheet) throw new Error('readSheetValues_: sheet is null (the tab could not be opened or created).');
@@ -260,7 +260,7 @@ function readSheetValues_(sheet) {
   Function: invalidateSheetCache_
   LAYMAN:    Forget the stored copy of a tab so the next read is fresh.
   TECHNICAL: No-op when the cache is off. Drops one entry by Sheet or name, or clears all.
-  PARAMS:    - sheetOrName — a Sheet, a tab-name string, or nothing (clear everything).
+  PARAMS:    - sheetOrName: a Sheet, a tab-name string, or nothing (clear everything).
   RETURNS:   undefined.
 */
 function invalidateSheetCache_(sheetOrName) {
@@ -274,24 +274,34 @@ function invalidateSheetCache_(sheetOrName) {
   ━━━ THE ERROR CONTRACT (F-06) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   LAYMAN (Tropang Ex):
-  Dati, kapag may pumalpak, yung EKSAKTONG error ng Google ang ipinapakita sa browser —
+  Dati, kapag may pumalpak, yung EKSAKTONG error ng Google ang ipinapakita sa browser,
   at kasama dun yung ID ng spreadsheet at ng Drive folder natin. Ngayon: yung totoong
   error, sa LOG lang; yung user, malinis na mensahe + maikling "Reference" code. Sabihin
   lang sa'yo ng user yung code, hahanapin mo yun sa Executions log.
 
-  TECHNICAL: Closes F-06 (CWE-200). 89 catch blocks across the three projects returned
+  TECHNICAL: Closes F-06 (CWE-200). 110 catch blocks across the three projects returned
              `error: e.message` / `e.toString()`; GAS exceptions echo the offending
              resource ID.
 
-  🚩 THE ENVELOPE IS DUAL-KEY, ON PURPOSE, FOR ONE RELEASE:
-       { ok:false, code:'NOT_FOUND', message:'…', ref:'7f3a91',
-         success:false, error:'…' }        <- legacy pair, delete next release
-     `ok`/`code`/`message` is the contract going forward; `success`/`error` are kept so an
-     unmigrated frontend call site keeps working instead of rendering "undefined" at a
-     user. The three GAS projects deploy independently, so backend/frontend version skew
-     is the normal case. Drop the legacy pair from all three in the same change.
+  🚩 THE ENVELOPE IS SINGLE-KEY (since 2026-08-12):
+       { ok:false, code:'NOT_FOUND', message:'…', ref:'7f3a91' }
+     It shipped dual-key for exactly one release (`ok`/`code`/`message` alongside a legacy
+     `success`/`error` pair) so an unmigrated frontend could not render "undefined" at a
+     user while the three GAS projects deployed independently. That pair has now been
+     removed from all three backends and all three frontends in one change.
 
-  ⚠️ The real exception goes to Logger.log ONLY — deliberately not to Risk_Audit. An audit
+     ⚠️ A `success` or `error` key you still see in this project is NOT this envelope:
+        `{ valid:false, error }` from comment validation, `flags.error` inside audit JSON,
+        `Email_Queue.Last_Error`, PIA's `result.errors` ARRAY, and every `console.error(...)`
+        label are all unrelated and must stay.
+
+  🚩 The sweep that closed F-06 was itself incomplete on the first pass, and the reason
+     generalizes: the original pattern only matched a value that STARTED with the exception
+     identifier, so 21 sites of the form `error: 'Loading failed: ' + e.message` survived it,
+     including every getAdminData handler and both cross-app doPost handlers. When you sweep
+     for a leak, match the CONCATENATED form too, not just the bare one.
+
+  ⚠️ The real exception goes to Logger.log ONLY, deliberately not to Risk_Audit. An audit
      row per error is the log-bloat pattern this repo avoids elsewhere, and a sheet write
      inside an error handler is a second failure waiting to happen.
 
@@ -324,13 +334,13 @@ const ERR_MESSAGES = {
   LAYMAN:    Builds the one standard "it did not work" reply used everywhere.
   TECHNICAL: Unknown codes degrade to INTERNAL rather than emitting a code the frontend
              cannot interpret.
-  PARAMS:    - code — one of ERR.*.   - message — optional wording override.
-  RETURNS:   { ok:false, code, message, success:false, error }.
+  PARAMS:    - code: one of ERR.*.   - message: optional wording override.
+  RETURNS:   { ok:false, code, message }.
 */
 function fail_(code, message) {
   const c = Object.prototype.hasOwnProperty.call(ERR_MESSAGES, code) ? code : ERR.INTERNAL;
   const m = message || ERR_MESSAGES[c];
-  return { ok: false, code: c, message: m, success: false, error: m };
+  return { ok: false, code: c, message: m };
 }
 
 /*
@@ -339,8 +349,8 @@ function fail_(code, message) {
              malinis na mensahe + reference code.
   TECHNICAL: Logs `[ref] CODE :: stack`, then returns fail_() with the ref appended to the
              public message. NEVER put e.message/e.toString() into the returned object.
-  PARAMS:    - e — the caught exception.  - code — one of ERR.* (default INTERNAL).
-             - publicMessage — optional user-facing override.
+  PARAMS:    - e: the caught exception.  - code: one of ERR.* (default INTERNAL).
+             - publicMessage: optional user-facing override.
   RETURNS:   The dual-key failure envelope, plus a `ref` field.
   EXAMPLE
     } catch (e) { return safeError_(e, ERR.INTERNAL); }
@@ -352,7 +362,6 @@ function safeError_(e, code, publicMessage) {
   const out = fail_(code || ERR.INTERNAL, publicMessage);
   out.ref = ref;
   out.message = out.message + ' Reference: ' + ref;
-  out.error = out.message;   // legacy key mirrors the new one for the transition window
   return out;
 }
 
@@ -365,18 +374,18 @@ function safeError_(e, code, publicMessage) {
              skips blank keys, then merges the DOMAIN Script Property into the map. Missing
              sheet → returns empty config (still success). Caller is the frontend on load.
   PARAMS:    (none)
-  RETURNS:   { success:true, config:{KEY:value,...,DOMAIN} } on success;
-             { success:false, error } on failure.
-  EXAMPLE:   apiGetSystemConfig() -> { success:true, config:{ LINK_NDA_EMPLOYEE_TEMPLATE:'https://…', DOMAIN:'megaworld.com' } }
+  RETURNS:   { ok:true, config:{KEY:value,...,DOMAIN} } on success;
+             { ok:false, code, message } on failure.
+  EXAMPLE:   apiGetSystemConfig() -> { ok:true, config:{ LINK_NDA_EMPLOYEE_TEMPLATE:'https://…', DOMAIN:'megaworld.com' } }
 */
 function apiGetSystemConfig() {
   try {
-    /* Step 1 — Open DB and locate the config sheet; absent sheet is non-fatal (empty config). */
+    /* Step 1: Open DB and locate the config sheet; absent sheet is non-fatal (empty config). */
     const ss = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName('System_Configuration');
-    if (!sheet) return { ok: true, success: true, config: {} };
+    if (!sheet) return { ok: true, config: {} };
 
-    /* Step 2 — Walk every non-header row, building key→value pairs (blank keys skipped). */
+    /* Step 2: Walk every non-header row, building key→value pairs (blank keys skipped). */
     const data = readSheetValues_(sheet);
     const config = {};
     // Start from i=1 to skip headers
@@ -388,7 +397,7 @@ function apiGetSystemConfig() {
       }
     }
 
-    /* Step 3 — Inject DOMAIN from Script Properties (blank if unset) so the UI need not guess. */
+    /* Step 3: Inject DOMAIN from Script Properties (blank if unset) so the UI need not guess. */
     // Merge the DOMAIN script property into the config so the frontend
     // has a single source of truth for the corporate domain.
     try {
@@ -397,7 +406,7 @@ function apiGetSystemConfig() {
       config['DOMAIN'] = '';
     }
 
-    return { ok: true, success: true, config: config };
+    return { ok: true, config: config };
   } catch (e) {
     console.error('apiGetSystemConfig error:', e.message);
     return safeError_(e, ERR.INTERNAL);
@@ -409,18 +418,18 @@ function apiGetSystemConfig() {
 // ============================================================
 
 // ============================================================
-// HELPER FUNCTIONS — Authorization, Input Sanitization, HTML Styling
+// HELPER FUNCTIONS: Authorization, Input Sanitization, HTML Styling
 // ============================================================
 
 /*
   Function: isAuthorizedDomain_
-  LAYMAN:    The bouncer at the door — returns true only if the signed-in email ends in the
+  LAYMAN:    The bouncer at the door, returns true only if the signed-in email ends in the
              company domain. Used everywhere we must keep outsiders out.
   TECHNICAL: Honors the ENABLED_DOMAIN_CHECK kill-switch (true in prod). Compares the
              lowercased email suffix against '@' + DOMAIN. Fail-secure: a missing DOMAIN
              property or a falsy email returns false rather than allowing access.
   PARAMS:
-    - userEmail — the email to validate (typically Session.getActiveUser().getEmail()).
+    - userEmail: the email to validate (typically Session.getActiveUser().getEmail()).
   RETURNS:   true if authorized, false otherwise (also false on missing config).
   EXAMPLE:   isAuthorizedDomain_('jane@megaworld.com') -> true
              isAuthorizedDomain_('hax@gmail.com')      -> false
@@ -442,9 +451,9 @@ function isAuthorizedDomain_(userEmail) {
   Function: isValidEmail_
   LAYMAN:    Quick sanity check that a string actually looks like an email and isn't absurdly long.
   TECHNICAL: Guards non-strings, trims, tests against the precompiled EMAIL_VALIDATE_REGEX, and
-             caps length at 180 chars. Not a full RFC parser — a pragmatic format gate.
+             caps length at 180 chars. Not a full RFC parser, a pragmatic format gate.
   PARAMS:
-    - email — candidate email string.
+    - email: candidate email string.
   RETURNS:   true if it passes the regex and length check, false otherwise.
 */
 function isValidEmail_(email) {
@@ -457,10 +466,10 @@ function isValidEmail_(email) {
   Function: isOwnerContext_
 
   LAYMAN (Tropang Ex):
-  Ito yung bouncer para sa mga function na HINDI pwedeng bigyan ng trailing underscore — yung
+  Ito yung bouncer para sa mga function na HINDI pwedeng bigyan ng trailing underscore, yung
   mga trigger handler at yung mga pinapatakbo mo mismo sa editor. Sila kasi kailangang manatiling
   "public", kaya kahit sinong naka-login sa domain pwede silang tawagin galing browser console.
-  Ang tanong na sinasagot nito: "ikaw ba talaga yung may-ari ng script, o isang trigger — o
+  Ang tanong na sinasagot nito: "ikaw ba talaga yung may-ari ng script, o isang trigger, o
   random na empleyado lang na nag-aalboroto sa console?"
 
   TECHNICAL:
@@ -491,11 +500,11 @@ function isOwnerContext_() {
              page shell (logo, fonts, navy styling). Used for the access-denied / error pages
              that doGet and doPost serve.
   TECHNICAL: Returns a complete standalone HTML document string (DM Sans, CSS variables, card
-             layout). Pure string builder — no sheet/Drive access. Content is interpolated
+             layout). Pure string builder: no sheet/Drive access. Content is interpolated
              as-is, so callers must pass trusted/escaped markup.
   PARAMS:
-    - header  — HTML for the page header (e.g. a badge + <h1>).
-    - content — HTML for the card body.
+    - header: HTML for the page header (e.g. a badge + <h1>).
+    - content: HTML for the card body.
   RETURNS:   A full HTML document string ready for HtmlService.createHtmlOutput().
 */
 function getStyledHtmlWrapper_(header, content) {
@@ -508,7 +517,7 @@ function getStyledHtmlWrapper_(header, content) {
       <title>DCS Approval</title>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
       <style>
-        /* GENERATED from docs/design-tokens.css — this is the block an APPROVER sees on the
+        /* GENERATED from docs/design-tokens.css, this is the block an APPROVER sees on the
            page they land on from an email link. It drifted to navy #1a3a5c and radius 6/12 for
            months because nobody thinks of the backend as having a stylesheet. Edit the canonical
            file, then paste into all 6 targets. */
@@ -688,7 +697,7 @@ function getStyledHtmlWrapper_(header, content) {
 
 
 // ============================================================
-// 1. ENTRY POINTS — Web App Handlers
+// 1. ENTRY POINTS: Web App Handlers
 // ============================================================
 
 /*
@@ -700,13 +709,13 @@ function getStyledHtmlWrapper_(header, content) {
              (defense-in-depth layer 1). On failure returns a styled denial page; on success
              serves index.html with SAMEORIGIN framing when supported.
   PARAMS:
-    - e — the GAS event object (query params; unused here beyond being the handler signature).
-  RETURNS:   An HtmlOutput — either the denial page or the DCS frontend.
+    - e: the GAS event object (query params; unused here beyond being the handler signature).
+  RETURNS:   An HtmlOutput, either the denial page or the DCS frontend.
 */
 function doGet(e) {
   const userEmail = Session.getActiveUser().getEmail();
 
-  /* Step 1 — Gate by domain; bounce non-corporate accounts with a styled denial page. */
+  /* Step 1: Gate by domain; bounce non-corporate accounts with a styled denial page. */
   // Domain authorization check
   if (!isAuthorizedDomain_(userEmail)) {
     const header = `<span class="step-badge" style="background:var(--danger); color:var(--danger-text); border-color:rgba(220,38,38,0.2);">Strictly Access Denied</span><h1>Restricted</h1>`;
@@ -719,7 +728,7 @@ function doGet(e) {
     .setTitle('Access Denied');
   }
 
-  /* Step 2 — Authorized: serve the DCS frontend with SAMEORIGIN framing where available. */
+  /* Step 2: Authorized: serve the DCS frontend with SAMEORIGIN framing where available. */
   // Serve main DCS frontend
   const output = HtmlService.createHtmlOutputFromFile('index')
     .setTitle('Data Collection System (DCS)');
@@ -737,10 +746,10 @@ function doGet(e) {
              but DCS has no real POST workflow, so an authorized POST just gets an "Invalid
              Request" page (the actual form submits go through google.script.run → submitDCS).
   TECHNICAL: GAS HTTP POST entry point. Re-validates domain (denial page on failure), then
-             returns a generic "missing parameters" page — kept for the PIA-style security shape.
+             returns a generic "missing parameters" page, kept for the PIA-style security shape.
   PARAMS:
-    - e — the GAS POST event object (parameters; not consumed beyond the signature).
-  RETURNS:   An HtmlOutput — denial page or the invalid-request page.
+    - e: the GAS POST event object (parameters; not consumed beyond the signature).
+  RETURNS:   An HtmlOutput, denial page or the invalid-request page.
 */
 function doPost(e) {
   const userEmail = Session.getActiveUser().getEmail();
@@ -799,11 +808,11 @@ const DRAFT_TTL_DAYS      = 7;
   TECHNICAL: Delegates to apiMarkDraftComplete_() with no sessionId (clears all of the user's DCS
              drafts), then best-effort logs the discard to the audit trail.
   PARAMS:    (none)
-  RETURNS:   The { success, error? } object from apiMarkDraftComplete_().
+  RETURNS:   The { ok, message? } object from apiMarkDraftComplete_().
 */
 function apiDiscardDrafts_() {
   const result = apiMarkDraftComplete_();
-  if (result.success) {
+  if (result.ok) {
     try { logDCSAuditTrail_('', 'DCS Drafts Discarded', false); } catch (e) {}
   }
   return result;
@@ -811,16 +820,16 @@ function apiDiscardDrafts_() {
 
 /*
   Function: cleanupDraftsForUser_
-  LAYMAN:    Deletes a user's DCS draft rows from the Drafts sheet — either one specific session's
+  LAYMAN:    Deletes a user's DCS draft rows from the Drafts sheet, either one specific session's
              draft, or all of them. This is the lock-free engine; callers that need a lock wrap it.
   TECHNICAL: Does NOT acquire its own LockService lock, so it is safe to call from an already-locked
              context (e.g. submitDCS). Uses TextFinder on the email column (B) and optionally the
              session column (C), filters to rows of type DCS, dedupes row numbers, then deletes
              bottom-up (descending) to avoid row-shift corruption.
   PARAMS:
-    - sessionId — specific session to clear; if undefined/'' all of the user's DCS drafts are cleared.
-    - sheet     — the Drafts Sheet object.
-    - email     — the owning user's email (case-insensitive match).
+    - sessionId: specific session to clear; if undefined/'' all of the user's DCS drafts are cleared.
+    - sheet: the Drafts Sheet object.
+    - email: the owning user's email (case-insensitive match).
   RETURNS:   undefined (side effect: deletes matching draft rows).
 */
 function cleanupDraftsForUser_(sessionId, sheet, email) {
@@ -859,31 +868,31 @@ function cleanupDraftsForUser_(sessionId, sheet, email) {
 
 /*
   Function: apiMarkDraftComplete_
-  LAYMAN:    The locked, safe way to delete a user's draft(s) — used when a draft is finished or
+  LAYMAN:    The locked, safe way to delete a user's draft(s), used when a draft is finished or
              discarded. Grabs a write lock so two simultaneous calls can't trip over each other.
   TECHNICAL: Acquires a script lock (DRAFT timeout), resolves the active user + Drafts sheet, then
              calls the lock-free cleanupDraftsForUser_. Logs completion best-effort; always
              releases the lock in finally.
   PARAMS:
-    - sessionId — optional; specific session to clear, else all the user's DCS drafts.
-  RETURNS:   { success:true } on success; { success:false, error } on failure.
+    - sessionId: optional; specific session to clear, else all the user's DCS drafts.
+  RETURNS:   { ok:true } on success; { ok:false, code, message } on failure.
 */
 function apiMarkDraftComplete_(sessionId) {
-  /* Step 1 — Acquire the draft write lock to serialize cleanup. */
+  /* Step 1: Acquire the draft write lock to serialize cleanup. */
   const lock = LockService.getScriptLock();
   lock.waitLock(LOCK_TIMEOUTS.DRAFT);
   try {
-    /* Step 2 — Resolve user + Drafts sheet (missing sheet is a hard error). */
+    /* Step 2: Resolve user + Drafts sheet (missing sheet is a hard error). */
     const email = Session.getActiveUser().getEmail();
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName(DRAFTS_SHEET_NAME);
-    if (!sheet) return { ok: false, success: false, error: 'Drafts sheet not found' };
+    if (!sheet) return { ok: false, message: 'Drafts sheet not found' };
 
-    /* Step 3 — Delete the matching draft row(s) via the lock-free helper. */
+    /* Step 3: Delete the matching draft row(s) via the lock-free helper. */
     cleanupDraftsForUser_(sessionId, sheet, email);
     
     try { logDCSAuditTrail_(sessionId || 'all', 'DCS Draft Completed', false); } catch (e) {}
-    return { ok: true, success: true };
+    return { ok: true };
   } catch (err) {
     console.error('apiMarkDraftComplete_ error:', err.message);
     return safeError_(err, ERR.INTERNAL);
@@ -929,25 +938,25 @@ function apiGenerateNewSessionId() {
   Function: apiSaveDraft
   LAYMAN:    Autosaves the in-progress form. If a draft for this session already exists it overwrites
              it; otherwise it creates a new one (up to 5 per user). It refuses payloads that are too
-             big — drafts store text only, never base64 files.
+             big, drafts store text only, never base64 files.
   TECHNICAL: Locked (DRAFT timeout) upsert into the Drafts sheet. Serializes stateData to JSON and
              rejects > 50,000 chars. Uses TextFinder (session col C, email col B) instead of full-sheet
              loads to find an existing owned DCS row, counts the user's live (non-expired) DCS drafts,
              and enforces a max of 5 only on new inserts. Updates cols E-G (state, savedAt, expiresAt)
              on update, or appends a UUID-keyed row on insert. TTL = DRAFT_TTL_DAYS from now.
   PARAMS:
-    - sessionId — the DCS session ID this draft belongs to.
-    - stateData — the form state object to persist (text only).
-  RETURNS:   { success:true, draftId } on success; { success:false, error } on size/limit/error.
+    - sessionId: the DCS session ID this draft belongs to.
+    - stateData: the form state object to persist (text only).
+  RETURNS:   { ok:true, draftId } on success; { ok:false, code, message } on size/limit/error.
   EXAMPLE:   apiSaveDraft('DCS-000007', { dcs:{ name:'Payroll access' } })
-               -> { success:true, draftId:'a1b2-…' }
+               -> { ok:true, draftId:'a1b2-…' }
 */
 function apiSaveDraft(sessionId, stateData) {
   const lock = LockService.getScriptLock();
   lock.waitLock(LOCK_TIMEOUTS.DRAFT);
   
   try {
-    /* Step 1 — Resolve user/sheet, compute TTL, serialize state, and reject oversized payloads. */
+    /* Step 1: Resolve user/sheet, compute TTL, serialize state, and reject oversized payloads. */
     const email = Session.getActiveUser().getEmail();
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName(DRAFTS_SHEET_NAME);
@@ -956,10 +965,10 @@ function apiSaveDraft(sessionId, stateData) {
     const stateStr = JSON.stringify(stateData);
 
     if (stateStr.length > 50000) {
-      return { ok: false, success: false, error: 'Draft size exceeds storage limit (50,000 characters). Cannot store large base64 files in StateJSON.' };
+      return { ok: false, message: 'Draft size exceeds storage limit (50,000 characters). Cannot store large base64 files in StateJSON.' };
     }
     
-    /* Step 2 — Find an existing draft row owned by this user for this session (update target). */
+    /* Step 2: Find an existing draft row owned by this user for this session (update target). */
     // OPTIMIZED: Use TextFinder to locate existing session instead of getDataRange()
     let existingRow = -1;
     let existingDraftId = '';
@@ -980,7 +989,7 @@ function apiSaveDraft(sessionId, stateData) {
       }
     }
 
-    /* Step 3 — Count the user's live (non-expired) DCS drafts to enforce the 5-draft cap. */
+    /* Step 3: Count the user's live (non-expired) DCS drafts to enforce the 5-draft cap. */
     // Count user's DCS drafts for limit check (OPTIMIZED: uses filtered query)
     let userDraftCount = 0;
     const emailFinder = sheet.getRange('B:B')
@@ -1000,10 +1009,10 @@ function apiSaveDraft(sessionId, stateData) {
 
     // Enforce limit only when creating a new draft
     if (existingRow < 0 && userDraftCount >= 5) {
-      return { ok: false, success: false, error: 'Maximum limit of 5 drafts reached. Please delete or submit existing drafts.' };
+      return { ok: false, message: 'Maximum limit of 5 drafts reached. Please delete or submit existing drafts.' };
     }
     
-    /* Step 4 — Upsert: overwrite the existing row's state/timestamps, or append a new UUID-keyed row. */
+    /* Step 4: Upsert: overwrite the existing row's state/timestamps, or append a new UUID-keyed row. */
     let draftId;
     if (existingRow > 0) {
       // UPDATE existing draft
@@ -1023,7 +1032,7 @@ function apiSaveDraft(sessionId, stateData) {
       ]);
     }
     
-    return { ok: true, success: true, draftId: draftId };
+    return { ok: true, draftId: draftId };
   } catch (err) {
     console.error('apiSaveDraft error:', err.message);
     return safeError_(err, ERR.INTERNAL);
@@ -1035,12 +1044,12 @@ function apiSaveDraft(sessionId, stateData) {
 /*
   Function: apiRestoreDraft
   LAYMAN:    Brings back a saved draft for a given session so the user can keep editing. Expired
-             drafts are skipped (and quietly deleted). Note: files are never restored — only text.
+             drafts are skipped (and quietly deleted). Note: files are never restored, only text.
   TECHNICAL: TextFinder on session col C; for each match owned by the user with type DCS, checks
              expiry (deletes + skips if past), else JSON-parses the state and returns it. Logs the
              restore best-effort. Read-only except for purging expired rows it encounters.
   PARAMS:
-    - sessionId — the DCS session ID whose draft to restore.
+    - sessionId: the DCS session ID whose draft to restore.
   RETURNS:   { found:true, state } if a live draft is found; { found:false, state:null } otherwise;
              { found:false, state:null, error } on exception.
 */
@@ -1064,7 +1073,7 @@ function apiRestoreDraft(sessionId) {
       if (rowType !== DCS_DRAFT_TYPE) continue;
       if (String(rowEmail).toLowerCase() !== email.toLowerCase()) continue;
       
-      /* Step — Drop expired drafts on sight; otherwise parse and return the saved state. */
+      /* Step: Drop expired drafts on sight; otherwise parse and return the saved state. */
       const expiresAt = new Date(rowExpiresAt);
       if (rowExpiresAt && expiresAt < now) {
         sheet.deleteRow(row);
@@ -1085,7 +1094,7 @@ function apiRestoreDraft(sessionId) {
 
 /*
   Function: apiListUserDrafts
-  LAYMAN:    Builds the "Resume a saved draft" list for the current user — each entry shows a name
+  LAYMAN:    Builds the "Resume a saved draft" list for the current user, each entry shows a name
              and when it was saved. Expired drafts are pruned, and revision-mode drafts are hidden.
   TECHNICAL: TextFinder on email col B; for each owned DCS row, expired rows are queued for batch
              deletion, otherwise JSON is lazily parsed. Skips drafts with state.isEditing (revision
@@ -1155,7 +1164,7 @@ function apiListUserDrafts() {
              mismatch returns an 'Unauthorized access' error. Expired rows are deleted and reported
              as not found. Otherwise JSON-parses and returns the state plus its sessionId.
   PARAMS:
-    - draftId — the draft's UUID (column A).
+    - draftId: the draft's UUID (column A).
   RETURNS:   { found:true, sessionId, state } if owned and live;
              { found:false, sessionId:'', state:null, error? } otherwise.
 */
@@ -1204,12 +1213,12 @@ function apiLoadDraft_(draftId) {
              Each candidate is ownership-checked on col B before deletion; logs the delete best-effort.
              Note: returns success even when nothing matched (idempotent delete).
   PARAMS:
-    - draftId — a draft UUID (col A) or a session ID (col C).
-  RETURNS:   { success:true } (incl. no-op); { success:false, error } on missing ID or exception.
+    - draftId: a draft UUID (col A) or a session ID (col C).
+  RETURNS:   { ok:true } (incl. no-op); { ok:false, code, message } on missing ID or exception.
 */
 function apiDeleteDraft(draftId) {
   try {
-    if (!draftId) return { ok: false, success: false, error: 'No ID provided' };
+    if (!draftId) return { ok: false, message: 'No ID provided' };
 
     const email = Session.getActiveUser().getEmail();
     const ss = getCachedSpreadsheet_(getProp_('DB_ID'));
@@ -1228,11 +1237,11 @@ function apiDeleteDraft(draftId) {
       if (String(rowEmail).toLowerCase() === email.toLowerCase()) {
         sheet.deleteRow(row);
         try { logDCSAuditTrail_(draftId, 'DCS Draft Deleted', false); } catch (e) {}
-        return { ok: true, success: true };
+        return { ok: true };
       }
     }
 
-    /* Step — Fallback: not found by draft ID, so try matching the session ID (still ownership-checked). */
+    /* Step: Fallback: not found by draft ID, so try matching the session ID (still ownership-checked). */
     // If not found by DraftID, search by SessionID (column C)
     const sessionIdFinder = sheet.getRange('C:C')
       .createTextFinder(targetId)
@@ -1245,11 +1254,11 @@ function apiDeleteDraft(draftId) {
       if (String(rowEmail).toLowerCase() === email.toLowerCase()) {
         sheet.deleteRow(row);
         try { logDCSAuditTrail_(draftId, 'DCS Draft Deleted', false); } catch (e) {}
-        return { ok: true, success: true };
+        return { ok: true };
       }
     }
     
-    return { ok: true, success: true };
+    return { ok: true };
   } catch (err) {
     console.error('apiDeleteDraft error:', err.message);
     return safeError_(err, ERR.INTERNAL);
@@ -1267,7 +1276,7 @@ function apiDeleteDraft(draftId) {
   LAYMAN:    The secure file drop. The browser hands over a document (NDA/DPA/DSA/endorsement) as
              base64 text; this function checks it's really a PDF/DOC/DOCX, isn't too big, and isn't
              a disguised file, then saves it into the admin-only Drive vault and returns the file's ID.
-             The employee never gets access to that folder — the script does it on the developer's authority.
+             The employee never gets access to that folder, the script does it on the developer's authority.
   TECHNICAL: Multi-layer validation: required-param check; MIME allowlist (incl. octet-stream because
              browsers misreport); filename sanitization (FILENAME_SANITIZE_REGEX, 255-char cap); renames
              to `${reqId}-${fileType}.${ext}`; extension allowlist; base64 decode; min/max size (10 MB);
@@ -1276,18 +1285,18 @@ function apiDeleteDraft(draftId) {
              (private). Read access goes through apiDownloadDcsFile(). All failures rethrow with
              file-type context.
   PARAMS:
-    - base64File       — base64-encoded file content.
-    - originalFileName — the file's original name (sanitized; used only for its extension).
-    - fileType         — logical type tag ('NDA','CU','DPA','DSA','ENDORSEMENT') used in the new name.
-    - mimeType         — the claimed MIME type.
-    - reqId            — DCS Request ID, prefixed onto the stored filename.
+    - base64File: base64-encoded file content.
+    - originalFileName: the file's original name (sanitized; used only for its extension).
+    - fileType: logical type tag ('NDA','CU','DPA','DSA','ENDORSEMENT') used in the new name.
+    - mimeType: the claimed MIME type.
+    - reqId: DCS Request ID, prefixed onto the stored filename.
   RETURNS:   The new Drive file's ID (string). Throws a descriptive Error on any validation/IO failure.
   EXAMPLE:   uploadProxy_('JVBER...', 'nda.pdf', 'NDA', 'application/pdf', 'DCS-000007')
                -> '1AbC...xyz'  (Drive file ID)
 */
 function uploadProxy_(base64File, originalFileName, fileType, mimeType, reqId) {
   try {
-    /* Step 1 — Validate inputs: presence, MIME allowlist, sanitized name, and extension allowlist. */
+    /* Step 1: Validate inputs: presence, MIME allowlist, sanitized name, and extension allowlist. */
     // ============ VALIDATION ============
     if (!base64File || !originalFileName || !mimeType) {
       throw new Error('uploadProxy_: missing required parameter.');
@@ -1308,7 +1317,7 @@ function uploadProxy_(base64File, originalFileName, fileType, mimeType, reqId) {
       throw new Error(`Invalid file type: ${mimeType}. Allowed: PDF, DOC, DOCX`);
     }
 
-    // Sanitise filename — strip path traversal attempts
+    // Sanitise filename: strip path traversal attempts
     const safeOriginalFileName = originalFileName.replace(FILENAME_SANITIZE_REGEX, '_').slice(0, 255);
     
     // Check file extension matches claimed type
@@ -1324,7 +1333,7 @@ function uploadProxy_(base64File, originalFileName, fileType, mimeType, reqId) {
       throw new Error(`Invalid or missing file extension. Allowed: PDF, DOC, DOCX`);
     }
 
-    /* Step 2 — Decode base64 to bytes and verify size bounds (min 4 bytes, max 10 MB). */
+    /* Step 2: Decode base64 to bytes and verify size bounds (min 4 bytes, max 10 MB). */
     // ============ DECODE & VERIFY ============
     let bytes;
     try {
@@ -1348,7 +1357,7 @@ function uploadProxy_(base64File, originalFileName, fileType, mimeType, reqId) {
       );
     }
     
-    /* Step 3 — Magic-byte check: confirm the file's real signature matches its claimed extension. */
+    /* Step 3: Magic-byte check: confirm the file's real signature matches its claimed extension. */
     // Magic bytes verification
     const magicBytes = [
       bytes[0].toString(16).padStart(2, '0'),
@@ -1368,7 +1377,7 @@ function uploadProxy_(base64File, originalFileName, fileType, mimeType, reqId) {
       throw new Error(`File content does not match extension (.${fileExt}). Possible MIME spoofing attempt.`);
     }
 
-    /* Step 4 — Create the file in the admin-only vault folder. */
+    /* Step 4: Create the file in the admin-only vault folder. */
     // ============ CREATE FILE IN DRIVE ============
     const folder = DriveApp.getFolderById(getProp_('ADMIN_FOLDER_ID'));
     
@@ -1383,8 +1392,8 @@ function uploadProxy_(base64File, originalFileName, fileType, mimeType, reqId) {
       );
     }
 
-    /* Step 5 — Leave the file PRIVATE (no setSharing call) and return the new file ID. */
-    // ============ NO SHARING — PRIVATE BY DEFAULT ============
+    /* Step 5: Leave the file PRIVATE (no setSharing call) and return the new file ID. */
+    // ============ NO SHARING: PRIVATE BY DEFAULT ============
     // SECURITY: this function previously called
     //     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW)
     // which published every NDA / DPA / DSA / Confidentiality Undertaking / Endorsement Letter
@@ -1418,15 +1427,15 @@ function uploadProxy_(base64File, originalFileName, fileType, mimeType, reqId) {
   LAYMAN (Tropang Ex):
   Pag nagpalit ng dokumento si requestor sa isang revision, huwag na nating itapon sa Trash yung luma
   (namamatay ang link in ~30 days). Sa halip, ilipat natin sa isang "Archive" na subfolder sa loob ng
-  admin vault — buhay pa rin yung file at gumagana pa yung link kahit na-supersede na.
+  admin vault, buhay pa rin yung file at gumagana pa yung link kahit na-supersede na.
 
   TECHNICAL:
   Resolves (or creates once) an "Archive" subfolder under ADMIN_FOLDER_ID and moveTo()'s each listed
-  file into it. Fail-safe: if the Archive folder cannot be resolved, returns WITHOUT trashing — the
+  file into it. Fail-safe: if the Archive folder cannot be resolved, returns WITHOUT trashing, the
   file simply stays where it is (still referenced and resolvable). Per-file errors are swallowed.
 
   PARAMS:
-    - fileList — array of { type, id, name, ... } identifying the Drive files to archive.
+    - fileList: array of { type, id, name, ... } identifying the Drive files to archive.
   RETURNS:   undefined (side effect: moves the listed Drive files into the Archive subfolder).
 */
 function archiveOldDriveFiles_(fileList) {
@@ -1438,7 +1447,7 @@ function archiveOldDriveFiles_(fileList) {
     archiveFolder = existing.hasNext() ? existing.next() : parent.createFolder('Archive');
   } catch (e) {
     Logger.log('archiveOldDriveFiles_: could not resolve Archive folder, leaving files in place: ' + e.toString());
-    return; // fail-safe: never trash — a mis-resolved folder must not destroy the file
+    return; // fail-safe: never trash, a mis-resolved folder must not destroy the file
   }
   fileList.forEach(function (f) {
     try { DriveApp.getFileById(f.id).moveTo(archiveFolder); }
@@ -1452,7 +1461,7 @@ function archiveOldDriveFiles_(fileList) {
   Katulong ng revision flow. Kinukuha yung mga lumang file ng type na papalitan, inaarchive yung Drive
   file nila, tinatala sila sa isang "superseded" na listahan (para makita sa trail kung ano ang
   pinalitan), tapos ibinabalik yung natitirang kasalukuyang files. Kaya ang FILE_ID cell = current set
-  pa rin — walang halong luma, hindi nasisira yung existing render logic.
+  pa rin, walang halong luma, hindi nasisira yung existing render logic.
 
   TECHNICAL:
   Splits fileArr by predicate. Matches → archived + pushed to `sink` as
@@ -1461,11 +1470,11 @@ function archiveOldDriveFiles_(fileList) {
   archives instead of trashing and records the trail.
 
   PARAMS:
-    - fileArr   — the working current-file array.
-    - predicate — fn(file) → true for the type(s) being replaced.
-    - sink      — array to push superseded records into (later stored in metadata.supersededFiles).
-    - stamp     — ISO timestamp for supersededAt.
-    - round     — the revision round doing the replacing (supersededRound).
+    - fileArr: the working current-file array.
+    - predicate: fn(file) → true for the type(s) being replaced.
+    - sink: array to push superseded records into (later stored in metadata.supersededFiles).
+    - stamp: ISO timestamp for supersededAt.
+    - round: the revision round doing the replacing (supersededRound).
   RETURNS:   the surviving current-file array (input minus the replaced entries).
 */
 function archiveAndRecordSuperseded_(fileArr, predicate, sink, stamp, round) {
@@ -1501,7 +1510,7 @@ const DC_COL = {
   FILE_ID          : 8,   // H
   METADATA_JSON    : 9,   // I
   TIMESTAMP        : 10,  // J
-  METADATA_AGENCY  : 11   // K — JSON for Agency access type; was Remarks
+  METADATA_AGENCY  : 11   // K: JSON for Agency access type; was Remarks
 };
 
 const STATUS_PENDING       = 'PENDING';
@@ -1528,7 +1537,7 @@ const DCS_AUDIT_COLS = {
 
 /*
   Function: submitDCS
-  LAYMAN:    The heart of Phase 1 — what runs when the user hits "Submit." It double-checks the form
+  LAYMAN:    The heart of Phase 1, what runs when the user hits "Submit." It double-checks the form
              on the server, uploads every attached document to the vault, writes (or updates, if this
              is a revision) the request row in the database, scans it for risk flags, clears the draft,
              and emails the requester a "Proceed to Phase 2" link. If anything important is missing or
@@ -1543,27 +1552,27 @@ const DCS_AUDIT_COLS = {
              drafts with the lock-free helper, builds the Phase 2 URL, releases the lock, and (outside
              the lock) batch-logs audit entries and sends the confirmation email (new submits only).
   PARAMS:
-    - payload   — { formData:{ name, location, dept, access, ihelp, immHead*, deptHead*, divHead*,
+    - payload: { formData:{ name, location, dept, access, ihelp, immHead*, deptHead*, divHead*,
                     accountable:{...} }, ndaFile?, dpaFile?, dsaFile?, agencyData? } (files: {base64,fileName,mimeType}).
-    - sessionId — the DCS-XXXXXX session; if it matches an existing owned row, this is treated as a revision.
-  RETURNS:   { success:true, reqId, sessionId, timestamp, phase2Url } on success;
-             { success:false, error } on any validation/upload/write failure.
+    - sessionId: the DCS-XXXXXX session; if it matches an existing owned row, this is treated as a revision.
+  RETURNS:   { ok:true, reqId, sessionId, timestamp, phase2Url } on success;
+             { ok:false, code, message } on any validation/upload/write failure.
   EXAMPLE:   submitDCS({ formData:{ name:'Payroll access request', dept:'HR', access:'Read', immHeadName:'A',
                immHeadEmail:'a@megaworld.com', deptHeadName:'B', deptHeadEmail:'b@megaworld.com',
                accountable:{ accountableName1:'C', accountableEmail1:'c@megaworld.com' } } }, 'DCS-000007')
-               -> { success:true, reqId:'DCS-000007', phase2Url:'https://…?parentID=DCS-000007' }
-             Missing field -> { success:false, error:'Missing required field: dept' }
+               -> { ok:true, reqId:'DCS-000007', phase2Url:'https://…?parentID=DCS-000007' }
+             Missing field -> { ok: false, message: 'Missing required field: dept' }
 */
 function submitDCS(payload, sessionId = '') {
-  /* Step 1 — Re-validate identity, payload shape, required fields, emails, iHelp, and accountable person. */
+  /* Step 1: Re-validate identity, payload shape, required fields, emails, iHelp, and accountable person. */
   // --- Re-validate identity on backend (Defense-in-Depth Layer 2) ---
   const email = Session.getActiveUser().getEmail();
   if (!isAuthorizedDomain_(email)) {
-    return { ok: false, success: false, error: 'Unauthorized domain. Access denied.' };
+    return { ok: false, message: 'Unauthorized domain. Access denied.' };
   }
 
   if (!payload || !payload.formData) {
-    return { ok: false, success: false, error: 'Invalid payload.' };
+    return { ok: false, message: 'Invalid payload.' };
   }
 
   const form = payload.formData;
@@ -1572,24 +1581,24 @@ function submitDCS(payload, sessionId = '') {
   const requiredFields = ['name', 'location', 'dept', 'access', 'ihelp', 'immHeadEmail', 'immHeadName', 'deptHeadName', 'deptHeadEmail'];
   for (const field of requiredFields) {
     if (!form[field] || String(form[field]).trim() === '') {
-      return { ok: false, success: false, error: `Missing required field: ${field}` };
+      return { ok: false, message: `Missing required field: ${field}` };
     }
   }
   
   // HIGH: Email validation on backend
   if (!isValidEmail_(form.immHeadEmail)) {
-    return { ok: false, success: false, error: 'Invalid Immediate Head email address.' };
+    return { ok: false, message: 'Invalid Immediate Head email address.' };
   }
   if (!isValidEmail_(form.deptHeadEmail)) {
-    return { ok: false, success: false, error: 'Invalid Department Head email address.' };
+    return { ok: false, message: 'Invalid Department Head email address.' };
   }
   if (form.divHeadEmail && form.divHeadEmail.trim() && !isValidEmail_(form.divHeadEmail)) {
-    return { ok: false, success: false, error: 'Invalid Division Head email address.' };
+    return { ok: false, message: 'Invalid Division Head email address.' };
   }
 
   // MEDIUM: iHelp reference must be numeric if provided
   if (form.ihelp && String(form.ihelp).trim() !== '' && !/^\d+$/.test(String(form.ihelp).trim())) {
-    return { ok: false, success: false, error: 'iHelp Reference must contain only numbers.' };
+    return { ok: false, message: 'iHelp Reference must contain only numbers.' };
   }
 
   // HIGH: At least 1 Accountable Person/Entity is required (both name and email must be filled)
@@ -1608,10 +1617,10 @@ function submitDCS(payload, sessionId = '') {
     }
   }
   if (!hasValidAccountable) {
-    return { ok: false, success: false, error: 'At least 1 Accountable Person/Entity is required (with both name and email).' };
+    return { ok: false, message: 'At least 1 Accountable Person/Entity is required (with both name and email).' };
   }
 
-  /* Step 2 — Resolve DB/sheet and pick the ReqID (reuse the DCS-prefixed sessionId, else mint a new one). */
+  /* Step 2: Resolve DB/sheet and pick the ReqID (reuse the DCS-prefixed sessionId, else mint a new one). */
   const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
   const sheet = ss.getSheetByName(DC_SHEET_NAME);
   const now   = new Date();
@@ -1641,7 +1650,7 @@ function submitDCS(payload, sessionId = '') {
         try { oldMetadata = JSON.parse(metadataVal || '{}'); } catch(e) {}
         isRevision = true;
       } else {
-        return { ok: false, success: false, error: 'Unauthorized revision attempt.' };
+        return { ok: false, message: 'Unauthorized revision attempt.' };
       }
     }
   }
@@ -1654,7 +1663,7 @@ function submitDCS(payload, sessionId = '') {
     try { uploadedIds = JSON.parse(oldFileIdStr); } catch(e) {}
   }
 
-  // Commit 4: version trail — archive (not trash) replaced files and record them so the old→new
+  // Commit 4: version trail, archive (not trash) replaced files and record them so the old→new
   // history stays viewable. FILE_ID keeps holding the CURRENT set only (existing renders unaffected).
   const newlySuperseded = [];
   const supersedeStamp = new Date().toISOString();
@@ -1678,19 +1687,19 @@ function submitDCS(payload, sessionId = '') {
       uploadedIds = archiveAndRecordSuperseded_(uploadedIds, function(f) { return f.type === 'DSA'; }, newlySuperseded, supersedeStamp, supersedeRound);
       uploadedIds.push({ type: 'DSA', id: id, name: payload.dsaFile.fileName });
     }
-    // Commit 5: Additional Supporting Documents — optional, ad-hoc extra files (e.g. an approver asks
+    // Commit 5: Additional Supporting Documents, optional, ad-hoc extra files (e.g. an approver asks
     // for a document not covered by the fixed NDA/DPA/DSA/Endorsement slots). Stored as MULTIPLE
-    // SUPPLEMENTARY entries (never one-per-type replaced), so they accumulate across resubmissions —
+    // SUPPLEMENTARY entries (never one-per-type replaced), so they accumulate across resubmissions,
     // retained prior entries stay in uploadedIds and each newly uploaded file is appended.
-    // Round-4: EXCEPT when an approver flagged a supplementary doc — then the resubmit replaces the
+    // Round-4: EXCEPT when an approver flagged a supplementary doc, then the resubmit replaces the
     // whole set (old entries archived as superseded, same as the fixed slots). Server-authoritative:
     // the flag is read from the PIA Applications sheet, not trusted from the client.
     if (isRevision && Array.isArray(payload.supplementaryFiles) && payload.supplementaryFiles.some(function (f) { return f && f.base64; })) {
       try {
         const piaRec = getPIARecordByDCSId_(ss, reqId);
-        // DELIBERATE dual-source read — reviewed 2026-08-11 and KEPT (not a leftover workaround).
+        // DELIBERATE dual-source read, reviewed 2026-08-11 and KEPT (not a leftover workaround).
         // These two are authoritative at different points in the DCS↔PIA resubmit sequence:
-        //   (1) Applications.Approver_Flags — live until the PIA itself is resubmitted, at which
+        //   (1) Applications.Approver_Flags, live until the PIA itself is resubmitted, at which
         //       point submitApplication_ clears it;
         //   (2) the copy PIA mirrors into this DCS row's Metadata_JSON on return (updateDCSStatus_).
         // A DCS resubmit can legitimately land on either side of that clear, so checking one only
@@ -1716,13 +1725,13 @@ function submitDCS(payload, sessionId = '') {
       }
     }
   } catch (err) {
-    return { ok: false, success: false, error: 'File upload failed: ' + err.message };
+    return safeError_(err, ERR.INTERNAL);
   }
 
   // Store as JSON string so multiple file IDs fit in one cell
   const combinedFileId = uploadedIds.length > 0 ? JSON.stringify(uploadedIds) : '';
 
-  /* Step (pre-lock) — If agency/OJT involved, validate its fields, upload the endorsement letter, and serialize its metadata. */
+  /* Step (pre-lock): If agency/OJT involved, validate its fields, upload the endorsement letter, and serialize its metadata. */
   // --- Build Agency Metadata if agency data is present (BEFORE lock) ---
   let agencyJson = '';
   try {
@@ -1734,33 +1743,33 @@ function submitDCS(payload, sessionId = '') {
 
       // OJT requires External access (defense-in-depth; the form also forces this).
       if (involvementType === 'OJT' && String(form.access || '').trim() !== 'External') {
-        return { ok: false, success: false, error: 'OJT requests require External access type.' };
+        return { ok: false, message: 'OJT requests require External access type.' };
       }
 
       if (involvementType !== 'OJT') {
         // Validate required agency fields
         if (!ad.agencyName || String(ad.agencyName).trim() === '') {
-          return { ok: false, success: false, error: 'Agency Name is required.' };
+          return { ok: false, message: 'Agency Name is required.' };
         }
         if (!ad.agencyPersonnel || String(ad.agencyPersonnel).trim() === '') {
-          return { ok: false, success: false, error: 'Agency Personnel is required.' };
+          return { ok: false, message: 'Agency Personnel is required.' };
         }
         // Network Drive is required for agency requests (server-side parity with the form).
         if (!ad.networkDrive || String(ad.networkDrive).trim() === '') {
-          return { ok: false, success: false, error: 'Network Drive to Access is required for agency requests.' };
+          return { ok: false, message: 'Network Drive to Access is required for agency requests.' };
         }
         // Replacement requests must identify the person being replaced (for DCOPS).
         if (String(ad.agencyRequestType || '') === 'Replacement') {
           if (!ad.replacementFullName || String(ad.replacementFullName).trim() === '') {
-            return { ok: false, success: false, error: 'Full name of the person being replaced is required.' };
+            return { ok: false, message: 'Full name of the person being replaced is required.' };
           }
           if (!ad.replacementEmail || String(ad.replacementEmail).trim() === '' ||
               (String(ad.replacementEmail).trim() !== 'N/A' && !isValidEmail_(ad.replacementEmail))) {
-            return { ok: false, success: false, error: 'A valid email of the person being replaced is required (or "N/A" if none).' };
+            return { ok: false, message: 'A valid email of the person being replaced is required (or "N/A" if none).' };
           }
         }
         if (ad.immHeadRecoveryEmail && !isValidEmail_(ad.immHeadRecoveryEmail)) {
-          return { ok: false, success: false, error: 'Invalid Immediate Head Recovery Email.' };
+          return { ok: false, message: 'Invalid Immediate Head Recovery Email.' };
         }
       }
 
@@ -1796,14 +1805,14 @@ function submitDCS(payload, sessionId = '') {
       }
     }
   } catch (err) {
-    return { ok: false, success: false, error: 'Agency file upload failed: ' + err.message };
+    return safeError_(err, ERR.INTERNAL);
   }
   const finalCombinedFileId = (payload.agencyData && uploadedIds.length > 0) ? JSON.stringify(uploadedIds) : combinedFileId;
 
   // Defense-in-depth: a submission must carry at least one supporting document (newly uploaded or
   // retained from a prior revision). The frontend enforces this; this is the server-side backstop.
   if (!uploadedIds || uploadedIds.length === 0) {
-    return { ok: false, success: false, error: 'At least one supporting document is required.' };
+    return { ok: false, message: 'At least one supporting document is required.' };
   }
 
   // --- STEP 3: NOW ACQUIRE LOCK (only for critical DB write section) ---
@@ -1825,21 +1834,26 @@ function submitDCS(payload, sessionId = '') {
       const freshEmail = String(freshData[1] || '').toLowerCase(); // UserEmail
 
       if (freshEmail === email.toLowerCase()) {
-        const freshFileIdStr = String(freshData[5] || ''); // FileID
+        // The range starts at COLUMN 2, so index 6 = FileID (col 8) and index 7 =
+        // Metadata_JSON (col 9). These read [5] and [6] until 2026-08-12, i.e.
+        // DivHeadEmail and FileID, which silently reset revisionCount and dropped the
+        // superseded-document trail on every revision. The destructure at ~:1637 over
+        // this same range is the reference.
+        const freshFileIdStr = String(freshData[6] || ''); // FileID (col 8)
         // Only override if state changed since the pre-lock read
         if (freshRow !== existingRow || freshFileIdStr !== oldFileIdStr) {
           existingRow = freshRow;
           oldFileIdStr = freshFileIdStr;
           isRevision = true;
-          try { oldMetadata = JSON.parse(freshData[6] || '{}'); } catch(e) { oldMetadata = {}; }
+          try { oldMetadata = JSON.parse(freshData[7] || '{}'); } catch(e) { oldMetadata = {}; } // Metadata_JSON (col 9)
         }
       } else {
-        // Row exists but belongs to another user — abort
+        // Row exists but belongs to another user, abort
         lock.releaseLock();
-        return { ok: false, success: false, error: 'Unauthorized revision attempt.' };
+        return { ok: false, message: 'Unauthorized revision attempt.' };
       }
     } else {
-      // Row was deleted between pre-lock check and now — treat as new submission
+      // Row was deleted between pre-lock check and now, treat as new submission
       existingRow = -1;
       oldFileIdStr = '';
       isRevision = false;
@@ -1847,7 +1861,7 @@ function submitDCS(payload, sessionId = '') {
     }
   }
 
-  /* Step 4 — Build metadata (with accountable fail-safe + risk analysis), write the row, clear drafts, build Phase 2 URL. */
+  /* Step 4: Build metadata (with accountable fail-safe + risk analysis), write the row, clear drafts, build Phase 2 URL. */
   let result;
   let riskAnalysis; // Hoist to outer scope for audit trail logging below
   try {
@@ -1911,7 +1925,7 @@ function submitDCS(payload, sessionId = '') {
 
     // ✅ STEP 4: Write to database (agencyJson and finalCombinedFileId already prepared BEFORE lock)
     if (isRevision && existingRow > 0) {
-        // Batched array write — includes 8 columns (cols 4-11) to cover Metadata_Agency
+        // Batched array write: includes 8 columns (cols 4-11) to cover Metadata_Agency
         sheet.getRange(existingRow, 4, 1, 8).setValues([[
           STATUS_COMPLETE,
           form.immHeadEmail || '',
@@ -1952,7 +1966,7 @@ function submitDCS(payload, sessionId = '') {
     }    
     
     result = {
-      ok: true, success: true,
+      ok: true,
       reqId: reqId,
       sessionId: reqId,
       timestamp: now.toISOString(),
@@ -1967,10 +1981,10 @@ function submitDCS(payload, sessionId = '') {
     lock.releaseLock();
   }
 
-  /* Step 5 — Outside the lock: batch-log audit entries and email the requester (new submits only, failsafe). */
+  /* Step 5: Outside the lock: batch-log audit entries and email the requester (new submits only, failsafe). */
   // --- DCS Audit Trail (OUTSIDE lock to avoid reentrancy) ---
   // Batch: Write session-gen + submission + cleanup events in a single sheet operation
-  if (result && result.success) {
+  if (result && result.ok) {
     const analysis = riskAnalysis || { isFlagged: false, reasons: [] };
     const hasParanormalFlags = analysis.isFlagged && analysis.reasons.length > 0;
     const internalFlagsStr = hasParanormalFlags
@@ -2011,15 +2025,15 @@ function submitDCS(payload, sessionId = '') {
 
 /*
   Function: notifyDcsRequester_
-  LAYMAN:    Sends the requester a nice branded email saying "your request was submitted — click here
+  LAYMAN:    Sends the requester a nice branded email saying "your request was submitted, click here
              to start Phase 2." Purely a notification; if the email fails, the saved request is unaffected.
   TECHNICAL: Builds an HTML-escaped, navy-styled email (plus a plain-text fallback) with the request ID,
              a Manila-formatted timestamp, and a "Proceed to Phase 2" button. Sends via MailApp.sendEmail.
              No-ops if toEmail is falsy. Caller wraps this in try/catch (failsafe).
   PARAMS:
-    - toEmail   — requester email (the Session active user).
-    - reqId     — DCS Request ID shown in the email.
-    - phase2Url — full PIA URL (already includes ?parentID=<reqId>); '#' fallback if empty.
+    - toEmail: requester email (the Session active user).
+    - reqId: DCS Request ID shown in the email.
+    - phase2Url: full PIA URL (already includes ?parentID=<reqId>); '#' fallback if empty.
   RETURNS:   undefined (side effect: sends one email).
 */
 function notifyDcsRequester_(toEmail, reqId, phase2Url) {
@@ -2027,18 +2041,18 @@ function notifyDcsRequester_(toEmail, reqId, phase2Url) {
   const safe = function(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
   const accent = '#2a5285';
   const dateStr = Utilities.formatDate(new Date(), 'Asia/Manila', "MMMM d, yyyy 'at' h:mm a");
-  const subject = '[Megaworld] DCS request ' + reqId + ' submitted — Proceed to Phase 2';
+  const subject = '[Megaworld] DCS request ' + reqId + ' submitted: Proceed to Phase 2';
   const plain = 'Dear Requester,\n\n' +
     'Your Data Collection request (' + reqId + ') has been submitted successfully and is cleared to proceed to Phase 2 (Privacy Impact Assessment).\n\n' +
     'Proceed to Phase 2: ' + (phase2Url || '(open the DCS app)') + '\n\n' +
     'Submitted: ' + dateStr + '\n\n' +
-    '— Megaworld ISM Department';
+    'Megaworld ISM Department';
   const html =
     '<div style="font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;background:#f9fafb;padding:24px;color:#333;line-height:1.6;">' +
       '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.08);overflow:hidden;">' +
         '<div style="background:' + accent + ';padding:18px 28px;">' +
           '<div style="color:#ffffff;font-size:12px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;opacity:0.9;">Megaworld ISM Department</div>' +
-          '<div style="color:#ffffff;font-size:20px;font-weight:700;margin-top:4px;">Request Submitted — Proceed to Phase 2</div>' +
+          '<div style="color:#ffffff;font-size:20px;font-weight:700;margin-top:4px;">Request Submitted: Proceed to Phase 2</div>' +
         '</div>' +
         '<div style="padding:28px;">' +
           '<p style="margin:0 0 14px;font-size:14px;">Dear Requester,</p>' +
@@ -2060,9 +2074,9 @@ function notifyDcsRequester_(toEmail, reqId, phase2Url) {
   LAYMAN:    Builds the link that takes the user from Phase 1 into Phase 2 (the PIA app), tagging it
              with this request's ID so PIA knows which DCS record it belongs to.
   TECHNICAL: Reads PIA_APP_URL (should end in /exec for all-user access) and appends ?parentID=<reqId>.
-             The PIA app reads parentID as Linked_ReqID — the cross-app link. Do not break this contract.
+             The PIA app reads parentID as Linked_ReqID, the cross-app link. Do not break this contract.
   PARAMS:
-    - reqId — the DCS Request ID to embed.
+    - reqId: the DCS Request ID to embed.
   RETURNS:   The full PIA URL string, e.g. 'https://…/exec?parentID=DCS-000007'.
 */
 function generatePhase2Url_(reqId) {
@@ -2084,7 +2098,7 @@ function generatePhase2Url_(reqId) {
 
   ⚠️ CALL THIS ONLY FROM AN UNLOCKED CONTEXT. GAS script locks are NOT reentrant, so calling this
   while already holding the script lock will block until timeout. Its one caller, submitDCS (~1424),
-  runs it BEFORE acquiring its own lock (~1608) — do not move that call inside submitDCS's lock.
+  runs it BEFORE acquiring its own lock (~1608), do not move that call inside submitDCS's lock.
 
   PARAMS:    (none)
   RETURNS:   A new ReqID string, e.g. 'DCS-000001'.
@@ -2113,7 +2127,7 @@ function generateDCSReqId_() {
 
 /*
   Function: analyzeDCSRisk_
-  LAYMAN:    Scans a request for red flags before it's saved — e.g. the requester listing themselves as
+  LAYMAN:    Scans a request for red flags before it's saved, e.g. the requester listing themselves as
              their own approver, the same person filling two approver roles, a suspiciously short
              description, no accountable person, or missing department/access. It just reports what it
              found; it doesn't block the submission.
@@ -2123,8 +2137,8 @@ function generateDCSReqId_() {
              nested shapes); missing dept/access; and a too-short agency name. Each hit appends a
              human-readable reason.
   PARAMS:
-    - dcsData       — the DCS payload ({ formData, agencyData, email } or a flat form object).
-    - providedEmail — the authenticated user's email (preferred source of the requestor identity).
+    - dcsData: the DCS payload ({ formData, agencyData, email } or a flat form object).
+    - providedEmail: the authenticated user's email (preferred source of the requestor identity).
   RETURNS:   { isFlagged:boolean, reasons:string[] } (isFlagged === reasons.length > 0).
   EXAMPLE:   analyzeDCSRisk_({ formData:{ immHeadEmail:'me@x', deptHeadEmail:'me@x' } }, 'me@x')
                -> { isFlagged:true, reasons:['Requestor email matches Immediate Head email …', …] }
@@ -2145,13 +2159,13 @@ function analyzeDCSRisk_(dcsData, providedEmail = '') {
   const divHeadEmail = String(form.divHeadEmail || '').toLowerCase();
   
   if (requestorEmail && requestorEmail === immHeadEmail) {
-    reasons.push('Requestor email matches Immediate Head email — potential conflict of interest');
+    reasons.push('Requestor email matches Immediate Head email, potential conflict of interest');
   }
   if (requestorEmail && requestorEmail === deptHeadEmail) {
-    reasons.push('Requestor email matches Department Head email — potential conflict of interest');
+    reasons.push('Requestor email matches Department Head email, potential conflict of interest');
   }
   if (requestorEmail && divHeadEmail && requestorEmail === divHeadEmail) {
-    reasons.push('Requestor email matches Division Head email — potential conflict of interest');
+    reasons.push('Requestor email matches Division Head email, potential conflict of interest');
   }
 
   // Check 2: Immediate Head name == Department Head name (same person in two roles)
@@ -2160,12 +2174,12 @@ function analyzeDCSRisk_(dcsData, providedEmail = '') {
   const divHeadName = String(form.divHeadName || '').trim().toLowerCase();
   
   if (immHeadName && deptHeadName && immHeadName === deptHeadName) {
-    reasons.push('Immediate Head name matches Department Head name — same person in 2 approval roles');
+    reasons.push('Immediate Head name matches Department Head name, same person in 2 approval roles');
   }
   
   // Check 3: Immediate Head name == Division Head name
   if (immHeadName && divHeadName && immHeadName === divHeadName) {
-    reasons.push('Immediate Head name matches Division Head name — same person in 2 approval roles');
+    reasons.push('Immediate Head name matches Division Head name, same person in 2 approval roles');
   }
 
   // Check 4: Request name/description is unusually short (< 20 chars)
@@ -2192,7 +2206,7 @@ function analyzeDCSRisk_(dcsData, providedEmail = '') {
     reasons.push('No accountable persons defined for data processing');
   }
 
-  // Check 6: Suspicious metadata patterns — missing department or access type
+  // Check 6: Suspicious metadata patterns, missing department or access type
   const dept = String(form.dept || '').trim();
   const access = String(form.access || '').trim();
   if (!dept) {
@@ -2221,15 +2235,15 @@ function analyzeDCSRisk_(dcsData, providedEmail = '') {
   Function: logDCSAuditTrail_
   LAYMAN:    Writes one line into the audit log for an action (draft saved, request submitted, etc.).
              If the action carried risk flags it stores them; normal actions store an empty marker.
-             It never throws — a logging failure must not break the real operation.
+             It never throws: a logging failure must not break the real operation.
   TECHNICAL: Appends a row to Risk_Audit (falls back to legacy 'DCS_Risk_Audit' name). Builds the
              InternalFlags cell from flagsData: a non-empty string is stored verbatim (flagged JSON),
              true → generic HIGH legacy marker, false/null/undefined → '{}' (normal). Stamps LogID
              (UUID), user email, 'DCS Web App' agent, and a native Date. Errors are caught and logged.
   PARAMS:
-    - sessionId — session/request identifier for the event.
-    - action    — human-readable description of the event.
-    - flagsData — string (flagged JSON) | true (legacy HIGH) | false/null/undefined (normal).
+    - sessionId: session/request identifier for the event.
+    - action: human-readable description of the event.
+    - flagsData: string (flagged JSON) | true (legacy HIGH) | false/null/undefined (normal).
   RETURNS:   undefined (side effect: appends one audit row; swallows its own errors).
 */
 function logDCSAuditTrail_(sessionId, action, flagsData) {
@@ -2245,7 +2259,7 @@ function logDCSAuditTrail_(sessionId, action, flagsData) {
     const userEmail = Session.getActiveUser().getEmail() || 'anonymous';
     const now = new Date();
 
-    // Build flags payload — if flagsData is false/null/undefined (normal action), store empty object
+    // Build flags payload: if flagsData is false/null/undefined (normal action), store empty object
     let flags = '{}';
     if (typeof flagsData === 'string' && flagsData.length > 0) {
       flags = flagsData;  // Paranormal: actual risk data
@@ -2257,7 +2271,7 @@ function logDCSAuditTrail_(sessionId, action, flagsData) {
     sheet.appendRow([
       logId,              // A: LogID
       sessionId || 'N/A', // B: SessionID
-      flags,              // C: InternalFlags — '{}' for normal, filled JSON for paranormal
+      flags,              // C: InternalFlags, '{}' for normal, filled JSON for paranormal
       action,             // D: Action
       userEmail,          // E: UserEmail
       'DCS Web App',      // F: UserAgent
@@ -2265,7 +2279,7 @@ function logDCSAuditTrail_(sessionId, action, flagsData) {
     ]);
 
     if (flags !== '{}') {
-      Logger.log('[DCS-AUDIT-FLAG] ' + sessionId + ': ' + action + ' — Paranormal: ' + flags);
+      Logger.log('[DCS-AUDIT-FLAG] ' + sessionId + ': ' + action + ': Paranormal: ' + flags);
     } else {
       Logger.log('[DCS-AUDIT] ' + sessionId + ': ' + action);
     }
@@ -2282,7 +2296,7 @@ function logDCSAuditTrail_(sessionId, action, flagsData) {
              them all with one getRange(start,1,n,7).setValues() call. No-ops on empty input; errors
              are caught and logged so it never breaks the caller.
   PARAMS:
-    - entries — array of { sessionId, action, flagsData } (flagsData encoded as in logDCSAuditTrail_).
+    - entries: array of { sessionId, action, flagsData } (flagsData encoded as in logDCSAuditTrail_).
   RETURNS:   undefined (side effect: appends N audit rows in one write).
 */
 function logDCSAuditTrailBatch_(entries) {
@@ -2314,7 +2328,7 @@ function logDCSAuditTrailBatch_(entries) {
       ];
     });
 
-    // Batch write — single API call for all entries
+    // Batch write: single API call for all entries
     const startRow = sheet.getLastRow() + 1;
     sheet.getRange(startRow, 1, rows.length, 7).setValues(rows);
 
@@ -2341,7 +2355,7 @@ function logDCSAuditTrailBatch_(entries) {
 
 
 // ============================================================
-// Fix 2: Batch Query Consolidation — Helper function
+// Fix 2: Batch Query Consolidation: Helper function
 // Fetches all related data for a DCS request in optimized batch.
 // ============================================================
 
@@ -2356,9 +2370,9 @@ function logDCSAuditTrailBatch_(entries) {
              the relevant key columns, then batch-reads matched ranges. Discovers piaSessionId from the
              Applications row when not passed in. Read-only.
   PARAMS:
-    - ss           — the database Spreadsheet object.
-    - dcsReqId     — the DCS Request ID (matched against Linked_ReqID / ReqID).
-    - piaSessionId — optional PIA session ID; auto-discovered from Applications if omitted.
+    - ss: the database Spreadsheet object.
+    - dcsReqId: the DCS Request ID (matched against Linked_ReqID / ReqID).
+    - piaSessionId: optional PIA session ID; auto-discovered from Applications if omitted.
   RETURNS:   { piaRecord:{piaSessionId,piaStatus,approverFlags,approverComments}|null,
                approvals:[], ismApprovals:[], divHeadApprovals:[] }.
 */
@@ -2375,7 +2389,7 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     LAYMAN:    Reads a sheet's header row and makes a quick lookup of "column name → which column it is."
     TECHNICAL: Returns an object mapping each non-empty trimmed header string to its 0-based index.
     PARAMS:
-      - sheet — the Sheet whose header row (row 1) to map.
+      - sheet: the Sheet whose header row (row 1) to map.
     RETURNS:   { headerName: columnIndex, ... } (0-based indices).
   */
   function getColIndexMap_(sheet) {
@@ -2402,7 +2416,7 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     Function: keepCurrentRound_ (nested helper)
 
     LAYMAN (Tropang Ex):
-    Ang tracker sa DCS ay dapat magpakita ng ISANG malinis na hanay ng approvers — yung
+    Ang tracker sa DCS ay dapat magpakita ng ISANG malinis na hanay ng approvers, yung
     kasalukuyang round. Ngayong hindi na binubura ng PIA ang lumang rounds, kung hindi natin ito
     sasalain, magkakadoble-doble ang mga pangalan sa screen (isang set kada round).
     Yung buong kasaysayan ay nasa `revisionHistory` na hiwalay.
@@ -2417,7 +2431,7 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     return arr.filter(function (a) { return a.round === maxRound; });
   }
 
-  /* Step 1 — Applications sheet: find the row linked to this DCS ReqID; capture PIA status/flags/comments and the PIA session ID. */
+  /* Step 1: Applications sheet: find the row linked to this DCS ReqID; capture PIA status/flags/comments and the PIA session ID. */
   // --- Process PIA record from Applications sheet (TextFinder) ---
   const appSheet = ss.getSheetByName('Applications');
   if (appSheet && dcsReqId) {
@@ -2456,7 +2470,7 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     }
   }
 
-  /* Step 2 — Approval_Workflow: collect approver decisions matched by PIA session and/or DCS ReqID (deduped, batch-read). */
+  /* Step 2: Approval_Workflow: collect approver decisions matched by PIA session and/or DCS ReqID (deduped, batch-read). */
   // --- Process Approval_Workflow (TextFinder) ---
   const awSheet = ss.getSheetByName('Approval_Workflow');
   if (awSheet && (piaSessionId || dcsReqId)) {
@@ -2515,7 +2529,7 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
     }
   }
 
-  /* Step 3 — ISM_Approval_Workflow + DivisionHead_Approval_Workflow: collect InfoSec and Division Head decisions (only when a PIA session exists). */
+  /* Step 3: ISM_Approval_Workflow + DivisionHead_Approval_Workflow: collect InfoSec and Division Head decisions (only when a PIA session exists). */
   // --- Process ISM_Approval_Workflow (TextFinder) ---
   if (piaSessionId) {
     const ismSheet = ss.getSheetByName('ISM_Approval_Workflow');
@@ -2616,14 +2630,14 @@ function getRequestDataBatch_(ss, dcsReqId, piaSessionId) {
 /*
   Function: getPIARecordByDCSId_
   LAYMAN:    Looks up the Phase 2 (PIA) record that belongs to a given Phase 1 request, plus its latest
-             approval decision — so the UI can show whether PIA has acted on it.
+             approval decision, so the UI can show whether PIA has acted on it.
   TECHNICAL: TextFinder on Applications col B for dcsReqId, taking the LAST match (most recent revision);
              reads Status / SessionID / Approver_Flags (or legacy Approvers_Flag) / Approver_Comments
              (or legacy Comments) via dynamic header indices. Then finds the latest Decision in
              Approval_Workflow by PIA SessionID (preferred) or DCS ReqID. Read-only.
   PARAMS:
-    - ss       — the database Spreadsheet object.
-    - dcsReqId — the DCS Request ID to resolve.
+    - ss: the database Spreadsheet object.
+    - dcsReqId: the DCS Request ID to resolve.
   RETURNS:   { piaSessionId, piaStatus, piaDecision, approverFlags, approverComments } if anything found;
              null if no related PIA data exists.
 */
@@ -2733,13 +2747,13 @@ function getPIARecordByDCSId_(ss, dcsReqId) {
   Function: apiGetRequestData
   LAYMAN:    The "show me everything about this request" call the frontend uses to draw a request's
              detail page: the form data, attached files, current status, the Phase 2 link (if eligible),
-             PIA status, and the full approver timelines — plus any DCS vs PIA risk flags.
+             PIA status, and the full approver timelines, plus any DCS vs PIA risk flags.
   TECHNICAL: TextFinder on Data_Collection col B (last match = newest revision); reads only that row,
              parses Metadata_JSON / FileID / Metadata_Agency. Pulls linked PIA + all approval rows via
              getRequestDataBatch_. Separates DCS-prefixed flag keys from PIA flag keys. Computes the
              Phase 2 URL when status is READY_FOR_PIA/COMPLETE/RETURNED. Read-only.
   PARAMS:
-    - reqId — the DCS Request ID to fetch.
+    - reqId: the DCS Request ID to fetch.
   RETURNS:   { found:true, reqId, sessionId, email, immHeadEmail, deptHeadEmail, divHeadEmail, status,
                metadata, files, timestamp, logId, metadataAgency, phase2Url, piaStatus, piaSessionId,
                piaDecision, hasPiaFlags, approverFlags, approverComments, approvers, ismApprovers,
@@ -2751,9 +2765,9 @@ function getPIARecordByDCSId_(ss, dcsReqId) {
              pangalan-ng-column → posisyon. Kaya pwede tayong maghanap ng 'RoundNumber' sa
              pangalan nito, hindi sa numero ng column.
   TECHNICAL: Header-name → 0-based column index. Resolving by NAME rather than by a hardcoded
-             index is what makes this file survive PIA appending columns to its own sheets — the
+             index is what makes this file survive PIA appending columns to its own sheets, the
              exact cross-app coupling that the retired mirrored column map used to create.
-  PARAMS:    - sheet — the Sheet to read headers from.
+  PARAMS:    - sheet: the Sheet to read headers from.
   RETURNS:   Object mapping trimmed header text to 0-based index. {} for an empty sheet.
 */
 function getHeaderIndexMap_(sheet) {
@@ -2770,8 +2784,8 @@ function getHeaderIndexMap_(sheet) {
   Function: getApprovalHistoryRounds_
 
   LAYMAN (Tropang Ex):
-  Kinukuha nito ang KUMPLETONG kwento ng approvals ng isang request — lahat ng round, mula unang
-  submit hanggang sa huling desisyon — para maipakita sa requestor.
+  Kinukuha nito ang KUMPLETONG kwento ng approvals ng isang request, lahat ng round, mula unang
+  submit hanggang sa huling desisyon, para maipakita sa requestor.
 
   Dati, may hiwalay na "Revision_History" tab na photocopy: bago burahin ng PIA ang mga lumang
   approval rows tuwing may resubmit, kinokopya muna doon. Ngayon, hindi na binubura ang mga row,
@@ -2789,12 +2803,12 @@ function getHeaderIndexMap_(sheet) {
   Rows missing RoundNumber (written before the append-only change) normalize to round 1. Fully
   guarded: returns [] when a tab is missing, empty, or unreadable.
 
-  RETURN SHAPE IS FROZEN — apiGetRequestData exposes it as `revisionHistory` and the frontend
+  RETURN SHAPE IS FROZEN: apiGetRequestData exposes it as `revisionHistory` and the frontend
   renders it directly. Keep the field names as-is.
 
   PARAMS:
-    - ss           — the database Spreadsheet object.
-    - piaSessionId — the linked PIA session id ('' or null returns []).
+    - ss: the database Spreadsheet object.
+    - piaSessionId: the linked PIA session id ('' or null returns []).
   RETURNS: Array of { round, decisions:[{stage, approverName, approverEmail, role, decision,
            status, comments, flaggedFields, routing, decisionDate}] }, rounds ascending.
 */
@@ -2897,24 +2911,24 @@ function apiGetRequestData(reqId) {
     // Get only needed row data (1 API call instead of full sheet load)
     const values = sheet.getRange(row, 1, 1, Math.max(DC_COL.METADATA_AGENCY, 11)).getValues()[0];
 
-    // SECURITY (F-04): authorize the caller — only the request's owner may read its full data. A direct
+    // SECURITY (F-04): authorize the caller, only the request's owner may read its full data. A direct
     // google.script.run call must not be able to read another user's request by guessing the reqId.
     const _me = Session.getActiveUser().getEmail();
     if (String(values[DC_COL.USER_EMAIL - 1] || '').toLowerCase() !== String(_me || '').toLowerCase()) {
       return { found: false };
     }
 
-    /* Step 1 — Parse the row's metadata, file list, and status from the newest matching row. */
+    /* Step 1: Parse the row's metadata, file list, and status from the newest matching row. */
     const metadata = JSON.parse(values[DC_COL.METADATA_JSON - 1] || '{}');
     const files    = JSON.parse(values[DC_COL.FILE_ID - 1] || '[]');
     const status   = values[DC_COL.STATUS - 1];
 
-    /* Step 2 — Load linked PIA record + all approver timelines in one batched pass. */
+    /* Step 2: Load linked PIA record + all approver timelines in one batched pass. */
     // ✅ Fix 2: BATCH: Load all related data in one pass
     const batch = getRequestDataBatch_(ss, reqId, null);
     const piaRecord = batch.piaRecord;
 
-    /* Step 3 — Split risk flags into DCS-specific vs PIA-specific buckets for the UI. */
+    /* Step 3: Split risk flags into DCS-specific vs PIA-specific buckets for the UI. */
     let rawFlags = (piaRecord && piaRecord.approverFlags) ? piaRecord.approverFlags : (metadata.approverFlags || null);
     let dcsFlags = {};
     let hasDcsFlags = false;
@@ -2939,7 +2953,7 @@ function apiGetRequestData(reqId) {
     const piaDecisionLowerCheck = String(piaRecord ? piaRecord.piaDecision : '').toLowerCase().replace(/\s+/g, '');
     const isPiaReturnedCheck = (piaStatusLowerCheck === 'rejected' || piaStatusLowerCheck === 'returned');
 
-    /* Step 4 — Assemble the full response object (form data + files + timelines + flags + Phase 2 URL). */
+    /* Step 4: Assemble the full response object (form data + files + timelines + flags + Phase 2 URL). */
     return {
       found: true,
       reqId: values[DC_COL.REQ_ID - 1],
@@ -2979,15 +2993,15 @@ function apiGetRequestData(reqId) {
 
 /*
   Function: apiListUserRequests
-  LAYMAN:    Builds the "My Applications" list — every request the current user has submitted, newest
+  LAYMAN:    Builds the "My Applications" list, every request the current user has submitted, newest
              first, each with its status, PIA status, name, and any approver remarks.
   TECHNICAL: TextFinder on Data_Collection col C (UserEmail) for the user's rows. Builds a PIA status/
              comments map keyed by Linked_ReqID from the Applications sheet (last row wins). For each
              owned row, batch-reads the needed columns, looks up its PIA record, and attaches a Phase 2
              URL when status is READY_FOR_PIA/COMPLETE. Returns the list reversed (newest first). Read-only.
   PARAMS:    (none)
-  RETURNS:   { success:true, requests:[{ reqId, status, piaStatus, timestamp, name, remarks, phase2Url? }] };
-             { success:false, error } on exception.
+  RETURNS:   { ok:true, requests:[{ reqId, status, piaStatus, timestamp, name, remarks, phase2Url? }] };
+             { ok:false, code, message } on exception.
 */
 function apiListUserRequests() {
   try {
@@ -3002,7 +3016,7 @@ function apiListUserRequests() {
       .findAll();
 
     if (emailFinder.length === 0) {
-      return { ok: true, success: true, requests: [] };
+      return { ok: true, requests: [] };
     }
 
     // ✅ Build PIA map with targeted column search (no full sheet load)
@@ -3057,7 +3071,7 @@ function apiListUserRequests() {
       requests.push(request);
     });
 
-    return { ok: true, success: true, requests: requests.reverse() }; // Newest first
+    return { ok: true, requests: requests.reverse() }; // Newest first
   } catch (err) {
     console.error('apiListUserRequests error:', err.message);
     return safeError_(err, ERR.INTERNAL);
@@ -3067,23 +3081,23 @@ function apiListUserRequests() {
 /*
   Function: apiGetReturnedApplication
   LAYMAN:    Decides whether a request can be re-opened for editing (revision mode). It only says yes
-             if the request belongs to you AND it was genuinely returned with fixable DCS flags — and it
+             if the request belongs to you AND it was genuinely returned with fixable DCS flags, and it
              won't re-open something you already resubmitted after the return.
   TECHNICAL: Wraps apiGetRequestData, enforces ownership (case-insensitive email), and computes
              editability: requires DCS-specific approverFlags AND (DCS status RETURNED, OR PIA
              returned/rejected and NOT already resubmitted). "Recently resubmitted" = the DCS timestamp
              is newer than the latest returned/rejected approver decision date across all timelines.
   PARAMS:
-    - reqId — the DCS Request ID to evaluate for editing.
-  RETURNS:   { success:true, application:<apiGetRequestData result> } if editable;
-             { success:false, error } if not found, unauthorized, or not in a returnable state.
+    - reqId: the DCS Request ID to evaluate for editing.
+  RETURNS:   { ok:true, application:<apiGetRequestData result> } if editable;
+             { ok:false, code, message } if not found, unauthorized, or not in a returnable state.
 */
 function apiGetReturnedApplication(reqId) {
   const userEmail = Session.getActiveUser().getEmail();
   const result = apiGetRequestData(reqId);
   
-  if (!result.found) return { ok: false, success: false, error: 'Application not found.' };
-  if (result.email.toLowerCase() !== userEmail.toLowerCase()) return { ok: false, success: false, error: 'Unauthorized.' };
+  if (!result.found) return { ok: false, message: 'Application not found.' };
+  if (result.email.toLowerCase() !== userEmail.toLowerCase()) return { ok: false, message: 'Unauthorized.' };
   
   const dcsStatus = String(result.status || '').toUpperCase();
   const piaStatusLower = String(result.piaStatus || '').toLowerCase();
@@ -3115,14 +3129,14 @@ function apiGetReturnedApplication(reqId) {
 
   // Check if it's eligible for editing
       if (!canEditDcs) {
-    return { ok: false, success: false, error: 'This application is not in a returnable state for editing.' };
+    return { ok: false, message: 'This application is not in a returnable state for editing.' };
   }
   
-  return { ok: true, success: true, application: result };
+  return { ok: true, application: result };
 }
 
 // ============================================================
-// 8. STATUS POLLING  (Frontend Tracker — Stage 5)
+// 8. STATUS POLLING  (Frontend Tracker: Stage 5)
 // ============================================================
 
 /*
@@ -3163,8 +3177,8 @@ function apiGetStatus_() {
   TECHNICAL: TextFinder on Data_Collection col C (UserEmail); the last match is the most recent entry.
              Returns that full row as a values array. Read-only.
   PARAMS:
-    - sheet — the Data_Collection Sheet object.
-    - email — the user's email to match.
+    - sheet: the Data_Collection Sheet object.
+    - email: the user's email to match.
   RETURNS:   The row's values array (1 row × all columns), or null if the user has no rows.
 */
 function getLatestDCSRecord_(sheet, email) {
@@ -3192,13 +3206,13 @@ function getLatestDCSRecord_(sheet, email) {
   LAYMAN:    The handshake between Phase 1 and Phase 2. When someone opens the PIA app, the PIA backend
              calls this to ask "does this person have a cleared DCS request?" If not, PIA stays locked;
              if yes, this hands PIA the ReqID and file IDs it needs to link the two phases together.
-  TECHNICAL: Cross-app gate, called from the PIA backend's doGet (defense-in-depth — never trust a
+  TECHNICAL: Cross-app gate, called from the PIA backend's doGet (defense-in-depth, never trust a
              frontend flag alone). TextFinder on Data_Collection col C for the user's latest row; if
              status is not READY_FOR_PIA/COMPLETE it returns gated:true with a reason
              (DCS_PENDING/DCS_REJECTED/DCS_RETURNED/NO_DCS_RECORD/SYSTEM_ERROR); if cleared it returns
              gated:false plus reqId and fileId. Read-only.
   PARAMS:
-    - userEmail — optional override; defaults to the Session active user's email.
+    - userEmail: optional override; defaults to the Session active user's email.
   RETURNS:   { gated, reason, reqId, fileId, status, error? }.
   EXAMPLE:   getGatewayRecord_('jane@megaworld.com')
                -> { gated:false, reason:'CLEARED', reqId:'DCS-000007', fileId:'[…]', status:'COMPLETE' }
@@ -3212,7 +3226,7 @@ function getGatewayRecord_(userEmail) {
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName(DC_SHEET_NAME);
 
-    // Search only UserEmail column (Column C) — targeted for performance
+    // Search only UserEmail column (Column C), targeted for performance
     const emailFinder = sheet.getRange('C:C')
       .createTextFinder(email)
       .matchEntireCell(true)
@@ -3250,7 +3264,7 @@ function getGatewayRecord_(userEmail) {
       };
     }
 
-    // Cleared — pass ReqID and FileID to PIA
+    // Cleared: pass ReqID and FileID to PIA
     return {
       gated : false,
       reason: 'CLEARED',
@@ -3282,10 +3296,10 @@ function getGatewayRecord_(userEmail) {
              locks Phase 1 and Phase 2 together, so editing either ID would make the certificate's
              fingerprint no longer match.
   TECHNICAL: Computes SHA-256 over `dcsReqId + '|' + piaSessionId` (UTF-8) and hex-encodes the digest.
-             Throws if either ID is missing. Pure function — no sheet/Drive access.
+             Throws if either ID is missing. Pure function, no sheet/Drive access.
   PARAMS:
-    - dcsReqId     — the DCS Request ID (e.g. 'DCS-000001').
-    - piaSessionId — the PIA Session ID (e.g. 'PIA-000075').
+    - dcsReqId: the DCS Request ID (e.g. 'DCS-000001').
+    - piaSessionId: the PIA Session ID (e.g. 'PIA-000075').
   RETURNS:   The lowercase hex SHA-256 digest string. Throws Error if either ID is falsy.
   EXAMPLE:   computeIntegrityHash_('DCS-000001', 'PIA-000075') -> '9f2c…' (64 hex chars)
 */
@@ -3305,21 +3319,21 @@ function computeIntegrityHash_(dcsReqId, piaSessionId) {
 // 10b. SECURE DOCUMENT ACCESS
 //   Uploaded documents are PRIVATE in Drive (see uploadProxy_ Step 5). The only read path is
 //   apiDownloadDcsFile below, which re-authorizes the caller server-side and streams the bytes
-//   back as base64 — the browser never receives a Drive URL.
+//   back as base64, the browser never receives a Drive URL.
 // ============================================================
 
 /*
   Function: collectRequestFileIds_
 
   LAYMAN (Tropang Ex):
-  Kinukuha nito lahat ng Drive file ID na TALAGANG kabilang sa isang DCS request — yung kasalukuyang
+  Kinukuha nito lahat ng Drive file ID na TALAGANG kabilang sa isang DCS request, yung kasalukuyang
   attachments, yung mga lumang bersyon na na-replace, at yung endorsement letter. Ito yung listahan
   na ikukumpara natin bago tayo magbukas ng kahit anong file.
 
   TECHNICAL:
   Builds the set of Drive file IDs legitimately reachable from one Data_Collection row: the FILE_ID
   JSON array (current attachments), Metadata_JSON.supersededFiles (archived prior versions), and
-  Metadata_Agency.endorsementLetter.id. Every parse is defensive — a malformed cell contributes
+  Metadata_Agency.endorsementLetter.id. Every parse is defensive: a malformed cell contributes
   nothing rather than throwing.
 
   This is the anti-confused-deputy list. Owning a request is not owning a file: without this check
@@ -3327,7 +3341,7 @@ function computeIntegrityHash_(dcsReqId, piaSessionId) {
   script owner's Drive and have it served back under the owner's full `drive` scope.
 
   PARAMS:
-    - values — the full Data_Collection row as a 0-indexed array (from getRange(...).getValues()[0]).
+    - values: the full Data_Collection row as a 0-indexed array (from getRange(...).getValues()[0]).
   RETURNS:   An object used as a set: { '<driveFileId>': true, ... }. Empty object if nothing parses.
 */
 function collectRequestFileIds_(values) {
@@ -3337,7 +3351,7 @@ function collectRequestFileIds_(values) {
     if (s) allowed[s] = true;
   };
 
-  /* Current attachments — FILE_ID holds a JSON array of { type, id, name }. */
+  /* Current attachments: FILE_ID holds a JSON array of { type, id, name }. */
   try {
     const files = JSON.parse(values[DC_COL.FILE_ID - 1] || '[]');
     (Array.isArray(files) ? files : []).forEach(function (f) { if (f) add(f.id); });
@@ -3365,7 +3379,7 @@ function collectRequestFileIds_(values) {
 
   LAYMAN (Tropang Ex):
   Ito yung bagong paraan para makita mo yung na-attach mong dokumento. Dati kasi, direktang Drive
-  link yung binibigay — at yung link na yun ay bukas sa kahit sino sa internet. Ngayon, ikaw mismo
+  link yung binibigay, at yung link na yun ay bukas sa kahit sino sa internet. Ngayon, ikaw mismo
   ang tinatanong ng server: "sayo ba talaga to?" Kapag oo, ipapadala niya yung mismong laman ng file
   pabalik sa browser mo para ma-download. Walang Drive link na lumalabas kahit kailan.
 
@@ -3373,7 +3387,7 @@ function collectRequestFileIds_(values) {
   Identity-gated document proxy, the sole read path now that uploadProxy_ leaves files private.
   Four gates in order, each failing before any Drive I/O:
     (1) corporate domain,
-    (2) request ownership — same rule and same opaque failure text as the F-04 guard on
+    (2) request ownership, same rule and same opaque failure text as the F-04 guard on
         apiGetRequestData, so a non-owner cannot distinguish "no such request" from "not yours",
     (3) file membership via collectRequestFileIds_ (anti-confused-deputy),
     (4) a size ceiling, because base64 inflates ~33% and google.script.run return payloads become
@@ -3383,49 +3397,49 @@ function collectRequestFileIds_(values) {
   only. Drive exceptions echo the offending resource ID and would otherwise leak ADMIN_FOLDER_ID.
 
   PARAMS:
-    - reqId  — the DCS Request ID that owns the document (e.g. 'DCS-000007').
-    - fileId — the Drive file ID being requested. Validated against reqId, never trusted alone.
-  RETURNS:   { success:true, data:{ base64, mimeType, filename } } on success;
-             { success:false, error } with a generic message on any failure.
+    - reqId: the DCS Request ID that owns the document (e.g. 'DCS-000007').
+    - fileId: the Drive file ID being requested. Validated against reqId, never trusted alone.
+  RETURNS:   { ok: true, data:{ base64, mimeType, filename } } on success;
+             { ok:false, code, message } with a generic message on any failure.
 
   STEPS
-    Step 1 — Domain + argument gate
+    Step 1: Domain + argument gate
       Layman    : Kailangan corporate account ka, at kailangan kumpleto yung hinihingi mo.
       Technical : isAuthorizedDomain_ on the Session user; reject blank reqId/fileId.
-    Step 2 — Resolve the request row (newest revision wins)
+    Step 2: Resolve the request row (newest revision wins)
       Layman    : Hanapin yung request sa database, yung pinakabagong bersyon.
       Technical : TextFinder over column B with matchEntireCell, take the LAST match.
-    Step 3 — Ownership gate
-      Layman    : Ikaw ba yung nag-file nito? Kung hindi, "not available" — hindi natin sasabihin
+    Step 3: Ownership gate
+      Layman    : Ikaw ba yung nag-file nito? Kung hindi, "not available", hindi natin sasabihin
                   kung existing ba talaga yung request, para walang makakalkula ng ID.
       Technical : Case-insensitive compare against DC_COL.USER_EMAIL; identical failure shape to
                   the "not found" branch.
-    Step 4 — File-membership gate
+    Step 4: File-membership gate
       Layman    : Kabilang ba talaga yung file na to sa request na to?
       Technical : collectRequestFileIds_ set lookup. Logs a SECURITY ALERT on mismatch.
-    Step 5 — Size gate, then read and encode
+    Step 5: Size gate, then read and encode
       Layman    : Kung sobrang laki, sabihin nating hingin na lang sa ISM. Kung ok, i-encode natin.
       Technical : getBlob().getBytes(), reject > MAX_DOWNLOAD_BYTES, else Utilities.base64Encode.
 
   EXAMPLE
     apiDownloadDcsFile('DCS-000007', '1AbC...xyz')
-      -> { success:true, data:{ base64:'JVBERi0…', mimeType:'application/pdf',
+      -> { ok: true, data:{ base64:'JVBERi0…', mimeType:'application/pdf',
                                 filename:'DCS-000007-NDA.pdf' } }
     apiDownloadDcsFile('DCS-000007', '<a file belonging to DCS-000009>')
-      -> { success:false, error:'Document not available.' }
+      -> { ok: false, message: 'Document not available.' }
 */
 function apiDownloadDcsFile(reqId, fileId) {
   const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024; // 8 MB decoded; ~10.7 MB once base64-encoded
-  // One opaque message for every authorization failure — never reveal which gate rejected.
-  const DENIED = { ok: false, success: false, error: 'Document not available.' };
+  // One opaque message for every authorization failure, never reveal which gate rejected.
+  const DENIED = { ok: false, message: 'Document not available.' };
 
   try {
-    /* Step 1 — Domain + argument gate. */
+    /* Step 1: Domain + argument gate. */
     const me = Session.getActiveUser().getEmail();
     if (!isAuthorizedDomain_(me)) return DENIED;
     if (!reqId || !fileId) return DENIED;
 
-    /* Step 2 — Resolve the request row; the LAST match is the newest revision. */
+    /* Step 2: Resolve the request row; the LAST match is the newest revision. */
     const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
     const sheet = ss.getSheetByName(DC_SHEET_NAME);
     const finder = sheet.getRange('B:B')
@@ -3437,12 +3451,12 @@ function apiDownloadDcsFile(reqId, fileId) {
     const row    = finder[finder.length - 1].getRow();
     const values = sheet.getRange(row, 1, 1, Math.max(DC_COL.METADATA_AGENCY, 11)).getValues()[0];
 
-    /* Step 3 — Ownership gate (mirrors the F-04 guard; same opaque failure as "not found"). */
+    /* Step 3: Ownership gate (mirrors the F-04 guard; same opaque failure as "not found"). */
     if (String(values[DC_COL.USER_EMAIL - 1] || '').toLowerCase() !== String(me || '').toLowerCase()) {
       return DENIED;
     }
 
-    /* Step 4 — File-membership gate: the fileId must belong to THIS request. */
+    /* Step 4: File-membership gate: the fileId must belong to THIS request. */
     const allowed = collectRequestFileIds_(values);
     if (!allowed[String(fileId).trim()]) {
       console.warn('SECURITY ALERT: ' + me + ' requested file ' + fileId +
@@ -3450,21 +3464,21 @@ function apiDownloadDcsFile(reqId, fileId) {
       return DENIED;
     }
 
-    /* Step 5 — Size gate, then read and encode. */
+    /* Step 5: Size gate, then read and encode. */
     const file  = DriveApp.getFileById(String(fileId).trim());
     const blob  = file.getBlob();
     const bytes = blob.getBytes();
     if (bytes.length > MAX_DOWNLOAD_BYTES) {
       return {
-        ok: false, success: false,
-        error: 'This document is too large to open here (' +
+        ok: false,
+        message: 'This document is too large to open here (' +
                (bytes.length / 1024 / 1024).toFixed(1) +
                ' MB). Please request a copy from the ISM Department.'
       };
     }
 
     return {
-      ok: true, success: true,
+      ok: true,
       data: {
         base64  : Utilities.base64Encode(bytes),
         mimeType: blob.getContentType() || 'application/octet-stream',
@@ -3473,9 +3487,9 @@ function apiDownloadDcsFile(reqId, fileId) {
     };
 
   } catch (e) {
-    // Generic to the caller, specific to the log — Drive errors echo resource IDs.
+    // Generic to the caller, specific to the log: Drive errors echo resource IDs.
     console.error('apiDownloadDcsFile failed for ' + reqId + '/' + fileId + ': ' + e.message);
-    return { ok: false, success: false, error: 'Could not open this document. Please try again or contact ISM.' };
+    return { ok: false, message: 'Could not open this document. Please try again or contact ISM.' };
   }
 }
 
@@ -3499,7 +3513,7 @@ function apiDownloadDcsFile(reqId, fileId) {
 function setupDataCollectionSheet() {
   // SECURITY: editor-run only. Cannot take a trailing underscore (must be Run-able from the
   // editor UI), so it is gated on owner-or-trigger context instead.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
   let sheet   = ss.getSheetByName(DC_SHEET_NAME);
 
@@ -3523,7 +3537,7 @@ function setupDataCollectionSheet() {
       .setFontWeight('bold');
     Logger.log('Data_Collection sheet initialized with headers.');
   } else {
-    Logger.log('Data_Collection sheet already has content in row 1 — skipped.');
+    Logger.log('Data_Collection sheet already has content in row 1, skipped.');
   }
 
   // Initialize DCS_Risk_Audit sheet if missing
@@ -3566,14 +3580,14 @@ function setupDataCollectionSheet() {
              on invalid status or unknown ReqID. Note: opens the spreadsheet directly via openById
              (not the cache).
   PARAMS:
-    - reqId     — the DCS Request ID to update.
-    - newStatus — one of STATUS_PENDING | STATUS_READY_FOR_PIA | STATUS_REJECTED.
+    - reqId: the DCS Request ID to update.
+    - newStatus: one of STATUS_PENDING | STATUS_READY_FOR_PIA | STATUS_REJECTED.
   RETURNS:   undefined (side effect: writes the Status cell; logs). Throws on invalid input.
 */
 function adminSetStatus(reqId, newStatus) {
   // SECURITY: editor-run status override. Public by necessity (editor Run), so gate on
-  // owner-or-trigger context — otherwise any domain user could flip any request's status.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  // owner-or-trigger context, otherwise any domain user could flip any request's status.
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   const allowed = [STATUS_PENDING, STATUS_READY_FOR_PIA, STATUS_REJECTED];
   if (!allowed.includes(newStatus)) {
     throw new Error('Invalid status. Allowed: ' + allowed.join(', '));
@@ -3610,7 +3624,7 @@ function adminSetStatus(reqId, newStatus) {
 function purgeExpiredDrafts() {
   // SECURITY: daily trigger handler. A trigger handler cannot take a trailing underscore, so it is
   // gated on owner-or-trigger context to stop any domain user invoking a mass row delete.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
   const sheet = ss.getSheetByName(DRAFTS_SHEET_NAME);
   if (!sheet) return;
@@ -3649,7 +3663,7 @@ function purgeExpiredDrafts() {
   RETURNS:   undefined (side effect: creates a test file; triggers OAuth consent; logs).
 */
 function forceAuthorize() {
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   SpreadsheetApp.getActiveSpreadsheet();
   const folderId = getProp_('ADMIN_FOLDER_ID');
   const folder = DriveApp.getFolderById(folderId);
@@ -3666,7 +3680,7 @@ function forceAuthorize() {
 
   LAYMAN (Tropang Ex):
   Yung fix sa uploadProxy_ ay para lang sa mga BAGONG upload. Lahat ng dokumentong na-upload BAGO
-  yun ay naka-"anyone with the link" pa rin — publiko pa rin sila. Ito yung linis-lahat: dadaanan
+  yun ay naka-"anyone with the link" pa rin, publiko pa rin sila. Ito yung linis-lahat: dadaanan
   niya yung buong vault folder (pati Archive) at ipipsara lahat.
 
   🚩 MAG-INGAT: pagkatapos nito, mamamatay yung mga Drive link na nasa mga EMAIL na naipadala na.
@@ -3685,21 +3699,21 @@ function forceAuthorize() {
   undoing this would need a counterpart script. Run it last, after the proxy is verified in prod.
 
   PARAMS:
-    - dryRun — defaults to TRUE. Pass exactly false to actually write. Any other value = dry run.
-  RETURNS:   { success, dryRun, scanned, changed, failed } summary (also logged).
+    - dryRun: defaults to TRUE. Pass exactly false to actually write. Any other value = dry run.
+  RETURNS:   { ok, dryRun, scanned, changed, failed } summary (also logged).
 
   EXAMPLE
     backfillPrivateDcsFiles()        -> { dryRun:true,  scanned:142, changed:0,   failed:0 }
     backfillPrivateDcsFiles(false)   -> { dryRun:false, scanned:142, changed:142, failed:0 }
 */
 function backfillPrivateDcsFiles(dryRun) {
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
 
   // Fail safe: anything that is not exactly `false` is treated as a dry run.
   const isDry = (dryRun !== false);
   let scanned = 0, changed = 0, failed = 0;
 
-  Logger.log('🔒 backfillPrivateDcsFiles — ' + (isDry ? 'DRY RUN (no writes)' : '⚠ LIVE RUN (writing)'));
+  Logger.log('🔒 backfillPrivateDcsFiles: ' + (isDry ? 'DRY RUN (no writes)' : '⚠ LIVE RUN (writing)'));
 
   const sweep = function (folder, label) {
     const files = folder.getFiles();
@@ -3728,7 +3742,7 @@ function backfillPrivateDcsFiles(dryRun) {
     if (archives.hasNext()) {
       sweep(archives.next(), 'archive');
     } else {
-      Logger.log('  (no Archive subfolder — nothing further to sweep)');
+      Logger.log('  (no Archive subfolder: nothing further to sweep)');
     }
   } catch (e) {
     Logger.log('❌ backfillPrivateDcsFiles aborted: ' + e.message);
@@ -3738,5 +3752,5 @@ function backfillPrivateDcsFiles(dryRun) {
 
   Logger.log('🔒 Done. scanned=' + scanned + ' changed=' + changed + ' failed=' + failed +
              (isDry ? '  → re-run as backfillPrivateDcsFiles(false) to apply.' : ''));
-  return { ok: true, success: true, dryRun: isDry, scanned: scanned, changed: changed, failed: failed };
+  return { ok: true, dryRun: isDry, scanned: scanned, changed: changed, failed: failed };
 }

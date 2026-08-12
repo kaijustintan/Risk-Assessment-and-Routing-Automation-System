@@ -3,11 +3,11 @@
 <head>
 <!--
   [ OUTLINE ]
-  FILE: pia_index.html  (PIA — Phase 2 frontend)
+  FILE: pia_index.html  (PIA: Phase 2 frontend)
 
   PURPOSE (Layman): This is the privacy-assessment wizard a requestor fills out AFTER their
     DCS (Phase 1) request has been cleared and they clicked "Proceed to Phase 2". It walks
-    them through a 7-step Privacy Impact Assessment — instructions/consent, a compliance
+    them through a 7-step Privacy Impact Assessment, instructions/consent, a compliance
     checklist, program info, a personal-data (PII) inventory, who the stakeholders are, how
     information flows, and finally a review-and-submit summary. When approved later, it can
     also show a completion certificate/receipt.
@@ -18,7 +18,7 @@
     apiGetDCSContext(parentID) to verify the link and pre-populate fields from the DCS row,
     then routes through screens that are EMPTY divs in the HTML and filled at runtime by
     render*()/renderPIA*() functions. State lives in a single `state` object; text is
-    autosaved server-side as a draft (apiSaveDraft) — there is no localStorage. All
+    autosaved server-side as a draft (apiSaveDraft), there is no localStorage. All
     server calls go through `google.script.run`. Design tokens (navy palette, fonts, motion)
     are defined in :root in the <style> block. Submission posts to apiSubmitApplication.
 
@@ -56,7 +56,7 @@
     - debouncedPersistState       500ms-debounced wrapper of persistStateImmediate
     - getStateSnapshot()          build the serializable draft snapshot from state
     - persistStateImmediate()     send the snapshot to the server (apiSaveDraft)
-    - persistState()              public entry point — schedules a debounced save
+    - persistState()              public entry point, schedules a debounced save
     - showDraftStatus(msg, err)   drive the floating "Saving / Saved" indicator
     - manualSaveDraft()           force a save from a user action
     - restoreState()              (no-op) synchronous in-memory restore stub
@@ -84,17 +84,17 @@
     - getFlagClass(fieldKey)      'has-flag' if the field was flagged
     - getFlagIconHtml(fieldKey)   build the flag tooltip markup (cached)
 
-  CATEGORY: RENDER — WIZARD SCREENS
+  CATEGORY: RENDER: WIZARD SCREENS
     - renderSidebarTracker(step)  build the left progress sidebar
     - renderDCSCheck()            verify the DCS link, branch new/resume/revise/blocked
-    - renderGuide()               Step 1 — instructions + consent gate
-    - renderPIA5Survey()          Step 2 — privacy compliance checklist
+    - renderGuide()               Step 1: instructions + consent gate
+    - renderPIA5Survey()          Step 2: privacy compliance checklist
     - validatePIA5Completeness()  enable/disable the checklist Continue button
-    - renderPIA1()                Step 3 — program / process info form
-    - renderPIA2()                Step 4 — PII inventory table (+ custom rows)
-    - renderPIA3()                Step 5 — internal/external stakeholders
-    - renderPIA4()                Step 6 — information-flow descriptions
-    - renderSummary()             Step 7 — full review before submit
+    - renderPIA1()                Step 3: program / process info form
+    - renderPIA2()                Step 4: PII inventory table (+ custom rows)
+    - renderPIA3()                Step 5: internal/external stakeholders
+    - renderPIA4()                Step 6: information-flow descriptions
+    - renderSummary()             Step 7: full review before submit
     - renderProcessingScreen()    spinner shown during submission
     - renderCertificate()         (unused) completion certificate
     - renderConfirmation()        post-submit receipt
@@ -131,7 +131,7 @@
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* GENERATED from docs/design-tokens.css — edit there, then paste into all 6 targets.
+  /* GENERATED from docs/design-tokens.css, edit there, then paste into all 6 targets.
      The other five: Phase 1/index.html, Admin/adminView.html, and the
      getStyledHtmlWrapper_ block in each of the three backends. */
   :root {
@@ -681,7 +681,7 @@
   .status-denied   { background: var(--danger);  color: var(--danger-text); }
   .status-draft { background: var(--bg3); color: var(--text2); }
   .status-escalated { background: #eff6ff; color: #1e40af; }
-  /* Identity chips (ids, not decisions) — neutral so green never reads as an approval. */
+  /* Identity chips (ids, not decisions), neutral so green never reads as an approval. */
   .chip-identity { background: var(--bg3); color: var(--navy-text); }
 
   /* ═══════════════════════════════════════════════════
@@ -707,7 +707,7 @@
   .timeline-dot.done     { background: #16a34a; border-color: #16a34a; }
   .timeline-dot.active   { background: var(--navy-bright); border-color: var(--navy-bright); box-shadow: 0 0 0 3px var(--navy-glow); }
   .timeline-dot.rejected { background: #dc2626; border-color: #dc2626; }
-  /* Round-4: returned = amber (fixable loop), escalated = blue — matches the unified status matrix. */
+  /* Round-4: returned = amber (fixable loop), escalated = blue, matches the unified status matrix. */
   .timeline-dot.returned  { background: #d97706; border-color: #d97706; }
   .timeline-dot.escalated { background: #1e40af; border-color: #1e40af; }
 
@@ -878,7 +878,7 @@
     border-color: transparent transparent var(--navy-text) transparent;
   }
 
-  /* Info tooltip variant — inline label helper (NOT positioned absolutely) */
+  /* Info tooltip variant: inline label helper (NOT positioned absolutely) */
   .info-tooltip {
     display: inline-flex;
     align-items: center;
@@ -1295,9 +1295,9 @@
   <div class="logo-brand" id="app-mini-logo">
     <img src="https://upload.wikimedia.org/wikipedia/commons/e/e2/Megaworld_logo_and_wordmark.svg" alt="Megaworld Logo" height="28">
   </div>
-  <!-- SECTION: Wizard screens — all empty here; filled at runtime by render*() / renderPIA*().
+  <!-- SECTION: Wizard screens, all empty here; filled at runtime by render*() / renderPIA*().
        show(name) toggles .hidden so exactly one is visible. Ctrl+F for on-screen copy will
-       miss it — search the matching render function instead. -->
+       miss it, search the matching render function instead. -->
   <div id="screen-dcs"     class="hidden" aria-live="polite"></div>
   <div id="screen-guide" class="hidden" aria-live="polite"></div>
   <div id="screen-pia1"    class="hidden" aria-live="polite"></div>
@@ -1313,7 +1313,7 @@
   <div id="screen-confirmation" class="hidden" aria-live="polite"></div>
 </div>
 
-<!-- SECTION: Floating autosave indicator — driven by showDraftStatus() ("Saving"/"Saved"). -->
+<!-- SECTION: Floating autosave indicator, driven by showDraftStatus() ("Saving"/"Saved"). -->
 <div id="draft-indicator" style="position:fixed; bottom:20px; right:20px; background:var(--bg); border:1px solid var(--border); padding:8px 16px; border-radius:99px; font-size:12px; color:var(--text2); box-shadow:0 4px 12px rgba(0,0,0,0.08); display:none; align-items:center; gap:8px; z-index:999; transition: opacity 0.3s ease;">
   <span class="spinner" style="width:14px; height:14px; border-width:2px; display:none;" id="draft-spinner"></span>
   <span id="draft-status">Saved</span>
@@ -1335,7 +1335,7 @@ let persistStateTimeout = null;
   TECHNICAL: Memoizing wrapper over document.getElementById, backed by the module-level
     `domCache` map. The cache is invalidated per-screen by clearDomCache() because a
     re-render replaces the elements behind those ids.
-  PARAMS: id — element id (string).
+  PARAMS: id, element id (string).
   RETURNS: the cached HTMLElement, or null if it doesn't exist (null is also cached only
     falsy-wise: a missing element is re-looked-up next call).
 */
@@ -1367,8 +1367,8 @@ function clearDomCache() {
   TECHNICAL: Classic trailing-edge debounce. Each call resets a shared timer; the wrapped
     fn fires with the latest args/this once the timer elapses.
   PARAMS:
-    - fn — the function to throttle.
-    - delay — quiet period in milliseconds.
+    - fn: the function to throttle.
+    - delay: quiet period in milliseconds.
   RETURNS: a new debounced function.
 */
 // Debounce function for performance
@@ -1386,7 +1386,7 @@ function debounce(fn, delay) {
     results. Summary/render code escapes the same strings repeatedly, so caching pays off.
   TECHNICAL: LRU-ish memoization over escapeHtml using `escapeHtmlCache` (Map). When the
     cache exceeds 500 entries it evicts the oldest-inserted key before adding the new one.
-  PARAMS: str — the raw string to escape.
+  PARAMS: str, the raw string to escape.
   RETURNS: the HTML-escaped string.
 */
 // Memoized HTML escaping
@@ -1409,7 +1409,7 @@ function escapeHtmlMemo(str) {
 
 /*
   OBJECT: state
-  LAYMAN: The single bag that holds EVERYTHING the wizard knows — which screen we're on,
+  LAYMAN: The single bag that holds EVERYTHING the wizard knows, which screen we're on,
     the user's email, the session/draft ids, every answer in PIA1–PIA5, the DCS context we
     pulled in, the approver flags, and submission flags. Every render reads from here and
     every input writes back to here, then we autosave a snapshot of it.
@@ -1446,11 +1446,11 @@ const state = {
   status: 'Pending', isSubmitting: false
 };
 
-/* pii2Fields — the 21 standard PII categories listed in the PIA2 inventory table.
+/* pii2Fields, the 21 standard PII categories listed in the PIA2 inventory table.
    Index 20 ('Others') is special: selecting YES reveals the custom-category rows.
-   Order is load-bearing — state.pia2 keys are these array indices. */
+   Order is load-bearing, state.pia2 keys are these array indices. */
 const pii2Fields = ['Name','Home Address','Business Address','Email Address','Telephone No. (Work)','Telephone No. (Home)','Age','Date of Birth','Marital Status','Color, Race or Ethnic Origin','Religion','Education','Photo','Biometrics','Political Association','Philosophical Beliefs / Orientation','Health','Sexual Life, Preference, Practice','Offences Committed or Alleged','Government-issued IDs','Others']; // Moved to global scope in Code.gs
-/* pia5Questions — the 8 privacy-compliance checklist prompts shown on the pia5 screen
+/* pia5Questions, the 8 privacy-compliance checklist prompts shown on the pia5 screen
    (Step 2). Answered YES/NO/N/A; state.pia5 is keyed by index into this array. */
 const pia5Questions = [
   'Do you have a Privacy Policy visible and available to your data subjects?',
@@ -1467,12 +1467,12 @@ const STORAGE_KEY = 'pia-spa-system:draft-state:v1';
 // ─── Sanitization ─────────────────────────────────────
 /*
   Function Name: sanitizeText
-  LAYMAN: Cleans a free-text value before we store/show it — strips angle brackets, quotes,
+  LAYMAN: Cleans a free-text value before we store/show it, strips angle brackets, quotes,
     backticks, null bytes, and obvious XSS bait (javascript:, on*=), trims it, and caps the
     length. Client-side defense-in-depth; the server sanitizes again.
   TECHNICAL: Coerces to string, runs a chain of .replace() filters, trims, and slices to
-    maxLength. Not a full HTML sanitizer — pair with escapeHtml when injecting into markup.
-  PARAMS: value — any; maxLength — max chars to keep (default 5000).
+    maxLength. Not a full HTML sanitizer, pair with escapeHtml when injecting into markup.
+  PARAMS: value, any; maxLength, max chars to keep (default 5000).
   RETURNS: the cleaned string.
 */
 function sanitizeText(value, maxLength = 5000) {
@@ -1483,9 +1483,9 @@ function sanitizeText(value, maxLength = 5000) {
 /*
   Function Name: sanitizeNumeric
   LAYMAN: Keeps only the digits of a value (drops spaces, dashes, letters) and caps the
-    length — used for phone/trunk-line style fields.
+    length, used for phone/trunk-line style fields.
   TECHNICAL: Strips all non-\d and slices to maxLength (default 11).
-  PARAMS: value — any; maxLength — max digits (default 11).
+  PARAMS: value, any; maxLength, max digits (default 11).
   RETURNS: a digits-only string.
 */
 function sanitizeNumeric(value, maxLength = 11) {
@@ -1524,7 +1524,7 @@ function validatePersonName(value, alphaOnly = false) {
   LAYMAN: Locks a radio-button value to one of an allowed set (e.g. 'YES'/'NO'/'N/A');
     anything else becomes empty. Stops tampered values from entering state.
   TECHNICAL: Uppercases the sanitized input and returns it only if it's in allowedValues.
-  PARAMS: value — raw choice; allowedValues — array of permitted uppercase strings.
+  PARAMS: value, raw choice; allowedValues, array of permitted uppercase strings.
   RETURNS: the matched value, or '' if not allowed.
 */
 function sanitizeChoice(value, allowedValues) {
@@ -1536,7 +1536,7 @@ function sanitizeChoice(value, allowedValues) {
   LAYMAN: Normalizes an approver decision string to canonical casing
     (APPROVE -> 'Approve', etc.); unknown values become null.
   TECHNICAL: Uppercases the sanitized input and maps the three known verbs.
-  PARAMS: value — raw decision string.
+  PARAMS: value, raw decision string.
   RETURNS: 'Approve' | 'Reject' | 'Deny' | null.
 */
 function normalizeDecision(value) {
@@ -1551,7 +1551,7 @@ function normalizeDecision(value) {
   LAYMAN: Turns &, <, >, ", ' into their HTML entities so user text can't break out of the
     markup we build by hand in the render functions.
   TECHNICAL: Plain entity-encode. The hot path uses escapeHtmlMemo instead.
-  PARAMS: str — value to escape.
+  PARAMS: str, value to escape.
   RETURNS: the escaped string ('' for null/undefined).
 */
 function escapeHtml(str) {
@@ -1567,7 +1567,7 @@ function infoTip(text) {
   return `<span class="info-tooltip" tabindex="0" aria-label="${escapeHtml(text)}" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1.5px solid var(--text3);color:var(--text3);font-size:11px;font-weight:700;cursor:help;margin-left:5px;vertical-align:middle;position:relative;flex-shrink:0;">?<div class="info-tooltip-content">${escapeHtml(text)}</div></span>`;
 }
 
-/* debouncedPersistState — 500ms-debounced trigger of persistStateImmediate(). This is what
+/* debouncedPersistState, 500ms-debounced trigger of persistStateImmediate(). This is what
    persistState() and the delegated change listener actually fire, so a flurry of keystrokes
    collapses into one server save. */
 const debouncedPersistState = debounce(() => {
@@ -1628,9 +1628,9 @@ function getStateSnapshot() {
   PARAMS: (none)
   RETURNS: undefined (async via google.script.run).
   STEPS
-    Step 1 — Guard: skip if no session / already submitted / unresolved resume draft.
-    Step 2 — Snapshot + optimistic "Saving" indicator.
-    Step 3 — apiSaveDraft with success/failure handlers updating the indicator.
+    Step 1: Guard: skip if no session / already submitted / unresolved resume draft.
+    Step 2: Snapshot + optimistic "Saving" indicator.
+    Step 3: apiSaveDraft with success/failure handlers updating the indicator.
 */
 // Internal immediate persist (called by debounced version)
 function persistStateImmediate() {
@@ -1679,11 +1679,11 @@ function persistState() {
 }
 /*
   Function Name: showDraftStatus
-  LAYMAN: Drives the little floating pill in the corner — shows "Saving" with a spinner,
+  LAYMAN: Drives the little floating pill in the corner, shows "Saving" with a spinner,
     then "Saved" (or an error), then fades it out.
   TECHNICAL: Updates the #draft-indicator text/colour/spinner. If the message contains
     "saving" it stays solid with the spinner; otherwise it auto-fades after ~2.5s.
-  PARAMS: msg — status text; isError — colour it as danger (default false).
+  PARAMS: msg, status text; isError, colour it as danger (default false).
   RETURNS: undefined.
 */
 function showDraftStatus(msg, isError = false) {
@@ -1726,7 +1726,7 @@ function manualSaveDraft() {
 /*
   Function Name: restoreState
   LAYMAN: A deliberate no-op. There's no localStorage here, so there's nothing to restore
-    synchronously — cross-session restore goes through asyncRestoreDraft instead.
+    synchronously, cross-session restore goes through asyncRestoreDraft instead.
   TECHNICAL: Always returns false. Kept as a stable hook/seam for callers.
   PARAMS: (none)  RETURNS: false.
 */
@@ -1743,8 +1743,8 @@ function restoreState() {
 
 /*
   Function Name: asyncRestoreDraft
-  LAYMAN: Pulls a saved draft back from the server and rebuilds the whole wizard from it —
-    which screen you were on, all your PIA answers, the DCS context, approver notes — then
+  LAYMAN: Pulls a saved draft back from the server and rebuilds the whole wizard from it,
+    which screen you were on, all your PIA answers, the DCS context, approver notes, then
     drops you right back where you left off. If nothing's found, it starts a fresh session.
   TECHNICAL: Calls apiRestoreDraft(sessionId). On success it MERGES the returned snapshot
     into the live state (spread-merge for piaN so DCS-pre-populated fields survive), prefers
@@ -1752,7 +1752,7 @@ function restoreState() {
     forces isEditing when window.isRevisionDraft is set, and re-pins drafterEmail to the
     logged-in user. Then show()+renderCurrentScreen(). On miss/failure: error toast +
     createNewApplicationSession() or just an error.
-  PARAMS: sessionId — the draft/session id to restore.
+  PARAMS: sessionId, the draft/session id to restore.
   RETURNS: undefined (async).
 */
 function asyncRestoreDraft(sessionId) {
@@ -1836,8 +1836,8 @@ function asyncRestoreDraft(sessionId) {
     screen), and moves keyboard focus to the heading for accessibility.
   TECHNICAL: Adds .hidden to every #app > div, removes it from #screen-<name>, force-reflows
     to retrigger the CSS animation, updates state.currentScreen, and rAF-focuses the <h1>.
-    Does NOT render content — pair with the matching render*() (renderCurrentScreen does both).
-  PARAMS: name — screen suffix ('dcs','guide','pia1'..'pia5','summary','processing',
+    Does NOT render content: pair with the matching render*() (renderCurrentScreen does both).
+  PARAMS: name, screen suffix ('dcs','guide','pia1'..'pia5','summary','processing',
     'certificate','confirmation').
   RETURNS: undefined.
 */
@@ -1873,7 +1873,7 @@ function show(name) {
     still work.
   TECHNICAL: Lowercases the status and substring-matches to a status-* class; defaults to
     'status-pending'.
-  PARAMS: status — a status string.
+  PARAMS: status, a status string.
   RETURNS: a CSS class name.
 */
 // Helper function to determine the correct CSS class for a status badge
@@ -1887,7 +1887,7 @@ function getStatusBadgeClass(status) {
   return 'status-pending'; // Default for 'Pending', 'Escalated to Division Head', etc.
 }
 
-/* PIA1_FIELD_CONFIG — maps each state.pia1 key to its DOM input id and a max length.
+/* PIA1_FIELD_CONFIG: maps each state.pia1 key to its DOM input id and a max length.
    syncPIA1State() iterates this to read the form back into state in one pass. */
 const PIA1_FIELD_CONFIG = {
   dept: { max: 150, id: 'p1-dept' },
@@ -1935,7 +1935,7 @@ function syncPIA1State() {
     least one (blank) row, so the render code never trips on legacy string-only entries.
   TECHNICAL: Coerces strings to {name,email}, fills missing fields, and returns a single
     empty row for empty/non-array input.
-  PARAMS: arr — array of strings or {name,email} objects (or anything).
+  PARAMS: arr, array of strings or {name,email} objects (or anything).
   RETURNS: array of {name,email} (never empty).
 */
 function normalizeStakeholders(arr) {
@@ -1953,7 +1953,7 @@ function normalizeStakeholders(arr) {
   TECHNICAL: A local gather() walks p3-int-* / p3-ext-* inputs by index, sanitizes, and keeps
     rows that have a name or email (falling back to one empty row). Also syncs the int/ext
     description textareas. Mutates state.pia3.
-  PARAMS: keepEmptyRows — when true, preserve blank rows (used by the add/remove handlers so
+  PARAMS: keepEmptyRows, when true, preserve blank rows (used by the add/remove handlers so
     their length guards see the real displayed rows). Omit for the nav-away save (collapses blanks).
   RETURNS: undefined.
 */
@@ -2035,7 +2035,7 @@ const flagIconCache = new Map();
   LAYMAN: Looks up the approver's note for a specific field (e.g. 'PIA 2 - Health'), if one
     was left during review. Empty string if none.
   TECHNICAL: Reads state.approverFlags[fieldKey].
-  PARAMS: fieldKey — the canonical flag key for the field.
+  PARAMS: fieldKey, the canonical flag key for the field.
   RETURNS: the note string, or ''.
 */
 function getFlagMessage(fieldKey) {
@@ -2088,7 +2088,7 @@ function getFlagIconHtml(fieldKey) {
 
 /*
   Function Name: createNewApplicationSession
-  LAYMAN: Starts a fresh PIA from scratch — asks the server for a new session id, marks the
+  LAYMAN: Starts a fresh PIA from scratch, asks the server for a new session id, marks the
     app as an in-progress draft, and drops the user on Step 2 (the compliance checklist).
   TECHNICAL: Calls apiGenerateNewSessionId(). On success sets sessionId/baseSessionId,
     draftStatus='incomplete', isIncomplete=true, clears editing/resume flags, then
@@ -2128,7 +2128,7 @@ function createNewApplicationSession() {
     intro/guide screen.
   TECHNICAL: Calls the matching syncPIAxState() for the current screen, persistState(), then
     show(screen)+renderCurrentScreen(). Early-returns to block guide while editing.
-  PARAMS: screen — the screen name to go back to.
+  PARAMS: screen, the screen name to go back to.
   RETURNS: undefined.
 */
 function goBack(screen) {
@@ -2174,7 +2174,7 @@ function renderCurrentScreen() {
     completed ones with a check and highlighting the active one.
   TECHNICAL: Returns an <aside> HTML string. Steps before activeStep get .done (check SVG),
     the active step gets .active; labels are escaped.
-  PARAMS: activeStep — 1-based step number currently in view.
+  PARAMS: activeStep, 1-based step number currently in view.
   RETURNS: HTML string for the sidebar.
 */
 function renderSidebarTracker(activeStep) {
@@ -2230,7 +2230,7 @@ function renderSidebarTracker(activeStep) {
     file is template-served; backtick helpers corrupt at GAS serve time, CLAUDE.md section 8).
     Wires the previously-dormant .timeline CSS component (.timeline-item/.timeline-dot variants).
   PARAMS:
-  - rounds — array of { round, isCurrent, decisions[] }.
+  - rounds: array of { round, isCurrent, decisions[] }.
   RETURNS: HTML string ('' when rounds is empty).
 */
 function renderApprovalTimeline(rounds) {
@@ -2285,7 +2285,7 @@ function renderApprovalTimeline(rounds) {
   TECHNICAL: google.script.run apiGetApprovalHistory(sessionId) into #approval-history-container.
     Failure handler is a silent no-op by design (the comments blob remains the fallback).
   PARAMS:
-  - sessionId — the requestor's own PIA session id.
+  - sessionId: the requestor's own PIA session id.
   RETURNS: undefined (async).
 */
 function loadApprovalHistory(sessionId) {
@@ -2309,7 +2309,7 @@ function loadApprovalHistory(sessionId) {
   Function Name: renderDCSCheck
   LAYMAN: The first screen. It verifies the DCS link you arrived with and figures out what
     you're allowed to do: start a brand-new PIA, resume an unfinished draft, revise a
-    returned one, or — if your DCS was returned and not yet fixed — block you and tell you to
+    returned one, or, if your DCS was returned and not yet fixed, block you and tell you to
     update the DCS first. It also stops you if a PIA was already submitted for this request.
   TECHNICAL: Renders a status card + spinner, then calls apiGetDCSContext(parentID). The
     success handler branches on the result and rewires the proceed button accordingly:
@@ -2320,7 +2320,7 @@ function loadApprovalHistory(sessionId) {
       4) otherwise NEW -> pre-populate state.pia1 from the DCS context and "Continue".
     Stores fresh approverFlags and dcsData onto state; sets window.isDCSVerified/dcsAction/
     dcsSessionId/isRevisionDraft used by renderGuide's proceed handler.
-  PARAMS: (none — reads state.parentID).  RETURNS: undefined (async).
+  PARAMS: (none, reads state.parentID).  RETURNS: undefined (async).
 */
 function renderDCSCheck() {
   const userEmail = state.userEmail || '(anonymous)';
@@ -2436,7 +2436,7 @@ function renderDCSCheck() {
         if (result.existingDraftSessionId) {
           const isRevision = result.existingSubmissionId && (result.existingSubmissionStatus === 'Rejected' || result.existingSubmissionStatus === 'Returned');
           
-          // Check if DCS has been updated — if DCS status is still 'Returned', the user must update DCS first
+          // Check if DCS has been updated, if DCS status is still 'Returned', the user must update DCS first
           const dcsStatus = (result.context && result.context.status || '').toLowerCase();
           let hasDCSFlags = false;
           try {
@@ -2489,7 +2489,7 @@ function renderDCSCheck() {
           window.isRevisionDraft = true;
           window.dcsSessionId = result.existingSubmissionId;
           
-          // Check if DCS has been updated — if DCS status is still 'Returned', the user must update DCS first
+          // Check if DCS has been updated, if DCS status is still 'Returned', the user must update DCS first
           const dcsStatus = (result.context && result.context.status || '').toLowerCase();
           let hasDCSFlags = false;
           try {
@@ -2501,7 +2501,7 @@ function renderDCSCheck() {
           const isDcsUpdated = (dcsStatus !== 'returned' && dcsStatus !== 'rejecteddcs') || !hasDCSFlags;
 
           if (!isDcsUpdated) {
-            // DCS has NOT been updated — block PIA revision and tell user to update DCS first
+            // DCS has NOT been updated, block PIA revision and tell user to update DCS first
             alertEl.innerHTML = `
               <div class="alert alert-warn">
                 <strong>DCS Update Required.</strong> Your application (<strong>${escapeHtml(result.existingSubmissionId)}</strong>) was returned. You must first update your DCS request before you can revise this PIA form.
@@ -2592,7 +2592,7 @@ function renderDCSCheck() {
 
 /*
   Function Name: renderGuide
-  LAYMAN: Step 1 — the instructions + consent screen. The "Proceed" button stays disabled
+  LAYMAN: Step 1: the instructions + consent screen. The "Proceed" button stays disabled
     until the user ticks the agreement box. What happens on Proceed depends on the action set
     by renderDCSCheck: a new application mints a session; a revision loads the prior data.
   TECHNICAL: Renders the guide markup, then defines window.checkProceedReadiness (gates the
@@ -2622,7 +2622,7 @@ function renderGuide() {
           <div class="card-title">Compliance requirements</div>
           <ul style="font-size:13px; color:var(--text2); line-height:2.1; padding-left:1.25rem; list-style:disc outside;">
             <li>All answers must be complete, accurate, and truthful.</li>
-            <li>Submission is <strong>final</strong> — you cannot edit after confirming.</li>
+            <li>Submission is <strong>final</strong>, you cannot edit after confirming.</li>
             <li>Rejected applications may be revised and resubmitted.</li>
             <li>Denied applications are permanently locked for audit.</li>
             <li>Responses are stored and subject to internal review.</li>
@@ -2726,7 +2726,7 @@ function renderGuide() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /*
   Function Name: renderPIA1
-  LAYMAN: Step 3 — the Program/Process Information form (department, program name, the
+  LAYMAN: Step 3: the Program/Process Information form (department, program name, the
     drafter and the head contacts, description, purpose, etc.). It also quietly auto-fills
     blanks from the DCS context (program, scope, accountable persons -> end users) so the
     user doesn't retype what Phase 1 already captured.
@@ -2834,7 +2834,7 @@ function renderPIA1() {
         <div class="card">
           <div class="card-title">Program description</div>
           <div class="field"><label for="p1-desc">Describe your program or process <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('A comprehensive overview of the program, its objectives, and how it operates within the organization.')}</label><textarea id="p1-desc" placeholder="Provide a brief overview of what this program/process does…" maxlength="4000" aria-required="true" oninput="state.pia1.description=sanitizeText(this.value,4000); persistState();">${s.description}</textarea></div>
-          <div class="field"><label for="p1-purp">Purpose <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Explain why personal data is being collected and processed — the legitimate business need.')}</label><textarea id="p1-purp" placeholder="What is the intended purpose of collecting or processing personal data?" maxlength="2500" style="min-height:60px" aria-required="true" oninput="state.pia1.purpose=sanitizeText(this.value,2500); persistState();">${s.purpose}</textarea></div>
+          <div class="field"><label for="p1-purp">Purpose <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Explain why personal data is being collected and processed, the legitimate business need.')}</label><textarea id="p1-purp" placeholder="What is the intended purpose of collecting or processing personal data?" maxlength="2500" style="min-height:60px" aria-required="true" oninput="state.pia1.purpose=sanitizeText(this.value,2500); persistState();">${s.purpose}</textarea></div>
           <div class="field">
             <label for="p1-ben">Expected benefits <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Describe the positive outcomes or value this program delivers to the organization or its stakeholders.')}</label>
             <div class="input-wrapper">
@@ -2843,7 +2843,7 @@ function renderPIA1() {
             </div>
           </div>
           <div class="field">
-            <label for="p1-scope">Scope <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Define the boundaries of data processing — what data, which systems, and who is affected.')}</label>
+            <label for="p1-scope">Scope <span aria-hidden="true" style="color:var(--danger-text)">*</span>${infoTip('Define the boundaries of data processing, what data, which systems, and who is affected.')}</label>
             <div class="input-wrapper">
               <textarea id="p1-scope" class="${getFlagClass('PIA 1 - Scope')}" placeholder="Define the boundaries and coverage of this program…" maxlength="2500" style="min-height:60px" aria-required="true" oninput="state.pia1.scope=sanitizeText(this.value,2500); persistState();" >${s.scope}</textarea>
               ${getFlagIconHtml('PIA 1 - Scope')}
@@ -2868,7 +2868,7 @@ function renderPIA1() {
 
 /*
   Function Name: savePIA1
-  LAYMAN: "Next" on Step 3 — reads the form, validates it, and if it passes, saves and moves
+  LAYMAN: "Next" on Step 3: reads the form, validates it, and if it passes, saves and moves
     to the PII inventory.
   TECHNICAL: syncPIA1State() -> validatePIA1() (returns on failure) -> persistState() ->
     show('pia2')+renderPIA2().
@@ -2910,7 +2910,7 @@ function syncPIA2State() {
 
 /*
   Function Name: renderPIA2
-  LAYMAN: Step 4 — the PII inventory table. One YES/NO row per personal-data category. If the
+  LAYMAN: Step 4: the PII inventory table. One YES/NO row per personal-data category. If the
     user answers YES to "Others" (the last row), an extra section appears where they can name
     and rate their own custom PII categories.
   TECHNICAL: Builds the standard rows from pii2Fields (index 20 'Others' re-renders on change
@@ -3064,7 +3064,7 @@ function addCustomOthersField() {
   Function Name: removeCustomOthersField
   LAYMAN: Deletes the custom-PII row at the given position and re-renders.
   TECHNICAL: syncs PIA2, bounds-checks idx, splices pia2CustomOthers, renderPIA2().
-  PARAMS: idx — row index to remove.  RETURNS: undefined.
+  PARAMS: idx, row index to remove.  RETURNS: undefined.
 */
 function removeCustomOthersField(idx) {
   syncPIA2State();
@@ -3079,7 +3079,7 @@ function removeCustomOthersField(idx) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /*
   Function Name: renderPIA3
-  LAYMAN: Step 5 — Stakeholder Identification. The user lists who's involved internally and
+  LAYMAN: Step 5: Stakeholder Identification. The user lists who's involved internally and
     externally (name + optional email), up to 5 each. Which sections show depends on the DCS
     access type: an Internal request shows only internal, External shows only external,
     otherwise both.
@@ -3216,7 +3216,7 @@ function savePIA3() {
   LAYMAN: Adds one blank stakeholder row to the internal or external list (max 5).
   TECHNICAL: syncs PIA3, picks the int/ext array by prefix, pushes {name,email} if <5,
     re-renders and persists.
-  PARAMS: prefix — 'p3-int' or 'p3-ext'.  RETURNS: undefined.
+  PARAMS: prefix, 'p3-int' or 'p3-ext'.  RETURNS: undefined.
 */
 function addStakeholderField(prefix) {
   syncPIA3State(true);
@@ -3233,7 +3233,7 @@ function addStakeholderField(prefix) {
   LAYMAN: Removes a stakeholder row (always keeps at least one).
   TECHNICAL: syncs PIA3, picks the int/ext array by prefix, splices idx if length>1,
     re-renders and persists.
-  PARAMS: prefix — 'p3-int'|'p3-ext'; idx — row index.  RETURNS: undefined.
+  PARAMS: prefix, 'p3-int'|'p3-ext'; idx, row index.  RETURNS: undefined.
 */
 function removeStakeholderField(prefix, idx) {
   syncPIA3State(true);
@@ -3250,7 +3250,7 @@ function removeStakeholderField(prefix, idx) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /*
   Function Name: renderPIA4
-  LAYMAN: Step 6 — Information Flow. Five required text boxes describing how personal data is
+  LAYMAN: Step 6: Information Flow. Five required text boxes describing how personal data is
     Collected, Used, Retained, Disclosed, and Disposed. Each has a help tooltip.
   TECHNICAL: Maps a flowMeta array to input fields (each writes state.pia4[key] inline and
     toggles .is-invalid live), wires flag highlights, and writes #screen-pia4.
@@ -3348,7 +3348,7 @@ function validatePIA5Completeness() {
 
 /*
   Function Name: renderPIA5Survey
-  LAYMAN: Step 2 — the Privacy Compliance Checklist. Eight questions, each answered YES / NO
+  LAYMAN: Step 2: the Privacy Compliance Checklist. Eight questions, each answered YES / NO
     / N/A. This is the first thing the user fills after the guide.
   TECHNICAL: Maps pia5Questions to radio rows (each writes state.pia5[i] and revalidates the
     Continue button on change), wires flag highlights, and writes #screen-pia5.
@@ -3396,7 +3396,7 @@ function renderPIA5Survey() {
   Function Name: savePIA5Survey
   LAYMAN: "Continue" on Step 2. Every question must be answered before moving on to Program
     Info. Uses a belt-and-suspenders check so a stale re-render can't sneak past.
-  TECHNICAL: Three layers — (1) read each q5-<i> radio into state.pia5 and flag any missing;
+  TECHNICAL: Three layers, (1) read each q5-<i> radio into state.pia5 and flag any missing;
     (2) re-verify against state.pia5 directly; (3) sync the Continue button via
     validatePIA5Completeness. On pass: persist and show('pia1')+renderPIA1().
   PARAMS: (none)  RETURNS: undefined (returns early if incomplete).
@@ -3410,7 +3410,7 @@ function savePIA5Survey() {
     if (!selected) allAnswered = false;
   });
   
-  // LAYER 2: Fallback — validate against state.pia5 object directly
+  // LAYER 2: Fallback, validate against state.pia5 object directly
   // This catches edge cases where DOM query might fail (stale re-render, etc.)
   if (allAnswered) {
     allAnswered = pia5Questions.every((_, i) =>
@@ -3434,7 +3434,7 @@ function savePIA5Survey() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /*
   Function Name: renderSummary
-  LAYMAN: Step 7 — the final review screen. It lays out everything the user entered (program
+  LAYMAN: Step 7: the final review screen. It lays out everything the user entered (program
     info, the PII types marked YES, stakeholders, the checklist answers) plus a read-only
     card of the linked DCS request details, so they can sanity-check before submitting.
   TECHNICAL: Precomputes escaped/sanitized values for state.pia1, the YES PII tags (standard
@@ -3599,11 +3599,11 @@ function renderSummary() {
         </div>
         ${dcsCardHtml}
         <div class="card">
-          <div class="card-title">Survey — Privacy compliance checklist</div>
+          <div class="card-title">Survey: Privacy compliance checklist</div>
           ${pia5rows}
         </div>
         <div class="card">
-          <div class="card-title">PIA 1 — Program information</div>
+          <div class="card-title">PIA 1: Program information</div>
           <div class="summary-row"><div class="summary-label">PIA drafter</div><div class="summary-value">${s.drafter||'—'} (${s.drafterEmail||'—'})</div></div>
           <div class="summary-row"><div class="summary-label">Immediate head</div><div class="summary-value">${s.immediateHead||'—'} (${s.immediateHeadEmail||'—'})</div></div>
           <div class="summary-row ${getFlagClass('PIA 1 - Immediate Head Phone')}">
@@ -3635,12 +3635,12 @@ function renderSummary() {
           <div class="summary-row"><div class="summary-label">Scope</div><div class="summary-value">${s.scope||'—'}</div></div>
         </div>
         <div class="card">
-          <div class="card-title">PIA 2 — PII collected</div>
+          <div class="card-title">PIA 2: PII collected</div>
           <div style="font-size: 11.5px; font-weight: 600; color: var(--navy); text-transform: uppercase; margin-bottom: 10px;">Collected Fields</div>
           <div style="display: flex; flex-wrap: wrap; gap: 6px;">${piiYes}</div>
         </div>
         <div class="card">
-          <div class="card-title">PIA 3 — Stakeholders</div>
+          <div class="card-title">PIA 3: Stakeholders</div>
           <div style="background: var(--bg2); border: 1px solid var(--border); padding: 12px 14px; border-radius: var(--radius); margin-bottom: 12px;">
             <div style="font-size: 11.5px; font-weight: 600; color: var(--navy); text-transform: uppercase; margin-bottom: 8px;">Internal Stakeholders</div>
             <div class="summary-row" style="display: flex !important; border:none; padding:0 0 8px 0;"><div class="summary-value">${stakeholderLine(state.pia3.intStakeholders)}</div></div>
@@ -3653,7 +3653,7 @@ function renderSummary() {
           </div>
         </div>
         <div class="card">
-          <div class="card-title">PIA 4 — Information flow</div>
+          <div class="card-title">PIA 4: Information flow</div>
           ${['collect','use','retain','disclose','dispose'].map(k=>`<div class="summary-row"><div class="summary-label">${k.charAt(0).toUpperCase()+k.slice(1)}</div><div class="summary-value">${escapeHtml(state.pia4[k])||'—'}</div></div>`).join('')}
         </div>
         <div class="btn-row spread">
@@ -3727,7 +3727,7 @@ function submitApplication() {
 /*
   Function Name: renderCertificate
   LAYMAN: (Currently unused.) Renders a "Certificate of PIA Compliance" for a fully approved
-    application — program name, department, drafter, issue date, and the application id.
+    application, program name, department, drafter, issue date, and the application id.
   TECHNICAL: Writes a certificate layout into #screen-certificate. Not reached by the normal
     submit flow (the wizard ends at the confirmation receipt).
   PARAMS: (none)  RETURNS: undefined.
@@ -3768,7 +3768,7 @@ function renderCertificate() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /*
   Function Name: renderConfirmation
-  LAYMAN: The post-submit receipt — confirms success and shows the new Application ID,
+  LAYMAN: The post-submit receipt, confirms success and shows the new Application ID,
     program, department, who submitted, date, and status. Sensitive data is intentionally
     not shown here (it lives only in the secure admin export).
   TECHNICAL: Writes a receipt card into #screen-confirmation; status badge derives from
@@ -3806,7 +3806,7 @@ function renderConfirmation() {
   LAYMAN: Drops a full-screen "Processing…" overlay with a spinner.
   TECHNICAL: Creates and appends #loader-overlay (role=dialog, aria-busy) with an escaped
     message. Removed by hideLoading().
-  PARAMS: message — overlay text (default 'Processing…').  RETURNS: undefined.
+  PARAMS: message, overlay text (default 'Processing…').  RETURNS: undefined.
 */
 function showLoading(message = 'Processing…') {
   const el = document.createElement('div');
@@ -3833,7 +3833,7 @@ function hideLoading() {
   LAYMAN: Shows a small slide-in notification (error or success) that auto-dismisses.
   TECHNICAL: Builds a .toast-<type> element with an inline SVG icon and the escaped message,
     appends it, then animates it out (errors linger ~4.5s, successes ~3s).
-  PARAMS: msg — text; type — 'error' | 'success'.  RETURNS: undefined.
+  PARAMS: msg, text; type, 'error' | 'success'.  RETURNS: undefined.
 */
 function _showToast(msg, type) {
   const el = document.createElement('div');
@@ -3850,19 +3850,19 @@ function _showToast(msg, type) {
     setTimeout(() => el.remove(), 260);
   }, type === 'error' ? 4500 : 3000);
 }
-/* showError — convenience wrapper: shows an error toast. */
+/* showError, convenience wrapper: shows an error toast. */
 function showError(msg)   { _showToast(msg, 'error'); }
-/* showSuccess — convenience wrapper: shows a success toast. */
+/* showSuccess, convenience wrapper: shows a success toast. */
 function showSuccess(msg) { _showToast(msg, 'success'); }
 
 /*
   Function Name: safeIdAttr
-  LAYMAN: Nililinis yung ID bago ilagay sa loob ng onclick="..." — letra, numero, dash, underscore
+  LAYMAN: Nililinis yung ID bago ilagay sa loob ng onclick="...", letra, numero, dash, underscore
           lang ang papasa. Ganun lang naman talaga ang session IDs at Drive file IDs.
   TECHNICAL: Whitelist filter (not a blacklist) for values that land in a JS string literal inside
              an HTML attribute, where HTML-entity escaping alone would not stop a quote breakout.
   PARAMS:
-  - v — the raw id.
+  - v: the raw id.
   RETURNS: The filtered id string ('' for null/undefined).
 */
 function safeIdAttr(v) {
@@ -3872,14 +3872,14 @@ function safeIdAttr(v) {
 /* ── Secure document viewer ──────────────────────────────────────────────────────────
    Deliberate triplicate of the block in Phase 1/index.html and in pia_code.js's
    getStyledHtmlWrapper_. The three GAS projects cannot share code, and the server-rendered
-   approver page is not even the same document as this one — so the same viewer exists three
+   approver page is not even the same document as this one, so the same viewer exists three
    times. 🚩 Edit all three together.
 
    🚩 WHY A MODAL AND NOT window.open(blobUrl). Served inside Apps Script's sandboxed iframe,
    popups are blocked and a blob: URL minted in that frame is not reliably navigable as a
    top-level document. Rendering into the CURRENT document is what works.
 
-   🚩 THE BLOB URL MUST OUTLIVE THE CALL — the <iframe>/<img> reads it for as long as it is on
+   🚩 THE BLOB URL MUST OUTLIVE THE CALL, the <iframe>/<img> reads it for as long as it is on
    screen, so it is revoked in closeFilePreview(), not right after creation. Every exit route
    funnels through there; miss one and the blob leaks for the life of the page.
 ────────────────────────────────────────────────────────────────────────────────────── */
@@ -3890,9 +3890,9 @@ var __filePreviewUrl = null;
 /*
   Function Name: filePreviewEscHandler
   LAYMAN: Isinasara ang preview kapag pinindot mo ang Esc.
-  TECHNICAL: Named (not anonymous) so removeEventListener can actually detach it — an anonymous
+  TECHNICAL: Named (not anonymous) so removeEventListener can actually detach it, an anonymous
              handler would stack one listener per preview opened.
-  PARAMS: - e — the keydown event.   RETURNS: Nothing.
+  PARAMS: - e: the keydown event.   RETURNS: Nothing.
 */
 function filePreviewEscHandler(e) {
   if (e.key === 'Escape') closeFilePreview();
@@ -3902,7 +3902,7 @@ function filePreviewEscHandler(e) {
   Function Name: closeFilePreview
   LAYMAN: Isinasara ang preview at binabalik ang memory na ginamit ng dokumento.
   TECHNICAL: Removes the overlay, revokes the object URL, detaches the Esc listener. Safe to
-             call when nothing is open — showFilePreview calls it first so only one preview
+             call when nothing is open, showFilePreview calls it first so only one preview
              (and one live blob) can exist at a time.
   PARAMS: (none)   RETURNS: Nothing.
 */
@@ -3918,7 +3918,7 @@ function closeFilePreview() {
   LAYMAN: Ipinapakita yung dokumento dito mismo sa page, hindi na dina-download. Kasi ang punto
           ng "View" ay para makita mo kung ano ang isinumite, hindi para mangolekta ng files sa
           laptop mo. PDF at litrato, direktang lalabas. Word/Excel, hindi kayang ipakita ng
-          browser — may Download button na lang at malinaw na paliwanag.
+          browser, may Download button na lang at malinaw na paliwanag.
   TECHNICAL: base64 -> Blob -> object URL, then builds the overlay with createElement and sets
              the filename via textContent. Deliberately NOT innerHTML with the name interpolated:
              the filename is user-supplied and this block is pasted into a document where the
@@ -3926,7 +3926,7 @@ function closeFilePreview() {
              ALWAYS offered even on a successful inline render, as the escape hatch for a browser
              that refuses the type.
   PARAMS:
-  - data — { base64, mimeType, filename } exactly as apiDownloadDcsFile returns it.
+  - data: { base64, mimeType, filename } exactly as apiDownloadDcsFile returns it.
   RETURNS: Nothing (mutates the DOM).
 */
 function showFilePreview(data) {
@@ -3960,7 +3960,7 @@ function showFilePreview(data) {
     'border-bottom:1px solid #e5e7eb;flex-shrink:0;';
 
   var title = document.createElement('div');
-  title.textContent = name;   // user-supplied — never parsed as HTML
+  title.textContent = name;   // user-supplied, never parsed as HTML
   title.style.cssText = 'font-weight:600;font-size:13.5px;color:#111827;flex:1;min-width:0;' +
     'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 
@@ -3971,7 +3971,7 @@ function showFilePreview(data) {
     'border:1px solid #d1d5db;border-radius:4px;background:#fff;color:#111827;flex-shrink:0;';
   dl.onclick = function () {
     var a = document.createElement('a');
-    a.href = __filePreviewUrl;      // reuse the open blob — no second server round trip
+    a.href = __filePreviewUrl;      // reuse the open blob, no second server round trip
     a.download = name;
     document.body.appendChild(a);
     a.click();
@@ -4026,13 +4026,13 @@ function showFilePreview(data) {
   Function Name: viewDcsFile
   LAYMAN: Binubuksan yung DCS na dokumentong naka-attach sa application. Tinitingnan muna ng
           server kung kasama ka ba sa request na ito bago niya ibigay.
-  TECHNICAL: Calls apiDownloadDcsFile(sessionId, fileId) — the server endpoint keeps its name,
+  TECHNICAL: Calls apiDownloadDcsFile(sessionId, fileId), the server endpoint keeps its name,
              it genuinely returns the bytes; only the client presentation changed from a forced
              download to an inline preview.
   PARAMS:
-  - sessionId — PIA session id that owns the linked DCS request.
-  - fileId    — Drive file id (validated server-side against the request).
-  - btn       — the clicked element, for a per-button loading state.
+  - sessionId: PIA session id that owns the linked DCS request.
+  - fileId: Drive file id (validated server-side against the request).
+  - btn: the clicked element, for a per-button loading state.
   RETURNS: Nothing (async; opens the preview overlay or shows an error toast).
 */
 function viewDcsFile(sessionId, fileId, btn) {
@@ -4066,11 +4066,11 @@ function viewDcsFile(sessionId, fileId, btn) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /*
   Function Name: validateEmail
-  LAYMAN: Checks an email looks real — one @, a domain with a dot, a sensible TLD, no double
+  LAYMAN: Checks an email looks real, one @, a domain with a dot, a sensible TLD, no double
     dots. Used before accepting drafter/head/stakeholder emails.
   TECHNICAL: Trim + regex (/^[^\s@]+@[^\s@]+\.[^\s@]+$/) plus structural checks on the domain
     parts and TLD length, and a no-consecutive-dots rule.
-  PARAMS: email — candidate string.
+  PARAMS: email, candidate string.
   RETURNS: boolean.
   EXAMPLE
     validateEmail('jane@corp.com')  -> true
@@ -4097,7 +4097,7 @@ function validateEmail(email) {
   if (domain.includes('..')) return false;
   return true;
 }
-/* isValidEmail — alias of validateEmail (kept for call-site readability). */
+/* isValidEmail, alias of validateEmail (kept for call-site readability). */
 function isValidEmail(email) { return validateEmail(email); }
 
 /*
@@ -4108,8 +4108,8 @@ function isValidEmail(email) { return validateEmail(email); }
   TECHNICAL: Accumulates an errors[] array across required-field, email-format, phone, and
     date-range checks (date parsed as local time to avoid UTC shift). Surfaces them via
     showError joined by ' · '.
-  PARAMS: (none — reads state.pia1).
-  RETURNS: boolean — true if valid.
+  PARAMS: (none, reads state.pia1).
+  RETURNS: boolean, true if valid.
 */
 function validatePIA1() {
   const errors = [];
@@ -4174,9 +4174,9 @@ function submitToBackend() {
     the receipt screen.
   TECHNICAL: Clears the safety timeout. On result.ok: sets submittedAt/status/appId,
     isIncomplete=false, draftStatus='completed', resets approvers, fires
-    apiMarkDraftComplete, persists, then show('confirmation'). On !success: re-enables and
+    apiMarkDraftComplete, persists, then show('confirmation'). On !ok: re-enables and
     shows the error.
-  PARAMS: result — { success, appId, timestamp, errors?/error? }.  RETURNS: undefined.
+  PARAMS: result, { ok, appId, timestamp, errors?/message? }.  RETURNS: undefined.
 */
 function onSubmitSuccess(result) {
   clearTimeout(window._submitTimeoutId);
@@ -4216,7 +4216,7 @@ function onSubmitSuccess(result) {
     and shows the actual error (never a fake success).
   TECHNICAL: Clears the safety timeout, hides loading, resets isSubmitting, re-enables the
     button, sets currentScreen='summary', persists, re-renders summary, and toasts the error.
-  PARAMS: error — the failure (Error or string).  RETURNS: undefined.
+  PARAMS: error, the failure (Error or string).  RETURNS: undefined.
 */
 function onSubmitError(error) {
   clearTimeout(window._submitTimeoutId);
@@ -4315,7 +4315,7 @@ function promptForUserEmail() {
     reads parentID from the server scriptlet (see note below); seeds state and boots the dcs
     screen; then loadUserEmail().
   NOTE: the `const parentId = ...` line near the bottom of the script is a GAS server-side
-  template tag (a printing scriptlet), not plain JS — it is rendered server-side before the
+  template tag (a printing scriptlet), not plain JS, it is rendered server-side before the
   page is sent. Do not "fix" it, and never write the scriptlet delimiters inside a comment
   (the template engine parses them even in comments).
 */

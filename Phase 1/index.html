@@ -3,7 +3,7 @@
 <head>
 <!--
   [ OUTLINE ]
-  FILE: index.html  (DCS / Privacy Impact Assessment — Phase 1 frontend)
+  FILE: index.html  (DCS / Privacy Impact Assessment: Phase 1 frontend)
 
   PURPOSE (Layman): This is the request form people use to ask for access to company
   data. You read the guidelines, fill in your profile / approvers / attachments, review
@@ -15,7 +15,7 @@
   screen <div>s (#screen-landing, #screen-guide, ...) that the render*() functions fill
   with HTML template literals at runtime; show(name) toggles which one is visible. The app
   talks to the GAS backend exclusively through google.script.run.apiXXX() async calls
-  (no localStorage — drafts persist server-side). All colors/spacing come from CSS custom
+  (no localStorage, drafts persist server-side). All colors/spacing come from CSS custom
   properties in :root. A single mutable `state` object holds the in-progress DCS form,
   session/draft ids, revision flags, approver flags, and the signed-in user's email.
   Client-side validation + a 1.2s-debounced autosave guard the form before submit.
@@ -72,7 +72,7 @@
     - cancelRevision()             confirm + discard a revision in progress
     - resetDraftState()            wipe state.dcs and session/draft ids
     - logout()                     reset + return to landing
-    - generateSessionId()          stub — ids are minted server-side
+    - generateSessionId()          stub, ids are minted server-side
     - sanitizeDCSData(data)        clean a DCS payload before summary/submit
     - preserveFiles()              cache File objects across re-renders
     - syncDCSState()               read Section-2 DOM inputs into state.dcs
@@ -90,43 +90,43 @@
     - renderWithErrorBoundary(screenId,renderFn)  catch render crashes
     - renderSidebarTracker(activeStep)  3-step progress sidebar (desktop+mobile)
 
-  CATEGORY: RENDER — LANDING
+  CATEGORY: RENDER: LANDING
     - renderLanding()              home: New Request vs Review Applications
     - startNew()                   reset + go to guide
 
-  CATEGORY: RENDER — GUIDE
+  CATEGORY: RENDER: GUIDE
     - renderGuide()                Section 1: instructions, T&Cs, downloadable templates
     - proceedToForm(btnEl)         check for drafts, then guide → drafts/form
     - initiateNewSession(btnEl)    mint a server session id, then open the form
 
-  CATEGORY: RENDER — DRAFTS
+  CATEGORY: RENDER: DRAFTS
     - renderDrafts(draftList,fromScreen)  list saved drafts with Load/Disregard
 
-  CATEGORY: RENDER — FORM (Section 2)
+  CATEGORY: RENDER: FORM (Section 2)
     - renderForm()                 main input form (profile, accountables, heads, uploads)
     - handleFileChange(input,successId)   show selected filename, clear re-upload flag
     - readFileAsBase64(file)       validate + base64-encode an upload for the backend
     - saveDCSForm()                validate Section 2, branch to agency or summary
 
-  CATEGORY: RENDER — AGENCY (Section 2b)
+  CATEGORY: RENDER: AGENCY (Section 2b)
     - renderAgency()               extra agency fields (shown only for Agency requests)
     - saveAgencyForm()             sync + validate agency, go to summary
 
-  CATEGORY: RENDER — SUMMARY (Section 3)
+  CATEGORY: RENDER: SUMMARY (Section 3)
     - summaryRow(label,value)      one label/value row HTML
     - renderSummary()              review-before-submit screen
     - submitRequest()              encode files + submitDCS to the backend
 
-  CATEGORY: RENDER — SUCCESS
+  CATEGORY: RENDER: SUCCESS
     - renderSuccess(reqId,submittedAt,phase2Url)  confirmation + Phase 2 link
 
-  CATEGORY: RENDER — REQUESTS LIST
+  CATEGORY: RENDER: REQUESTS LIST
     - renderRequests()             "My Applications" list + status legend
     - getStatusKey(dcsStatus,piaStatus)  collapse DCS+PIA status to a filter key
     - renderRequestRow(req)        one request row HTML
     - applyRequestFilters()        search + status filtering of the list
 
-  CATEGORY: RENDER — REQUEST DETAILS
+  CATEGORY: RENDER: REQUEST DETAILS
     - viewRequestDetails(reqId)    fetch + render a single request's detail screen
     - renderRequestDetails(data)   assemble detail cards + timelines + action button
     - editReturnedApplication(reqId)  enter revision mode from a returned request
@@ -213,7 +213,7 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    /* GENERATED from docs/design-tokens.css — edit there, then paste into all 6 targets.
+    /* GENERATED from docs/design-tokens.css, edit there, then paste into all 6 targets.
        The other five: Phase 2/pia_index.html, Admin/adminView.html, and the
        getStyledHtmlWrapper_ block in each of the three backends. */
     :root {
@@ -1615,7 +1615,7 @@
           </div>
   </div>
 
-  <!-- SECTION: Screen mounts — all empty; render*() fills them and show() toggles visibility -->
+  <!-- SECTION: Screen mounts, all empty; render*() fills them and show() toggles visibility -->
   <div id="screen-landing" aria-live="polite"></div>
   <div id="screen-guide"   class="hidden" aria-live="polite"></div>
   <div id="screen-form"    class="hidden" aria-live="polite"></div>
@@ -1633,7 +1633,7 @@
   <span id="draft-status">Saved</span>
 </div>
 
-<!-- SECTION: Reusable modals — generic confirm dialog + Terms & Conditions iframe gate -->
+<!-- SECTION: Reusable modals, generic confirm dialog + Terms & Conditions iframe gate -->
 <div id="custom-modal-overlay" class="modal-overlay hidden">
   <div class="modal-box">
     <div class="modal-header">
@@ -1699,7 +1699,7 @@ const state = {
   lastDrafts: [],
   isSubmitting: false,
   isEditing: false,
-  userEmail: '', // Signed-in user's email (fetched at boot) — used for the "Hi <name>" greeting
+  userEmail: '', // Signed-in user's email (fetched at boot), used for the "Hi <name>" greeting
   config: {}, // Store dynamic links here
   approverFlags: {},
   dcs: {
@@ -1727,7 +1727,7 @@ const state = {
 
   LAYMAN:
   We only know the user's email, never their display name. This guesses their surname from
-  the email so the greeting can say "Hello, Bisquera!". Best-effort — it can be wrong for
+  the email so the greeting can say "Hello, Bisquera!". Best-effort, it can be wrong for
   oddly-formatted addresses, in which case it falls back to "there".
 
   TECHNICAL:
@@ -1737,7 +1737,7 @@ const state = {
   ([._+-]), then title-cases it.
 
   PARAMS:
-  - email — the signed-in user's email (string; anything falsy/non-string -> 'there').
+  - email: the signed-in user's email (string; anything falsy/non-string -> 'there').
 
   RETURNS:
   Title-cased surname guess, or 'there' when the email is empty/unparseable.
@@ -1765,7 +1765,7 @@ function deriveSurname(email) {
   backward compatibility with old call sites but is no longer used.
 
   PARAMS:
-  - scale — legacy size hint (ignored).
+  - scale: legacy size hint (ignored).
 
   RETURNS:
   HTML string for the greeting line, or '' before identity is known.
@@ -1782,18 +1782,18 @@ let autoSaveTimeout;
   Function Name: showCustomAlert
 
   LAYMAN:
-  Pops a small notification ("toast") in the corner — green for success, red for errors,
+  Pops a small notification ("toast") in the corner, green for success, red for errors,
   etc. It auto-disappears after a few seconds. Used for validation messages and status hints.
 
   TECHNICAL:
   Lazily creates #toast-container, then appends an .alert.toast element with an inline SVG
-  icon chosen by `type`. Autosave toasts (.toast-autosave) are deduped — any existing one is
-  removed first — and dismiss after 3s; others after 5s, via removeToast().
+  icon chosen by `type`. Autosave toasts (.toast-autosave) are deduped, any existing one is
+  removed first, and dismiss after 3s; others after 5s, via removeToast().
 
   PARAMS:
-  - message — text to display.
-  - type — 'success' | 'warn' | 'danger' | 'info' (default 'danger'); picks icon + styling.
-  - isAutoSave — if true, replaces prior autosave toast and uses the shorter timeout.
+  - message: text to display.
+  - type: 'success' | 'warn' | 'danger' | 'info' (default 'danger'); picks icon + styling.
+  - isAutoSave: if true, replaces prior autosave toast and uses the shorter timeout.
 
   RETURNS:
   Nothing (DOM side-effect only).
@@ -1849,7 +1849,7 @@ function showCustomAlert(message, type = 'danger', isAutoSave = false) {
   LAYMAN: Fades a toast out and removes it from the page.
   TECHNICAL: Sets a 0.3s fadeOut animation, then removes the node after 300ms if still attached.
   PARAMS:
-  - toast — the toast element to dismiss.
+  - toast: the toast element to dismiss.
   RETURNS: Nothing.
 */
 function removeToast(toast) {
@@ -1871,8 +1871,8 @@ function removeToast(toast) {
   spinner and stays put; otherwise it spins down and auto-fades to display:none after ~2.5s.
 
   PARAMS:
-  - msg — status text (a "saving" substring triggers the persistent spinner state).
-  - isError — if true, colors the text with --danger-text.
+  - msg: status text (a "saving" substring triggers the persistent spinner state).
+  - isError: if true, colors the text with --danger-text.
 
   RETURNS:
   Nothing (DOM side-effect only).
@@ -1915,9 +1915,9 @@ function showDraftStatus(msg, isError = false) {
   the overlay.
 
   PARAMS:
-  - message — the confirmation prompt text.
-  - onConfirm — callback invoked on Confirm (optional).
-  - type — alert style 'warn' | 'danger' | etc. (default 'warn').
+  - message: the confirmation prompt text.
+  - onConfirm: callback invoked on Confirm (optional).
+  - type: alert style 'warn' | 'danger' | etc. (default 'warn').
 
   RETURNS:
   Nothing (resolves through the callback).
@@ -1961,11 +1961,11 @@ function hideCustomModal() {
   TECHNICAL:
   Looks up state.approverFlags by exact `fieldKey` first. If missing, it resolves the field's
   human label (from FORM_FIELDS, plus hardcoded labels for files/accountable/agency keys) and
-  does a case-insensitive substring match against the flag keys — because backend flag keys are
+  does a case-insensitive substring match against the flag keys, because backend flag keys are
   label-based, not always the DOM id.
 
   PARAMS:
-  - fieldKey — the field's DOM id / flag key (e.g. 'dcs-nda', 'dcs-imm-head-name').
+  - fieldKey: the field's DOM id / flag key (e.g. 'dcs-nda', 'dcs-imm-head-name').
 
   RETURNS:
   The approver note string, or '' if the field isn't flagged.
@@ -2020,7 +2020,7 @@ function getFlagMessage(fieldKey) {
   LAYMAN: Returns the CSS class that highlights a flagged field in red.
   TECHNICAL: 'has-flag' if getFlagMessage(fieldKey) is non-empty, else ''.
   PARAMS:
-  - fieldKey — field id / flag key.
+  - fieldKey: field id / flag key.
   RETURNS: 'has-flag' or ''.
 */
 function getFlagClass(fieldKey) {
@@ -2033,7 +2033,7 @@ function getFlagClass(fieldKey) {
   TECHNICAL: Returns a .flag-icon-tooltip block whose tooltip carries the escaped approver
              note. Empty string when the field has no flag.
   PARAMS:
-  - fieldKey — field id / flag key.
+  - fieldKey: field id / flag key.
   RETURNS: Tooltip-icon HTML string, or ''.
 */
 function getFlagIconHtml(fieldKey) {
@@ -2056,7 +2056,7 @@ function getFlagIconHtml(fieldKey) {
           (used where there's no single input to attach an icon to, e.g. accountables/agency).
   TECHNICAL: Returns a .flag-feedback block with the escaped note. Empty string when unflagged.
   PARAMS:
-  - fieldKey — field id / flag key.
+  - fieldKey: field id / flag key.
   RETURNS: Banner HTML string, or ''.
 */
 function getContainerFlagHtml(fieldKey) {
@@ -2076,7 +2076,7 @@ function getContainerFlagHtml(fieldKey) {
           return? Only meaningful when the user is revising a returned application.
   TECHNICAL: Returns false unless state.isEditing; otherwise !!getFlagMessage(fileKey).
   PARAMS:
-  - fileKey — the file's flag key (e.g. 'dcs-nda', 'dcs-dsa', 'dcs-agency-endorsement').
+  - fileKey: the file's flag key (e.g. 'dcs-nda', 'dcs-dsa', 'dcs-agency-endorsement').
   RETURNS: boolean.
 */
 function isFileFlaggedForRevision(fileKey) {
@@ -2089,7 +2089,7 @@ function isFileFlaggedForRevision(fileKey) {
   LAYMAN: The approver's note about a flagged file, shown above its upload card.
   TECHNICAL: '' unless state.isEditing; otherwise getFlagMessage(fileKey).
   PARAMS:
-  - fileKey — the file's flag key.
+  - fileKey: the file's flag key.
   RETURNS: The note string, or ''.
 */
 function getFileFlagMessage(fileKey) {
@@ -2125,8 +2125,8 @@ function getFlaggedSupplementaryFiles() {
           needed)? Yes when the file existed before AND the approver did not flag it.
   TECHNICAL: false unless state.isEditing; otherwise fileExists && !isFileFlaggedForRevision(fileKey).
   PARAMS:
-  - fileKey — the file's flag key.
-  - fileExists — whether a file of this type existed in the prior submission.
+  - fileKey: the file's flag key.
+  - fileExists: whether a file of this type existed in the prior submission.
   RETURNS: boolean.
 */
 function isFileRetainedInRevision(fileKey, fileExists) {
@@ -2185,7 +2185,7 @@ function hasPendingFlaggedFiles() {
   Function Name: validatePersonName
 
   LAYMAN:
-  Cleans up what someone types into a name field as they type — drops symbols that never
+  Cleans up what someone types into a name field as they type, drops symbols that never
   belong in a name and pulls out any pasted email address. Keeps spaces so typing feels natural.
 
   TECHNICAL:
@@ -2194,8 +2194,8 @@ function hasPendingFlaggedFiles() {
   doesn't jump while typing.
 
   PARAMS:
-  - value — the raw input value.
-  - alphaOnly — if true, also remove all digits (default false).
+  - value: the raw input value.
+  - alphaOnly: if true, also remove all digits (default false).
 
   RETURNS:
   The cleaned name string (whitespace preserved).
@@ -2222,7 +2222,7 @@ function validatePersonName(value, alphaOnly = false) {
   LAYMAN: Renders a faint "≤75" style hint appended to a field label.
   TECHNICAL: Returns a styled <span> showing the max length.
   PARAMS:
-  - max — the maximum character count to display.
+  - max: the maximum character count to display.
   RETURNS: HTML string.
 */
 // Subtle character limit hint (appended to labels)
@@ -2243,14 +2243,14 @@ function reqMark() {
 // --- Sanitization -----------------------------------
 /*
   Function Name: sanitizeText
-  LAYMAN: Light cleanup of free text before we store/send it — removes angle brackets and
+  LAYMAN: Light cleanup of free text before we store/send it, removes angle brackets and
           obvious script-injection bits, then caps the length. Deliberately gentle so names
           like "O'Connor" survive intact (escaping happens at render time via escapeHtml).
   TECHNICAL: Returns '' for non-strings. Strips < >, NUL, "javascript:" and inline "on*="
              handlers, trims, then slices to maxLength.
   PARAMS:
-  - value — the input string.
-  - maxLength — max length cap (default 5000).
+  - value: the input string.
+  - maxLength: max length cap (default 5000).
   RETURNS: The cleaned, length-capped string.
 */
 function sanitizeText(value, maxLength = 5000) {
@@ -2267,7 +2267,7 @@ function sanitizeText(value, maxLength = 5000) {
   LAYMAN: True if the text looks like a real email and isn't absurdly long.
   TECHNICAL: Tests local@domain.tld with a simple regex and enforces MAX_EMAIL_LENGTH.
   PARAMS:
-  - email — the candidate email string.
+  - email: the candidate email string.
   RETURNS: boolean.
 */
 // Email validation helper (RFC-ish compliant)
@@ -2293,11 +2293,11 @@ function getCorporateDomain() {
 
 /*
   Function Name: isValidHeadEmail
-  LAYMAN: Approver (head) emails must be company addresses — this checks the domain.
+  LAYMAN: Approver (head) emails must be company addresses, this checks the domain.
   TECHNICAL: Lowercases/trims and requires the address to end with '@' + getCorporateDomain().
              Always enforced for Immediate/Dept/Division head emails.
   PARAMS:
-  - email — the head's email.
+  - email: the head's email.
   RETURNS: boolean.
 */
 // Head email domain check (Immediate, Dept, Div Heads only)
@@ -2315,8 +2315,8 @@ function isValidHeadEmail(email) {
 
   LAYMAN:
   The gatekeeper for Section 2. Before you can move on, this walks every field and complains
-  (with a red toast) about the first problem it finds — missing required field, bad email,
-  non-company head email, numbers-only iHelp, too-long values, no accountable person, etc. —
+  (with a red toast) about the first problem it finds, missing required field, bad email,
+  non-company head email, numbers-only iHelp, too-long values, no accountable person, etc.,
   and focuses that field so you can fix it.
 
   TECHNICAL:
@@ -2326,16 +2326,16 @@ function isValidHeadEmail(email) {
   the optional Division Head email's format/domain. Returns on the FIRST failure.
 
   PARAMS:
-  - (none) — reads live DOM values.
+  - (none), reads live DOM values.
 
   RETURNS:
   true if every check passes; false (after showing a toast + focusing the field) on the first
   failure.
 
   STEPS
-    Step 1 — Required core fields: presence, no-spaces, email format, head domain, iHelp digits, length.
-    Step 2 — Accountable rows: at least one, each with valid name + email.
-    Step 3 — Optional fields (location-other, div head name/email): reject spaces-only; validate div email if given.
+    Step 1: Required core fields: presence, no-spaces, email format, head domain, iHelp digits, length.
+    Step 2: Accountable rows: at least one, each with valid name + email.
+    Step 3: Optional fields (location-other, div head name/email): reject spaces-only; validate div email if given.
 */
 // Form validation
 function validateDCSForm() {
@@ -2480,7 +2480,7 @@ function checkGuideRequirements() {
   TECHNICAL: Lowercase/trim, then map known literal statuses to friendly strings; unknown
              values pass through unchanged.
   PARAMS:
-  - status — the raw status string.
+  - status: the raw status string.
   RETURNS: A display-ready label string.
 */
 function formatStatusLabel(status) {
@@ -2505,7 +2505,7 @@ function formatStatusLabel(status) {
 
   LAYMAN:
   A request lives across two phases (DCS, then PIA). This decides the single badge + short
-  description that best sums up where it stands right now — e.g. "Pending Immediate Head",
+  description that best sums up where it stands right now, e.g. "Pending Immediate Head",
   "Ready for Phase 2 (PIA)", "Fully Certified", "Rejected by ISM".
 
   TECHNICAL:
@@ -2515,8 +2515,8 @@ function formatStatusLabel(status) {
   makeBadge() helper to emit a .status-badge + description block.
 
   PARAMS:
-  - dcsStatus — the DCS phase status string.
-  - piaStatus — the PIA phase status string (may be blank if PIA hasn't started).
+  - dcsStatus: the DCS phase status string.
+  - piaStatus: the PIA phase status string (may be blank if PIA hasn't started).
 
   RETURNS:
   HTML string: a status badge paired with a one-line description.
@@ -2580,18 +2580,18 @@ function getCombinedStatusBadge(dcsStatus, piaStatus) {
 
   LAYMAN:
   Builds the collapsible "DCS Request: <Name> (<id>)" card on the request-details screen that
-  lists everything submitted — profile, accountables, approvers, documents, and remarks.
+  lists everything submitted, profile, accountables, approvers, documents, and remarks.
 
   TECHNICAL:
   Returns a <details open> card composed of summaryRow() rows. Accountables are read from
   s.accountable[`accountableName/Email${i}`] (1..5). All values are escaped by summaryRow().
 
   PARAMS:
-  - s — the request metadata object.
-  - reqId — the request id (shown in the header).
-  - ndaFile — display name for the NDA/DPA/CU file.
-  - dsaFile — display name for the DSA file.
-  - remarks — approver remarks (falls back to "No remarks.").
+  - s: the request metadata object.
+  - reqId: the request id (shown in the header).
+  - ndaFile: display name for the NDA/DPA/CU file.
+  - dsaFile: display name for the DSA file.
+  - remarks: approver remarks (falls back to "No remarks.").
 
   RETURNS:
   HTML string for the collapsible summary card.
@@ -2668,16 +2668,16 @@ function getDetailedDcsSummaryCardHtml(s, reqId, ndaFile, dsaFile, endorsementFi
   .horizontal-timeline (which collapses to vertical on mobile via CSS).
 
   PARAMS:
-  - data — request object: { status, piaStatus, approverComments|remarks, ... }.
+  - data: request object: { status, piaStatus, approverComments|remarks, ... }.
 
   RETURNS:
   HTML string for the progress timeline card.
 
   STEPS
-    Step 1 — DCS Request stop: done/returned/denied/active from the DCS status.
-    Step 2 — PIA Assessment: action-required / in-progress / returned / denied / done, gated on DCS cleared.
-    Step 3 — ISM Approval: advances only once PIA heads are done (approved/escalated/ism states).
-    Step 4 — Certification: marked certified once ISM approves/completes.
+    Step 1: DCS Request stop: done/returned/denied/active from the DCS status.
+    Step 2: PIA Assessment: action-required / in-progress / returned / denied / done, gated on DCS cleared.
+    Step 3: ISM Approval: advances only once PIA heads are done (approved/escalated/ism states).
+    Step 4: Certification: marked certified once ISM approves/completes.
 */
 function renderPiaTimeline(data) {
   const dcsLower = String(data.status || '').toLowerCase().trim();
@@ -2708,7 +2708,7 @@ function renderPiaTimeline(data) {
   let step2Sub = '<span class="status-badge" style="background: var(--bg3); color: var(--text2);">Upcoming</span>';
   let step2Comment = 'Complete DCS Phase 1 to unlock Phase 2.';
 
-  // Step 3: Heads Approval (Immediate / Department Head)  [#11 — distinct stage]
+  // Step 3: Heads Approval (Immediate / Department Head)  [#11, distinct stage]
   let stepHClass = '';
   let stepHSub = '<span class="status-badge" style="background: var(--bg3); color: var(--text2);">Upcoming</span>';
   let stepHComment = 'Awaiting Immediate Head / Department Head approval.';
@@ -2844,7 +2844,7 @@ function renderPiaTimeline(data) {
 
   LAYMAN:
   The vertical "ISM & DivHead Approval Tracker" card listing each InfoSec (ISM) reviewer and,
-  if the request was escalated, each Division Head — with their decision badge, date, and any
+  if the request was escalated, each Division Head, with their decision badge, date, and any
   comment. If escalation never happened it shows "Not required for this application."
 
   TECHNICAL:
@@ -2854,7 +2854,7 @@ function renderPiaTimeline(data) {
   Escalation is detected from an ISM 'escalated to division head' decision or any DivHead rows.
 
   PARAMS:
-  - data — request object with ismApprovers[], divHeadApprovers[], status, piaStatus, approverFlags.
+  - data: request object with ismApprovers[], divHeadApprovers[], status, piaStatus, approverFlags.
 
   RETURNS:
   HTML string for the ISM/DivHead tracker card, or '' if there's nothing to show.
@@ -3006,7 +3006,7 @@ function renderISMAndDivHeadTracker(data, innerOnly) {
   ISM tracker (pending+comment -> commented/returned; pending+overallApproved -> approved).
 
   PARAMS:
-  - data — request object: { approvers[], status, piaStatus, piaDecision, timestamp, approverFlags }.
+  - data: request object: { approvers[], status, piaStatus, piaDecision, timestamp, approverFlags }.
 
   RETURNS:
   HTML string for the approval tracker card, or '' if there are no approvers.
@@ -3149,7 +3149,7 @@ function renderApprovalTracker(data, innerOnly) {
   Statuses follow the unified color matrix; legacy boilerplate comments are hidden.
 
   PARAMS:
-  - data — the apiGetRequestData response.
+  - data: the apiGetRequestData response.
 
   RETURNS:
   HTML string for the unified card, or '' when there is nothing to show.
@@ -3229,7 +3229,7 @@ function renderUnifiedApprovalHistory(data) {
   TECHNICAL: Replaces & < > " ' with their HTML entities. The primary XSS defense for all
              template-literal interpolation in this file.
   PARAMS:
-  - str — the raw string (falsy -> '').
+  - str: the raw string (falsy -> '').
   RETURNS: The HTML-escaped string.
 */
 function escapeHtml(str) {
@@ -3242,7 +3242,7 @@ function escapeHtml(str) {
   TECHNICAL: Parses raw with new Date(); returns '' on invalid/empty. Uses en-US locale
              date + 12-hour time.
   PARAMS:
-  - raw — a Date-parseable value.
+  - raw: a Date-parseable value.
   RETURNS: Formatted string, or '' if unparseable.
 */
 function formatTimestampDisplay(raw) {
@@ -3261,7 +3261,7 @@ function formatTimestampDisplay(raw) {
   LAYMAN: Drops a full-screen "Processing..." spinner overlay that blocks the UI during async work.
   TECHNICAL: Appends a #loader-overlay div (role=dialog, aria-busy) with a spinner + escaped message.
   PARAMS:
-  - message — text under the spinner (default 'Processing...').
+  - message: text under the spinner (default 'Processing...').
   RETURNS: Nothing.
 */
 function showLoading(message = 'Processing...') {
@@ -3290,11 +3290,11 @@ function hideLoading() {
   LAYMAN: Cleans an ID so it is safe to drop inside an onclick="..." attribute. Request IDs and
           Drive file IDs are only ever letters, numbers, dashes and underscores, so anything else
           is stripped rather than escaped.
-  TECHNICAL: Whitelist filter (not a blacklist) — returns '' for null/undefined. Used instead of
+  TECHNICAL: Whitelist filter (not a blacklist), returns '' for null/undefined. Used instead of
              escapeHtml for values that land inside a JS string literal inside an HTML attribute,
              where HTML-entity escaping alone would not prevent quote breakout.
   PARAMS:
-  - v — the raw id.
+  - v: the raw id.
   RETURNS: The filtered id string.
 */
 function safeIdAttr(v) {
@@ -3314,7 +3314,7 @@ function safeIdAttr(v) {
 
    🚩 THE BLOB URL MUST OUTLIVE THE CALL. The old download-only path revoked immediately
    after the synthetic click; a preview cannot, because the <iframe>/<img> reads the URL
-   for as long as it is on screen. It is revoked in closeFilePreview() instead — which is
+   for as long as it is on screen. It is revoked in closeFilePreview() instead, which is
    why every exit route (X, backdrop, Esc, opening a second file) funnels through there.
    Miss one and the blob leaks for the life of the page.
 ────────────────────────────────────────────────────────────────────────────────────── */
@@ -3325,9 +3325,9 @@ var __filePreviewUrl = null;
 /*
   Function Name: filePreviewEscHandler
   LAYMAN: Closes the document preview when you press Esc.
-  TECHNICAL: Named (not anonymous) so removeEventListener can actually detach it — an
+  TECHNICAL: Named (not anonymous) so removeEventListener can actually detach it, an
              anonymous handler here would stack one listener per preview opened.
-  PARAMS: - e — the keydown event.   RETURNS: Nothing.
+  PARAMS: - e: the keydown event.   RETURNS: Nothing.
 */
 function filePreviewEscHandler(e) {
   if (e.key === 'Escape') closeFilePreview();
@@ -3350,7 +3350,7 @@ function closeFilePreview() {
 
 /*
   Function Name: showFilePreview
-  LAYMAN: Shows the document right here on the page instead of downloading it — because the
+  LAYMAN: Shows the document right here on the page instead of downloading it, because the
           point of "View" is to check what was submitted, not to collect files on your laptop.
           PDFs and images show inline; anything else (Word, Excel) can't be displayed by a
           browser, so those get a Download button and an honest explanation.
@@ -3361,7 +3361,7 @@ function closeFilePreview() {
              A Download button is ALWAYS offered even when the inline render succeeds, as the
              escape hatch if a given browser refuses to display the type.
   PARAMS:
-  - data — { base64, mimeType, filename } exactly as apiDownloadDcsFile returns it.
+  - data: { base64, mimeType, filename } exactly as apiDownloadDcsFile returns it.
   RETURNS: Nothing (mutates the DOM).
 */
 function showFilePreview(data) {
@@ -3395,7 +3395,7 @@ function showFilePreview(data) {
     'border-bottom:1px solid #e5e7eb;flex-shrink:0;';
 
   var title = document.createElement('div');
-  title.textContent = name;   // user-supplied — never parsed as HTML
+  title.textContent = name;   // user-supplied, never parsed as HTML
   title.style.cssText = 'font-weight:600;font-size:13.5px;color:#111827;flex:1;min-width:0;' +
     'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 
@@ -3406,7 +3406,7 @@ function showFilePreview(data) {
     'border:1px solid #d1d5db;border-radius:4px;background:#fff;color:#111827;flex-shrink:0;';
   dl.onclick = function () {
     var a = document.createElement('a');
-    a.href = __filePreviewUrl;      // reuse the open blob — no second server round trip
+    a.href = __filePreviewUrl;      // reuse the open blob, no second server round trip
     a.download = name;
     document.body.appendChild(a);
     a.click();
@@ -3461,14 +3461,14 @@ function showFilePreview(data) {
   Function Name: viewDcsFile
   LAYMAN: Opens one of the uploaded documents so you can look at it. The server first checks
           the document really belongs to this request before handing anything over.
-  TECHNICAL: Calls apiDownloadDcsFile(reqId, fileId) — the server endpoint keeps its name, it
+  TECHNICAL: Calls apiDownloadDcsFile(reqId, fileId), the server endpoint keeps its name, it
              genuinely returns the bytes; only the client presentation changed from a forced
              download to an inline preview. Disables the button for the round trip and restores
              it on every branch.
   PARAMS:
-  - reqId  — the DCS Request ID that owns the document.
-  - fileId — the Drive file ID (validated server-side against reqId).
-  - btn    — the clicked element, so we can show a per-button loading state.
+  - reqId: the DCS Request ID that owns the document.
+  - fileId: the Drive file ID (validated server-side against reqId).
+  - btn: the clicked element, so we can show a per-button loading state.
   RETURNS: Nothing (async; opens the preview overlay or shows an alert).
 */
 function viewDcsFile(reqId, fileId, btn) {
@@ -3506,8 +3506,8 @@ function viewDcsFile(reqId, fileId, btn) {
   TECHNICAL: try/catch wrapper around renderFn(); on error logs it and writes a fallback
              into the given screen container.
   PARAMS:
-  - screenId — id of the screen container to write the fallback into.
-  - renderFn — the render function to invoke.
+  - screenId: id of the screen container to write the fallback into.
+  - renderFn: the render function to invoke.
   RETURNS: Nothing.
 */
 // Error boundary wrapper (MEDIUM: prevents render crashes)
@@ -3566,7 +3566,7 @@ function getStateSnapshot() {
   Function Name: persistState
 
   LAYMAN:
-  Saves the current draft to the server (the Drafts sheet) — but only if a session is active.
+  Saves the current draft to the server (the Drafts sheet), but only if a session is active.
   For autosaves it also updates the little "Saved / Save failed" pill.
 
   TECHNICAL:
@@ -3575,7 +3575,7 @@ function getStateSnapshot() {
   Intentionally does NOT use localStorage (avoids client/server state mismatch).
 
   PARAMS:
-  - isAutoSave — when true, surface save status in the autosave pill (default false).
+  - isAutoSave: when true, surface save status in the autosave pill (default false).
 
   RETURNS:
   Nothing (async backend write).
@@ -3606,7 +3606,7 @@ function persistState(isAutoSave = false) {
 
 /*
   Function Name: triggerAutoSave
-  LAYMAN: Debounced autosave — waits ~1.2s after you stop typing on the form, then syncs and
+  LAYMAN: Debounced autosave, waits ~1.2s after you stop typing on the form, then syncs and
           saves the draft. Wired to global input/change events.
   TECHNICAL: No-op unless on the 'form' screen with a session. Clears the prior timeout, shows
              "Saving...", then after 1200ms runs syncDCSState() + persistState(true).
@@ -3625,7 +3625,7 @@ function triggerAutoSave() {
 
 /*
   Function Name: restoreState
-  LAYMAN: Intentionally does nothing — localStorage restoration was disabled on purpose.
+  LAYMAN: Intentionally does nothing, localStorage restoration was disabled on purpose.
   TECHNICAL: Always returns false. Kept as a stub so call sites don't break.
   PARAMS: (none)
   RETURNS: false.
@@ -3639,7 +3639,7 @@ function restoreState() {
   LAYMAN: If the draft being deleted is the one you're currently working on, clear the form.
   TECHNICAL: Calls resetDraftState() only when sid matches state.sessionId.
   PARAMS:
-  - sid — the session id of the deleted draft.
+  - sid: the session id of the deleted draft.
   RETURNS: Nothing.
 */
 function deleteDraft(sid) {
@@ -3648,7 +3648,7 @@ function deleteDraft(sid) {
 
 /*
   Function Name: cancelRevision
-  LAYMAN: Bails out of revising a returned application — asks to confirm, discards the working
+  LAYMAN: Bails out of revising a returned application, asks to confirm, discards the working
           draft, and returns to the requests list.
   TECHNICAL: showCustomConfirm; on confirm, apiDeleteDraft(sessionId), resetDraftState(),
              then renderRequests().
@@ -3667,7 +3667,7 @@ function cancelRevision() {
 
 /*
   Function Name: resetDraftState
-  LAYMAN: Wipes the form back to a clean slate — clears session/draft ids, revision flags,
+  LAYMAN: Wipes the form back to a clean slate, clears session/draft ids, revision flags,
           approver flags, and every DCS/agency field.
   TECHNICAL: Resets state.sessionId/draftId/submittedAt/lastDrafts/isEditing/approverFlags and
              rebuilds state.dcs (including the nested agency object) to empty defaults.
@@ -3725,8 +3725,8 @@ function logout() {
   appends it, then calls updateAddAccountableBtn() to refresh the disabled state.
 
   PARAMS:
-  - name — prefill for the name input (default '').
-  - email — prefill for the email input (default '').
+  - name: prefill for the name input (default '').
+  - email: prefill for the email input (default '').
 
   RETURNS:
   Nothing (DOM side-effect).
@@ -3778,8 +3778,8 @@ function updateAddAccountableBtn() {
   Function Name: sanitizeDCSData
 
   LAYMAN:
-  Produces a clean copy of the DCS form data — every field trimmed, escaped of dangerous bits,
-  and length-capped — ready to show in the summary or send to the server.
+  Produces a clean copy of the DCS form data, every field trimmed, escaped of dangerous bits,
+  and length-capped, ready to show in the summary or send to the server.
 
   TECHNICAL:
   Runs each known field through sanitizeText() with the appropriate cap (names, emails,
@@ -3787,7 +3787,7 @@ function updateAddAccountableBtn() {
   have a name or email.
 
   PARAMS:
-  - data — the raw state.dcs object (non-object -> treated as {}).
+  - data: the raw state.dcs object (non-object -> treated as {}).
 
   RETURNS:
   A new sanitized DCS data object (does not mutate the input).
@@ -3823,7 +3823,7 @@ function sanitizeDCSData(data) {
 }
 /*
   Function Name: generateSessionId
-  LAYMAN: Not used — session ids are minted on the server. Returns empty.
+  LAYMAN: Not used, session ids are minted on the server. Returns empty.
   TECHNICAL: Stub returning ''. Real ids come from apiGenerateNewSessionId().
   PARAMS: (none)
   RETURNS: ''.
@@ -3845,11 +3845,11 @@ function generateSessionId() {
   TECHNICAL:
   Adds .hidden to all #app > div (except .top-nav), un-hides #screen-<name>, force-reflows to
   restart the CSS animation, toggles #app-top-nav, sets state.currentScreen, then (next frame)
-  focuses the screen's first h1/h2 for accessibility. Note: this only toggles visibility — the
+  focuses the screen's first h1/h2 for accessibility. Note: this only toggles visibility, the
   caller is responsible for rendering the screen's content.
 
   PARAMS:
-  - name — screen key (e.g. 'form', 'summary', 'request-details').
+  - name: screen key (e.g. 'form', 'summary', 'request-details').
 
   RETURNS:
   Nothing (DOM side-effect).
@@ -3939,7 +3939,7 @@ function goBackToForm() {
   TECHNICAL: If on 'form', syncDCSState(); if on 'summary'/'agency', preserveFiles(). Then
              persistState(), show(screen), renderCurrentScreen().
   PARAMS:
-  - screen — target screen key to navigate to.
+  - screen: target screen key to navigate to.
   RETURNS: Nothing.
 */
 function goBack(screen) {
@@ -3956,7 +3956,7 @@ function goBack(screen) {
   Function Name: renderSidebarTracker
 
   LAYMAN:
-  Builds the 3-step progress indicator (Guidelines → Details → Review) — a labelled sidebar on
+  Builds the 3-step progress indicator (Guidelines → Details → Review), a labelled sidebar on
   desktop and a thin dotted bar on mobile. Steps before the current one show a check, except a
   completed "Details" step shows a "?" when optional fields are still blank.
 
@@ -3966,7 +3966,7 @@ function goBack(screen) {
   (with '?') instead of 'done' (with a check icon).
 
   PARAMS:
-  - activeStep — the current step number (1-3).
+  - activeStep: the current step number (1-3).
 
   RETURNS:
   HTML string for both the desktop and mobile trackers.
@@ -4013,7 +4013,7 @@ function renderSidebarTracker(activeStep) {
 // ===================================================
 /*
   Function Name: renderLanding
-  LAYMAN: Draws the home screen — the greeting, the two big action cards (New DCS Request /
+  LAYMAN: Draws the home screen, the greeting, the two big action cards (New DCS Request /
           Review Applications), and the footer.
   TECHNICAL: Writes static HTML into #screen-landing, embedding greetingLine(). Cards call
              startNew() and renderRequests() (keyboard-activatable).
@@ -4065,7 +4065,7 @@ function renderLanding() {
 
 /*
   Function Name: startNew
-  LAYMAN: Starts a brand-new request — clears any old state and opens the guidelines screen.
+  LAYMAN: Starts a brand-new request, clears any old state and opens the guidelines screen.
   TECHNICAL: resetDraftState(), then show('guide') + renderGuide().
   PARAMS: (none)
   RETURNS: Nothing.
@@ -4090,7 +4090,7 @@ function startNew() {
   success-with-no-drafts and failure fall through to initiateNewSession(). Restores the button.
 
   PARAMS:
-  - btnEl — the clicked button (for the loading/label state); falls back to the guide primary.
+  - btnEl: the clicked button (for the loading/label state); falls back to the guide primary.
 
   RETURNS:
   Nothing (async navigation).
@@ -4139,7 +4139,7 @@ function proceedToForm(btnEl) {
   persistState(), and opens the form. Without google (local dev) it fabricates a 'LOCAL-<ts>' id.
 
   PARAMS:
-  - btnEl — the originating button for loading state (falls back to guide/drafts primary).
+  - btnEl: the originating button for loading state (falls back to guide/drafts primary).
 
   RETURNS:
   Nothing (async navigation).
@@ -4196,7 +4196,7 @@ function initiateNewSession(btnEl) {
 
   LAYMAN:
   Shows your saved-but-unfinished applications (last 7 days), newest first, each with a Load or
-  Disregard button — plus a "Start New Application" option.
+  Disregard button: plus a "Start New Application" option.
 
   TECHNICAL:
   Sorts draftList by savedAt desc, computes a +7-day expiry per draft, and writes the list into
@@ -4204,8 +4204,8 @@ function initiateNewSession(btnEl) {
   fromScreen. Load -> resumeDraft(), Disregard -> deleteDraftAndRefresh().
 
   PARAMS:
-  - draftList — array of draft summaries { sessionId, savedAt, ... } (default []).
-  - fromScreen — where "Go Back" returns to (default 'landing').
+  - draftList: array of draft summaries { sessionId, savedAt, ... } (default []).
+  - fromScreen: where "Go Back" returns to (default 'landing').
 
   RETURNS:
   Nothing (writes into #screen-drafts).
@@ -4260,7 +4260,7 @@ function renderDrafts(draftList = [], fromScreen = 'landing') {
   LAYMAN: From the drafts screen, abandon drafts and begin a fresh application.
   TECHNICAL: resetDraftState() then initiateNewSession(btn).
   PARAMS:
-  - btn — the clicked button for loading state.
+  - btn: the clicked button for loading state.
   RETURNS: Nothing.
 */
 function handleStartNew(btn) {
@@ -4268,7 +4268,7 @@ function handleStartNew(btn) {
   initiateNewSession(btn);
 }
 
-// Fix 4: Frontend Retry Logic — Exponential backoff for draft restore
+// Fix 4: Frontend Retry Logic: Exponential backoff for draft restore
 let draftRestoreRetries = 0;
 const MAX_DRAFT_RETRIES = 2;
 
@@ -4285,8 +4285,8 @@ const MAX_DRAFT_RETRIES = 2;
   when exhausted, invokes callback({found:false, error}) or shows an alert.
 
   PARAMS:
-  - sid — the draft/session id to restore.
-  - callback — receives the restore response (or a {found:false} fallback).
+  - sid: the draft/session id to restore.
+  - callback: receives the restore response (or a {found:false} fallback).
 
   RETURNS:
   Nothing (delivers result via callback).
@@ -4338,7 +4338,7 @@ function attemptDraftRestore(sid, callback) {
   the nda/dsa/endorsement filenames when files existed, persistState(), then opens the form.
 
   PARAMS:
-  - sid — the draft/session id to resume.
+  - sid: the draft/session id to resume.
 
   RETURNS:
   Nothing (async navigation; alerts on not-found/error).
@@ -4385,7 +4385,7 @@ function resumeDraft(sid) {
   TECHNICAL: showCustomConfirm; on confirm calls apiDeleteDraft(sid) and, on success, proceedToForm()
              (which re-checks remaining drafts).
   PARAMS:
-  - sid — the draft/session id to delete.
+  - sid: the draft/session id to delete.
   RETURNS: Nothing.
 */
 function deleteDraftAndRefresh(sid) {
@@ -4407,7 +4407,7 @@ function deleteDraftAndRefresh(sid) {
   Function Name: renderGuide
 
   LAYMAN:
-  Draws Section 1 — the instructions, the Terms & Conditions box, and the "Downloadable Forms"
+  Draws Section 1: the instructions, the Terms & Conditions box, and the "Downloadable Forms"
   list (NDA/DPA/DSA/CU/OJT templates). The Proceed button stays disabled until you open and
   agree to the T&Cs.
 
@@ -4424,12 +4424,12 @@ function deleteDraftAndRefresh(sid) {
 */
 function renderGuide() {
   /*
-    DOWNLOADABLE TEMPLATES — single source of truth for the "Downloadable Forms" list.
+    DOWNLOADABLE TEMPLATES: single source of truth for the "Downloadable Forms" list.
     TO ADD a form    : append an entry { configKey, title, descSet, iconStyle, descStyle, icon }.
     TO REMOVE a form : delete its entry.
     The actual file link is ADMIN-MANAGED, not in code: an admin must add a matching row to
     the System_Configuration sheet (e.g. key 'LINK_CU_OJT_TEMPLATE', value = the file URL).
-    apiGetSystemConfig passes any key through, so NO backend code change is needed — just the
+    apiGetSystemConfig passes any key through, so NO backend code change is needed, just the
     sheet row. Until that row exists the link falls back to '#' and shows "Link not set".
   */
   const DOWNLOADABLES = [
@@ -4554,7 +4554,7 @@ function renderGuide() {
   Function Name: openTCModal
 
   LAYMAN:
-  Opens the Terms & Conditions in a modal iframe and enforces a 5-second read gate — the "I Have
+  Opens the Terms & Conditions in a modal iframe and enforces a 5-second read gate, the "I Have
   Read and Agree" button stays disabled while a visible countdown ticks down.
 
   TECHNICAL:
@@ -4563,7 +4563,7 @@ function renderGuide() {
   accept button.
 
   PARAMS:
-  - url — the T&C page URL to load in the iframe.
+  - url: the T&C page URL to load in the iframe.
 
   RETURNS:
   Nothing (DOM/timer side-effect).
@@ -4596,7 +4596,7 @@ function openTCModal(url) {
 
 /*
   Function Name: acceptTC
-  LAYMAN: Confirms the Terms & Conditions — ticks (and locks) the agree checkbox, enables the
+  LAYMAN: Confirms the Terms & Conditions, ticks (and locks) the agree checkbox, enables the
           Proceed button, and closes the modal.
   TECHNICAL: Sets #terms-agree-checkbox checked+disabled, calls checkGuideRequirements(), hides
              the overlay, and clears the iframe src.
@@ -4607,7 +4607,7 @@ function acceptTC() {
   const checkbox = document.getElementById('terms-agree-checkbox');
   if (checkbox) {
     checkbox.checked = true;
-    // Keep disabled so user cannot uncheck — permanent until leaving the guide
+    // Keep disabled so user cannot uncheck, permanent until leaving the guide
     checkbox.disabled = true;
     checkGuideRequirements();
   }
@@ -4622,7 +4622,7 @@ function acceptTC() {
   TECHNICAL: Returns a self-contained <span> with inline hover handlers that toggle a positioned
              tooltip <div>; text is escaped via escapeHtml.
   PARAMS:
-  - text — the tooltip text.
+  - text: the tooltip text.
   RETURNS: HTML string.
 */
 function infoTip(text) {
@@ -4636,7 +4636,7 @@ function infoTip(text) {
   Function Name: renderForm
 
   LAYMAN:
-  The heart of the app — Section 2, where you enter your profile, location, access type,
+  The heart of the app: Section 2, where you enter your profile, location, access type,
   accountable people, the three approving heads, and upload documents. The upload labels and
   which files are required adapt to your choices (Internal→DPA, External adds DSA, Agency/OJT→
   Confidentiality Undertaking + Endorsement Letter). In revision mode it highlights approver-flagged
@@ -4651,16 +4651,16 @@ function infoTip(text) {
   updateMainUploadLabel().
 
   PARAMS:
-  - (none) — reads from state.dcs / state.isEditing / state.sessionId.
+  - (none), reads from state.dcs / state.isEditing / state.sessionId.
 
   RETURNS:
   Nothing (renders + binds event listeners).
 
   STEPS
-    Step 1 — Compute labels + revision per-file flags (retained/flagged for nda/dsa/endorsement).
-    Step 2 — Inject the form HTML (profile, accountables, heads, attachments, revision banners).
-    Step 3 — Wire dropdown listeners (location/involvement/access) and dynamic upload labels.
-    Step 4 — Restore preserved files and previously entered accountable rows.
+    Step 1: Compute labels + revision per-file flags (retained/flagged for nda/dsa/endorsement).
+    Step 2: Inject the form HTML (profile, accountables, heads, attachments, revision banners).
+    Step 3: Wire dropdown listeners (location/involvement/access) and dynamic upload labels.
+    Step 4: Restore preserved files and previously entered accountable rows.
 */
 function renderForm() {
   const s = Object.fromEntries(Object.entries(state.dcs).map(([k,v]) => [k, escapeHtml(v || '')]));
@@ -4786,7 +4786,7 @@ function renderForm() {
         </div>
       </div>
       <div class="field" style="margin-top:14px;">
-        <label for="dcs-involvement">Does this request involve an Agency or OJT? ${infoTip('Agency: on behalf of an external agency (adds an Agency Information section). OJT: on-the-job trainee — requires a Confidentiality Undertaking and an Endorsement Letter.')}</label>
+        <label for="dcs-involvement">Does this request involve an Agency or OJT? ${infoTip('Agency: on behalf of an external agency (adds an Agency Information section). OJT: on-the-job trainee, requires a Confidentiality Undertaking and an Endorsement Letter.')}</label>
         <div class="input-wrapper">
           <div class="select-wrap">
             <select id="dcs-involvement">
@@ -4855,7 +4855,7 @@ function renderForm() {
         ${mainFileRetained ? `
         <div class="upload-success" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;padding:10px 14px;border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
-          <span><strong>${escapeHtml(state.dcs.nda)}</strong> — retained from previous submission</span>
+          <span><strong>${escapeHtml(state.dcs.nda)}</strong>, retained from previous submission</span>
         </div>
         <label class="upload-card" id="dcs-main-upload-card" style="opacity:0.75;">
           <input id="dcs-main" type="file" accept=".pdf,.doc,.docx" onchange="handleFileChange(this, 'main-upload-success')">
@@ -4907,7 +4907,7 @@ function renderForm() {
         ${dsaFileRetained ? `
         <div class="upload-success" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;padding:10px 14px;border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
-          <span><strong>${escapeHtml(state.dcs.dsa)}</strong> — retained from previous submission</span>
+          <span><strong>${escapeHtml(state.dcs.dsa)}</strong>, retained from previous submission</span>
         </div>
         <label class="upload-card" style="opacity:0.75;">
           <input id="dcs-dsa" type="file" accept=".pdf,.doc,.docx" onchange="handleFileChange(this, 'dsa-success')">
@@ -4962,7 +4962,7 @@ function renderForm() {
         ${endorseFileRetained ? `
         <div class="upload-success" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;padding:10px 14px;border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
-          <span><strong>${escapeHtml(state.dcs.agency && state.dcs.agency.endorsementLetter || '')}</strong> — retained from previous submission</span>
+          <span><strong>${escapeHtml(state.dcs.agency && state.dcs.agency.endorsementLetter || '')}</strong>, retained from previous submission</span>
         </div>
         <label class="upload-card" style="opacity:0.75;">
           <input id="dcs-agency-endorsement" type="file" accept=".pdf,.doc,.docx" onchange="handleFileChange(this, 'agency-endorsement-success')">
@@ -5057,7 +5057,7 @@ function renderForm() {
   const nextBtn = document.querySelector('#screen-form .btn-primary');
 
   /*
-    Helper: applyInvolvement — applies the involvement choice (''/'agency'/'ojt'). Sets the
+    Helper: applyInvolvement, applies the involvement choice (''/'agency'/'ojt'). Sets the
     isAgency/isOJT flags, clears/keeps the agency object (OJT keeps the endorsement letter; None
     clears all agency fields), updates the next-button label, refreshes the upload label, and persists.
   */
@@ -5115,7 +5115,7 @@ function renderForm() {
   }
 
   /*
-    Helper: updateMainUploadLabel — keeps the main upload label correct for the current selection
+    Helper: updateMainUploadLabel, keeps the main upload label correct for the current selection
     (CU for Agency/OJT, DPA for Internal, else NDA) and shows/hides the endorsement upload wrapper.
   */
   // Update upload label text + endorsement wrapper visibility dynamically
@@ -5146,9 +5146,9 @@ function renderForm() {
     accessSel.addEventListener('change', function() {
       const isExternal = this.value === 'External';
       dsaWrapper.style.display = isExternal ? 'block' : 'none';
-      // DSA is External-only — drop it when switching to Internal.
+      // DSA is External-only, drop it when switching to Internal.
       if (!isExternal) clearUpload('dcs-dsa', 'dsa-success', 'dsa');
-      // For standard requests the main doc flips DPA <-> NDA on access change — clear the stale file.
+      // For standard requests the main doc flips DPA <-> NDA on access change, clear the stale file.
       const involve = document.getElementById('dcs-involvement')?.value || '';
       if (involve !== 'agency' && involve !== 'ojt') clearUpload('dcs-main', 'main-upload-success', 'nda');
       updateMainUploadLabel();
@@ -5221,8 +5221,8 @@ function renderForm() {
   TECHNICAL: Reads input.files[0]; toggles the #successId element's text/visibility and resets
              state.dcs._hadFiles once any file is chosen.
   PARAMS:
-  - input — the <input type=file> element that changed.
-  - successId — id of the element that shows the selected-file confirmation.
+  - input: the <input type=file> element that changed.
+  - successId: id of the element that shows the selected-file confirmation.
   RETURNS: Nothing.
 */
 function handleFileChange(input, successId) {
@@ -5250,7 +5250,7 @@ function handleFileChange(input, successId) {
              element. Files themselves are read at submit time (readFileAsBase64) and preserved across
              re-renders via state._savedFiles.supplementary.
   PARAMS:
-  - input — the multi-file <input type=file> element that changed.
+  - input: the multi-file <input type=file> element that changed.
   RETURNS: Nothing.
 */
 function handleSupplementaryChange(input) {
@@ -5279,8 +5279,8 @@ function handleSupplementaryChange(input) {
   TECHNICAL: Resets the input value, hides the success element, and drops the saved File
              reference so it isn't re-applied on the next render.
   PARAMS:
-  - inputId — the <input type=file> id.  - successId — its success element id.
-  - savedKey — key in state._savedFiles to drop (e.g. 'nda','dsa').
+  - inputId: the <input type=file> id.  - successId: its success element id.
+  - savedKey: key in state._savedFiles to drop (e.g. 'nda','dsa').
   RETURNS: Nothing.
 */
 function clearUpload(inputId, successId, savedKey) {
@@ -5305,7 +5305,7 @@ function clearUpload(inputId, successId, savedKey) {
   _hadFiles if files were actually re-attached.
 
   PARAMS:
-  - (none) — reads live DOM, mutates state.dcs.
+  - (none), reads live DOM, mutates state.dcs.
 
   RETURNS:
   Nothing (mutates state.dcs).
@@ -5318,7 +5318,7 @@ function syncDCSState() {
   if (state.dcs._hadFiles && (ndaInput?.files?.length || dsaInput?.files?.length || endorseInput?.files?.length)) {
     state.dcs._hadFiles = false;
   }
-  // Location: read the site dropdown directly (Others option removed — site is now a required known value)
+  // Location: read the site dropdown directly (Others option removed, site is now a required known value)
   const locSel = document.getElementById('dcs-location-select');
   if (locSel) {
     state.dcs.location = locSel.value;
@@ -5387,7 +5387,7 @@ const MIME_MAP = {
   over the browser's file.type. Rejects on read error/abort.
 
   PARAMS:
-  - file — a File object from a file input.
+  - file: a File object from a file input.
 
   RETURNS:
   Promise resolving to { base64, fileName, mimeType }, or rejecting with a descriptive Error.
@@ -5441,7 +5441,7 @@ function readFileAsBase64(file) {
 
   LAYMAN:
   The "Next" action on Section 2. Validates the form, saves the draft, makes sure required files
-  are attached, then moves on — to the Agency screen if it's an agency request, otherwise straight
+  are attached, then moves on, to the Agency screen if it's an agency request, otherwise straight
   to the summary.
 
   TECHNICAL:
@@ -5460,7 +5460,7 @@ function saveDCSForm() {
   syncDCSState();
   persistState();
 
-  // Prevent proceeding if files need to be re-uploaded (draft mode only — revision mode uses per-file flags)
+  // Prevent proceeding if files need to be re-uploaded (draft mode only, revision mode uses per-file flags)
   if (!state.isEditing && state.dcs._hadFiles) {
     showCustomAlert('Files need to be re-uploaded before proceeding. Please re-attach your document(s).', 'danger');
     return;
@@ -5498,7 +5498,7 @@ function saveDCSForm() {
   External access; Endorsement required for Agency or OJT. Shows a toast + focuses the card on failure.
 
   PARAMS:
-  - (none) — inspects the live upload inputs.
+  - (none), inspects the live upload inputs.
 
   RETURNS:
   true if all required files are present, else false.
@@ -5581,7 +5581,7 @@ function validateFileUploads() {
   Function Name: validateAgencyForm
 
   LAYMAN:
-  Validates the extra Agency screen — Agency Name and Personnel are required, recovery email/number
+  Validates the extra Agency screen: Agency Name and Personnel are required, recovery email/number
   must be well-formed, and the contract start date can't be more than 10 years in the past.
 
   TECHNICAL:
@@ -5590,7 +5590,7 @@ function validateFileUploads() {
   bounds contractStartDate (parseable; >= now-10y). Returns on first failure with a toast.
 
   PARAMS:
-  - (none) — reads state.dcs.agency.
+  - (none), reads state.dcs.agency.
 
   RETURNS:
   true if valid, else false.
@@ -5670,7 +5670,7 @@ function validateAgencyForm() {
   LAYMAN: Reads the Agency screen inputs into state.dcs.agency.
   TECHNICAL: Maps each agency input id to its state key, sanitizes with per-field max lengths, and
              records the endorsement filename if a file is selected.
-  PARAMS: (none) — reads live DOM, mutates state.dcs.agency.
+  PARAMS: (none), reads live DOM, mutates state.dcs.agency.
   RETURNS: Nothing.
 */
 function syncAgencyState() {
@@ -5719,7 +5719,7 @@ function syncAgencyState() {
 
 /*
   Function Name: saveAgencyForm
-  LAYMAN: The "Next" action on the Agency screen — captures + validates the agency details, then
+  LAYMAN: The "Next" action on the Agency screen, captures + validates the agency details, then
           goes to the summary.
   TECHNICAL: syncAgencyState() -> validateAgencyForm(); on pass persistState(), preserveFiles(),
              then renderSummary().
@@ -5739,12 +5739,12 @@ function saveAgencyForm() {
 /*
   Function Name: onAgencyRequestTypeChange
   LAYMAN (Tropang Ex): Pag pinili mo kung "New" o "Replacement" sa Agency screen, ito yung
-  nagpapakita/nagtatago ng dalawang box para sa taong papalitan (name + email) — Replacement lang
+  nagpapakita/nagtatago ng dalawang box para sa taong papalitan (name + email): Replacement lang
   ang nangangailangan nun. Tinatandaan din nito yung pinili mo.
   TECHNICAL: Sets state.dcs.agency.agencyRequestType, toggles #replacement-fields-wrapper visibility,
   clears the replaced-person inputs when the type is not Replacement, then autosaves.
   PARAMS:
-  - val — 'New' | 'Replacement' | '' (the selected dropdown value).
+  - val: 'New' | 'Replacement' | '' (the selected dropdown value).
   RETURNS: Nothing.
 */
 function onAgencyRequestTypeChange(val) {
@@ -5769,11 +5769,11 @@ function onAgencyRequestTypeChange(val) {
 /*
   Function Name: toggleReplacementEmailNA
   LAYMAN (Tropang Ex): Pag walang email yung taong papalitan, tik-an lang yung "No email available"
-    checkbox — magiging "N/A" na ang laman, madi-disable ang input, at tatanggapin na ng form kahit
+    checkbox, magiging "N/A" na ang laman, madi-disable ang input, at tatanggapin na ng form kahit
     walang email. Alisin ang tik para bumalik ang normal na email input.
   TECHNICAL: On check → sets state.dcs.agency.replacementEmail = 'N/A', clears + disables the input.
     On uncheck → resets to '' and re-enables + focuses. Autosaves either way.
-  PARAMS: - cb — the checkbox element.
+  PARAMS: - cb: the checkbox element.
   RETURNS: undefined.
 */
 function toggleReplacementEmailNA(cb) {
@@ -5791,7 +5791,7 @@ function toggleReplacementEmailNA(cb) {
 
 /*
   Function Name: renderAgency
-  LAYMAN: Draws Section 2b — the extra agency fields (name, personnel, contract date, network drive,
+  LAYMAN: Draws Section 2b, the extra agency fields (name, personnel, contract date, network drive,
           immediate-head recovery email/number). Only reached when "involves an Agency" is chosen.
   TECHNICAL: Writes #screen-agency from state.dcs.agency (pre-escaped into `s`). Contract date
              defaults to today. Inputs update state.dcs.agency inline and call triggerAutoSave().
@@ -5818,7 +5818,7 @@ function renderAgency() {
     <div class="card">
       <div class="card-title">Agency Details</div>
       <div class="field">
-        <label for="dcs-agency-request-type">Agency Request Type ${reqMark()}${infoTip('New: a brand-new agency engagement (no extra info needed). Replacement: this person replaces someone whose access must be removed — provide the replaced person details for DCOPS.')}</label>
+        <label for="dcs-agency-request-type">Agency Request Type ${reqMark()}${infoTip('New: a brand-new agency engagement (no extra info needed). Replacement: this person replaces someone whose access must be removed, provide the replaced person details for DCOPS.')}</label>
         <div class="input-wrapper">
           <div class="select-wrap">
             <select id="dcs-agency-request-type" class="${getFlagClass('dcs-agency-request-type')}" onchange="onAgencyRequestTypeChange(this.value)">
@@ -5833,14 +5833,14 @@ function renderAgency() {
       </div>
       <div class="field-row ${ag.agencyRequestType==='Replacement' ? '' : 'hidden'}" id="replacement-fields-wrapper">
         <div class="field">
-          <label for="dcs-agency-replacement-name">Replaced Person Full Name ${reqMark()}${infoTip('Full name of the person being replaced — DCOPS uses this to identify the account to retire.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
+          <label for="dcs-agency-replacement-name">Replaced Person Full Name ${reqMark()}${infoTip('Full name of the person being replaced: DCOPS uses this to identify the account to retire.')}${charLimit(CONFIG.MAX_NAME_LENGTH)}</label>
           <div class="input-wrapper">
             <input id="dcs-agency-replacement-name" class="${getFlagClass('dcs-agency-replacement-name')}" value="${s.replacementFullName || ''}" placeholder="Full Name" maxlength="${CONFIG.MAX_NAME_LENGTH}" oninput="this.value=validatePersonName(this.value); state.dcs.agency.replacementFullName=sanitizeText(this.value,CONFIG.MAX_NAME_LENGTH); triggerAutoSave();">
             ${getFlagIconHtml('dcs-agency-replacement-name')}
           </div>
         </div>
         <div class="field">
-          <label for="dcs-agency-replacement-email">Replaced Person Email ${reqMark()}${infoTip('Email of the person being replaced — DCOPS uses this to identify the account to retire. Tick "No email available" if there is none.')}${charLimit(CONFIG.MAX_EMAIL_LENGTH)}</label>
+          <label for="dcs-agency-replacement-email">Replaced Person Email ${reqMark()}${infoTip('Email of the person being replaced: DCOPS uses this to identify the account to retire. Tick "No email available" if there is none.')}${charLimit(CONFIG.MAX_EMAIL_LENGTH)}</label>
           <div class="input-wrapper">
             <input id="dcs-agency-replacement-email" class="${getFlagClass('dcs-agency-replacement-email')}" type="email" value="${s.replacementEmail === 'N/A' ? '' : (s.replacementEmail || '')}" placeholder="email@company.com" maxlength="${CONFIG.MAX_EMAIL_LENGTH}" ${s.replacementEmail === 'N/A' ? 'disabled' : ''} oninput="state.dcs.agency.replacementEmail=sanitizeText(this.value,CONFIG.MAX_EMAIL_LENGTH); triggerAutoSave();">
             ${getFlagIconHtml('dcs-agency-replacement-email')}
@@ -5920,8 +5920,8 @@ function renderAgency() {
   LAYMAN: Builds one "Label: Value" row used throughout the summary/details cards.
   TECHNICAL: Returns a .summary-row with escaped label and value (value falls back to 'N/A').
   PARAMS:
-  - label — the row label.
-  - value — the row value (empty -> 'N/A').
+  - label: the row label.
+  - value: the row value (empty -> 'N/A').
   RETURNS: HTML string.
 */
 /*
@@ -5936,17 +5936,17 @@ function renderAgency() {
   TECHNICAL:
   Returns an inline SVG string for a small named icon set (Lucide-derived paths), stroked
   with `currentColor` so it inherits the surrounding colour and needs no per-variant CSS.
-  Zero network requests, which matters here — Apps Script serves the page from a sandboxed
+  Zero network requests, which matters here: Apps Script serves the page from a sandboxed
   iframe and an external icon font would be a third-party fetch on every load.
 
   🚩 Returns HTML, so only use it where the sink is innerHTML / a template literal that
   becomes markup. It will render as literal text through `textContent` or through
   summaryRow(), which escapes its value. In those places drop the glyph instead of
-  substituting one — a tick mark inside a sentence is punctuation, not an icon.
+  substituting one, a tick mark inside a sentence is punctuation, not an icon.
 
   PARAMS:
-  - name — 'warn' | 'check' | 'x'. An unknown name returns '' rather than throwing.
-  - size — pixel box, default 14.
+  - name: 'warn' | 'check' | 'x'. An unknown name returns '' rather than throwing.
+  - size: pixel box, default 14.
 
   RETURNS:
   An `<svg>` string, or '' for an unknown name.
@@ -5985,7 +5985,7 @@ function summaryRowRaw(label, rawValue) {
   Function Name: renderSummary
 
   LAYMAN:
-  Section 3 — the read-only review of everything you entered (and an Agency card if applicable),
+  Section 3: the read-only review of everything you entered (and an Agency card if applicable),
   plus a small "what happens next" timeline, before you hit Submit.
 
   TECHNICAL:
@@ -6116,7 +6116,7 @@ function renderSummary() {
           if (state.isEditing && fileName && !isFileFlaggedForRevision('dcs-nda')) {
             return summaryRow(docLabel, fileName + ' (retained)');
           } else if (state.isEditing && isFileFlaggedForRevision('dcs-nda')) {
-            return summaryRow(docLabel, (fileName || 'Not attached') + ' — RE-UPLOAD REQUIRED');
+            return summaryRow(docLabel, (fileName || 'Not attached') + ': RE-UPLOAD REQUIRED');
           }
           return summaryRow(docLabel, fileName || 'Not attached');
         })()}
@@ -6126,7 +6126,7 @@ function renderSummary() {
           if (state.isEditing && dsaName && !isFileFlaggedForRevision('dcs-dsa')) {
             return summaryRow('DSA', dsaName + ' (retained)');
           } else if (state.isEditing && isFileFlaggedForRevision('dcs-dsa')) {
-            return summaryRow('DSA', (dsaName || 'Not attached') + ' — RE-UPLOAD REQUIRED');
+            return summaryRow('DSA', (dsaName || 'Not attached') + ': RE-UPLOAD REQUIRED');
           }
           return summaryRow('DSA', dsaName || 'Not attached');
         })()}
@@ -6136,7 +6136,7 @@ function renderSummary() {
           if (state.isEditing && endName && !isFileFlaggedForRevision('dcs-agency-endorsement')) {
             return summaryRow(endLabel, endName + ' (retained)');
           } else if (state.isEditing && isFileFlaggedForRevision('dcs-agency-endorsement')) {
-            return summaryRow(endLabel, (endName || 'Not attached') + ' — RE-UPLOAD REQUIRED');
+            return summaryRow(endLabel, (endName || 'Not attached') + ': RE-UPLOAD REQUIRED');
           }
           return summaryRow(endLabel, endName || 'Not attached');
         })() : ''}
@@ -6174,16 +6174,16 @@ function renderSummary() {
   resetDraftState() + renderSuccess(reqId, date, phase2Url). Always restores button/loading state.
 
   PARAMS:
-  - (none) — reads state + the live upload inputs.
+  - (none), reads state + the live upload inputs.
 
   RETURNS:
   Promise<void> (navigates on success; toasts on failure).
 
   STEPS
-    Step 1 — Guard double-submit + pending re-upload; show loading; disable button.
-    Step 2 — Validate files, then base64-encode each present file into the right payload slot.
-    Step 3 — Attach agency/OJT data (+ endorsement file) when applicable.
-    Step 4 — submitDCS to backend; on success reset draft + show success, else show error.
+    Step 1: Guard double-submit + pending re-upload; show loading; disable button.
+    Step 2: Validate files, then base64-encode each present file into the right payload slot.
+    Step 3: Attach agency/OJT data (+ endorsement file) when applicable.
+    Step 4: submitDCS to backend; on success reset draft + show success, else show error.
 */
 async function submitRequest() {
   // CRITICAL: Double-submit prevention
@@ -6203,7 +6203,7 @@ async function submitRequest() {
     btn.disabled = true;
   }
 
-  // Block submission if files need re-upload from draft restore (draft mode only — revision mode uses per-file flags)
+  // Block submission if files need re-upload from draft restore (draft mode only, revision mode uses per-file flags)
   if (!state.isEditing && state.dcs._hadFiles) {
     showCustomAlert('Files need to be re-uploaded before submission. Please go back and re-attach your document(s).', 'danger');
     state.isSubmitting = false;
@@ -6343,14 +6343,14 @@ async function submitRequest() {
 
 /*
   Function Name: renderSuccess
-  LAYMAN: The confirmation screen after submitting — shows your DCS ID, the date, and a "Proceed to
+  LAYMAN: The confirmation screen after submitting, shows your DCS ID, the date, and a "Proceed to
           Phase 2" button (disabled if no Phase 2 link was returned).
   TECHNICAL: Writes #screen-success. The Phase 2 button is enabled only when phase2Url is non-empty
              (window.open in a new tab); otherwise disabled with a tooltip.
   PARAMS:
-  - reqId — the new request id.
-  - submittedAt — display date string.
-  - phase2Url — the PIA app URL (may be empty).
+  - reqId: the new request id.
+  - submittedAt: display date string.
+  - phase2Url: the PIA app URL (may be empty).
   RETURNS: Nothing (writes into #screen-success).
 */
 function renderSuccess(reqId = '', submittedAt = '', phase2Url = '') {
@@ -6394,7 +6394,7 @@ let _requestsCache = []; // loaded requests, for client-side search/status filte
   Function Name: renderRequests
 
   LAYMAN:
-  The "Application Requests" screen — a status legend plus the list of everything you've submitted.
+  The "Application Requests" screen, a status legend plus the list of everything you've submitted.
   It shows a loading spinner, fetches your requests, then renders a searchable/filterable list.
 
   TECHNICAL:
@@ -6563,8 +6563,8 @@ function renderRequests() {
           (pending, ready, in-progress, escalated, returned, certified, denied, other).
   TECHNICAL: Mirrors getCombinedStatusBadge's precedence but returns a filter key string instead of HTML.
   PARAMS:
-  - dcsStatus — DCS phase status.
-  - piaStatus — PIA phase status.
+  - dcsStatus: DCS phase status.
+  - piaStatus: PIA phase status.
   RETURNS: A filter-key string.
 */
 // Maps a request's DCS+PIA status to a single filter key (mirrors getCombinedStatusBadge).
@@ -6592,12 +6592,12 @@ function getStatusKey(dcsStatus, piaStatus) {
 
 /*
   Function Name: renderRequestRow
-  LAYMAN: Builds one clickable row in the requests list — name, id, submit date, status badge, and
+  LAYMAN: Builds one clickable row in the requests list, name, id, submit date, status badge, and
           (for returned/rejected) the approver's note.
   TECHNICAL: Returns an .app-row (keyboard-activatable) wired to viewRequestDetails(req.reqId). Shows
              a remarks strip only when status/piaStatus is RETURNED/REJECTED. All fields escaped.
   PARAMS:
-  - req — a request summary object.
+  - req: a request summary object.
   RETURNS: HTML string for the row.
 */
 function renderRequestRow(req) {
@@ -6634,7 +6634,7 @@ function renderRequestRow(req) {
   toggling the empty-filter message.
 
   PARAMS:
-  - (none) — reads the live filter controls and _requestsCache.
+  - (none), reads the live filter controls and _requestsCache.
 
   RETURNS:
   Nothing (updates the list DOM).
@@ -6665,13 +6665,13 @@ function applyRequestFilters() {
 
 /*
   Function Name: viewRequestDetails
-  LAYMAN: Opens the full detail page for one request — shows a spinner, fetches its data, then
+  LAYMAN: Opens the full detail page for one request, shows a spinner, fetches its data, then
           renders all the cards and timelines.
   TECHNICAL: Writes a loading shell into #screen-request-details, show('request-details'), then
              apiGetRequestData(reqId); on a found response calls renderRequestDetails(response),
              else shows a not-found/error panel.
   PARAMS:
-  - reqId — the request id to display.
+  - reqId: the request id to display.
   RETURNS: Nothing (async).
 */
 function viewRequestDetails(reqId) {
@@ -6721,11 +6721,11 @@ function viewRequestDetails(reqId) {
   Reads data.metadata, data.files (resolves NDA/CU/DPA and DSA names), and various status fields.
   canEditDcs is true only when DCS status === 'RETURNED'. Picks actionButtonHtml from the
   status/PIA-completion/Phase2-URL combination, builds the DCS revision banner, then writes the whole
-  page into #screen-request-details — delegating sub-sections to getDetailedDcsSummaryCardHtml,
+  page into #screen-request-details, delegating sub-sections to getDetailedDcsSummaryCardHtml,
   renderApprovalTracker, renderISMAndDivHeadTracker, and renderPiaTimeline.
 
   PARAMS:
-  - data — the full request object returned by apiGetRequestData.
+  - data: the full request object returned by apiGetRequestData.
 
   RETURNS:
   Nothing (writes into #screen-request-details).
@@ -6739,7 +6739,7 @@ function renderRequestDetails(data) {
   // worked because uploadProxy_ published every document with ANYONE_WITH_LINK. Documents are now
   // PRIVATE in Drive and are served exclusively through apiDownloadDcsFile, which re-checks
   // ownership and that the fileId really belongs to this request. No Drive URL reaches the browser.
-  // NOTE: built with plain string concatenation (no template literal) on purpose — keep it ASCII.
+  // NOTE: built with plain string concatenation (no template literal) on purpose, keep it ASCII.
   // (See CLAUDE.md §8: a backtick template in a string helper here corrupted the whole page at GAS
   //  serve time. Do not "modernize" this into a template literal.)
   const reqIdAttr = safeIdAttr(data.reqId);
@@ -6747,7 +6747,7 @@ function renderRequestDetails(data) {
     if (!obj || !obj.id) return 'Not attached';
     var fid = safeIdAttr(obj.id);
     var name = escapeHtml(obj.name || 'View file');
-    // Missing ids would produce a dead button — show the plain name instead.
+    // Missing ids would produce a dead button, show the plain name instead.
     if (!fid || !reqIdAttr) return name;
     return '<button type="button" class="doc-link" title="View ' + name + '"' +
            ' onclick="viewDcsFile(\'' + reqIdAttr + '\',\'' + fid + '\',this)">' +
@@ -6757,7 +6757,7 @@ function renderRequestDetails(data) {
   const dsaFile = fileLinkHtml(files.find(f => f.type === 'DSA'));
   const endorsementObj = files.find(f => f.type === 'ENDORSEMENT');
   const endorsementFile = endorsementObj ? fileLinkHtml(endorsementObj) : '';
-  // Commit 5: additional supporting documents — multiple SUPPLEMENTARY entries, listed together.
+  // Commit 5: additional supporting documents, multiple SUPPLEMENTARY entries, listed together.
   const supplementaryDocs = files.filter(f => f.type === 'SUPPLEMENTARY');
   const supplementaryHtml = supplementaryDocs.length
     ? supplementaryDocs.map(function (f) { return fileLinkHtml(f); }).join('<br>')
@@ -6915,11 +6915,11 @@ function renderRequestDetails(data) {
   TECHNICAL:
   Calls apiRestoreDraft(reqId). If a draft with state.isEditing exists, adopts its dcs/agency, sets
   isEditing + approverFlags + _piaRevisionBanner, clears filenames only for flagged files (non-flagged
-  retained), and — if flags are missing — defers to fetchApproverFlagsForRevision(). If no editing
+  retained), and, if flags are missing, defers to fetchApproverFlagsForRevision(). If no editing
   draft, falls back to fetchReturnedApplicationFromDB(reqId).
 
   PARAMS:
-  - reqId — the returned request's id.
+  - reqId: the returned request's id.
 
   RETURNS:
   Nothing (async navigation into the form in revision mode).
@@ -6939,12 +6939,12 @@ function editReturnedApplication(reqId) {
           if (state.dcs.isAgency === undefined) state.dcs.isAgency = !!(state.dcs.agency && state.dcs.agency.agencyName);
           if (state.dcs.isOJT === undefined) state.dcs.isOJT = !!(state.dcs.agency && state.dcs.agency.type === 'OJT');
           
-          // Load approver flags FIRST — needed for per-file revision checks below
+          // Load approver flags FIRST: needed for per-file revision checks below
           state.approverFlags = draftRes.state.approverFlags || {};
           state._piaRevisionBanner = draftRes.state.approverComments || '';
 
           // Revision mode: don't use global _hadFiles; only clear filenames for flagged files.
-          // Non-flagged files are retained — the backend keeps the existing Drive file.
+          // Non-flagged files are retained, the backend keeps the existing Drive file.
           state.dcs._hadFiles = false;
           if (isFileFlaggedForRevision('dcs-nda')) {
             state.dcs.nda = '';
@@ -6980,7 +6980,7 @@ function editReturnedApplication(reqId) {
   TECHNICAL: Calls apiGetRequestData(reqId); on found, keeps only flag keys containing 'DCS' into
              state.approverFlags. Always ends by show('form') + renderForm() (even on failure/no flags).
   PARAMS:
-  - reqId — the request id.
+  - reqId: the request id.
   RETURNS: Nothing (async).
 */
 function fetchApproverFlagsForRevision(reqId) {
@@ -7022,7 +7022,7 @@ function fetchApproverFlagsForRevision(reqId) {
   Function Name: fetchReturnedApplicationFromDB
 
   LAYMAN:
-  The deeper fallback when there's no revision draft at all — rebuilds the whole form from the
+  The deeper fallback when there's no revision draft at all, rebuilds the whole form from the
   original submission stored in the database, marks it as a revision, and opens it.
 
   TECHNICAL:
@@ -7032,7 +7032,7 @@ function fetchApproverFlagsForRevision(reqId) {
   comments, then opens the form. Alerts on failure.
 
   PARAMS:
-  - reqId — the returned request's id.
+  - reqId: the returned request's id.
 
   RETURNS:
   Nothing (async navigation).
@@ -7072,18 +7072,18 @@ function fetchReturnedApplicationFromDB(reqId) {
           isAgency: !!(res.application.metadataAgency && res.application.metadataAgency.agencyName),
           isOJT: !!(res.application.metadataAgency && res.application.metadataAgency.type === 'OJT'),
           _hadFiles: false, // Revision mode: no global re-upload block; per-file flags handle this
-          nda: mainFileName,   // Preserved — will be cleared below only if flagged
+          nda: mainFileName,   // Preserved, will be cleared below only if flagged
           dsa: dsaFileName,
           agency: (res.application.metadataAgency && (res.application.metadataAgency.agencyName || res.application.metadataAgency.type === 'OJT')) ? res.application.metadataAgency : {
             agencyName: '', agencyPersonnel: '', contractStartDate: '',
-            endorsementLetter: endorseFileName, // Preserved — will be cleared below only if flagged
+            endorsementLetter: endorseFileName, // Preserved, will be cleared below only if flagged
             networkDrive: '',
             immHeadRecoveryEmail: '', immHeadRecoveryNumber: ''
           }
         };
 
         // In revision mode, only clear filenames for files that are flagged by the approver.
-        // Non-flagged files are retained — the backend will keep the existing Drive file.
+        // Non-flagged files are retained, the backend will keep the existing Drive file.
         if (isFileFlaggedForRevision('dcs-nda')) {
           state.dcs.nda = '';
         }
@@ -7159,7 +7159,7 @@ function boot() {
   show('landing');
 
   // Deep-link: an email "View DCS Submission" link opens this app with ?parentID=<DCS ReqID>.
-  // Read it the sandbox-safe way (google.script.url.getLocation — no server-side templating needed)
+  // Read it the sandbox-safe way (google.script.url.getLocation, no server-side templating needed)
   // and jump straight to that request's details instead of leaving the user on the landing screen.
   if (typeof google !== 'undefined' && google.script && google.script.url) {
     google.script.url.getLocation(function(location) {

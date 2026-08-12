@@ -1,10 +1,10 @@
 // ============================================================
-//  pia_code.js  (PIA — Phase 2 backend)
+//  pia_code.js  (PIA: Phase 2 backend)
 // ============================================================
 /*
   [ OUTLINE ]
   FILE: pia_code.js
-  PURPOSE (Layman): This is the brain of Phase 2 of Megaworld's RARS — the Privacy Impact
+  PURPOSE (Layman): This is the brain of Phase 2 of Megaworld's RARS, the Privacy Impact
     Assessment app. After a DCS request is cleared, the applicant fills out a privacy
     questionnaire here. This file takes that submission, runs it up an approval ladder
     (Immediate Head → Dept Head → maybe Division Head → ISM/InfoSec), sends every email the
@@ -19,14 +19,14 @@
     (generateAuthToken_/isTokenValid_, action-bound, 14-day TTL) for one-click approve/deny
     links, LockService to serialize decisions, domain-restricted doGet, and ISM + Division-Head
     escalation routing. Column positions are centralized in *_COLS constants. Phases never call
-    each other directly — they coordinate only through the shared sheet and the parentID /
+    each other directly, they coordinate only through the shared sheet and the parentID /
     Linked_ReqID link plus stored Script Property URLs (PIA_APP_URL, DCS_WEB_APP_URL).
 
   🔒 THE TRAILING UNDERSCORE IS A SECURITY BOUNDARY, NOT A STYLE CHOICE.
     In Apps Script every top-level function is callable from the browser via google.script.run,
     regardless of what the UI exposes buttons for. Functions named with a trailing underscore are
     private and CANNOT be reached that way. These five are deliberately private and must stay that
-    way — routeApprovedRequest_, updateDCSStatus_, notifyISMember_, notifyApprover_,
+    way, routeApprovedRequest_, updateDCSStatus_, notifyISMember_, notifyApprover_,
     notifyApplicant_. Removing an underscore to "tidy up" re-opens a real hole: routeApprovedRequest_
     emails a Certificate of Approval to the live DCOPS/TechServe inboxes and flips uploaded DCS docs
     to DOMAIN_WITH_LINK, and session IDs are sequential hence guessable. See also the SECURITY (F-02)
@@ -216,7 +216,7 @@ function getAllowedDomain_() {
   LAYMAN:    Decides whether a given email is allowed to use the app, based on its domain.
   TECHNICAL: When ENABLE_DOMAIN_CHECK is on, returns true only if email ends with
              '@' + getAllowedDomain_(). Fail-closed: empty email or unconfigured domain → false.
-  PARAMS:    - email — the address to check.
+  PARAMS:    - email: the address to check.
   RETURNS:   Boolean. Always true if ENABLE_DOMAIN_CHECK is false.
   EXAMPLE:   isAuthorizedDomain_('a@megaworldcorp.com') -> true
 */
@@ -231,7 +231,7 @@ function isAuthorizedDomain_(email) {
 /*
   Function: getSystemSecret
   LAYMAN:    Gets the private signing key used to make tamper-proof email approve/deny links.
-  TECHNICAL: Reads SYSTEM_SECRET Script Property. Throws (fail-closed) if missing — tokens must
+  TECHNICAL: Reads SYSTEM_SECRET Script Property. Throws (fail-closed) if missing, tokens must
              never be signed with an empty key.
   PARAMS:    (none)
   RETURNS:   The secret string. Throws Error if not configured.
@@ -246,7 +246,7 @@ function getSystemSecret_() {
   Function: isOwnerContext_
 
   LAYMAN (Tropang Ex):
-  Bouncer para sa mga function na hindi kayang bigyan ng trailing underscore — yung mga trigger
+  Bouncer para sa mga function na hindi kayang bigyan ng trailing underscore, yung mga trigger
   handler (processEmailQueue, sendDailyReminders) at yung mga pinapatakbo sa editor. Kailangan
   nilang manatiling public, ibig sabihin kahit sinong naka-login sa domain kayang tawagin sila
   galing browser console. Ito yung nagtatanong: "ikaw ba yung may-ari ng script o isang trigger?"
@@ -290,9 +290,202 @@ const DB_SHEET_NAMES = {
   DELEGATIONS: 'Delegations'   // out-of-office table, admin-managed. See resolveDelegate_.
 };
 
+/*
+  ━━━ PIA_SCHEMA: THE SINGLE SOURCE OF TRUTH FOR COLUMN ORDER ━━━━━━━━━━━━━━━━━━━━━━
+
+  LAYMAN (Tropang Ex):
+  Isang listahan lang ng pangalan ng column kada sheet. Ito na ang gagamitin sa DALAWANG
+  bagay na dati magkahiwalay: (1) yung paggawa ng header row kapag bago ang tab, at
+  (2) yung pag-alam kung pang-ilang column ba ang "SessionID".
+
+  Bakit ito ginawa: dati DALAWA ang pinagkukunan ng katotohanan, may listahan ng pangalan
+  sa initializeDatabase_, at may hiwalay na listahan ng NUMERO (APPROVAL_COLS at kapatid
+  nito). Kailangang manu-manong pantayin. Noong nagdagdag ako ng ActedBy, na-update ko yung
+  numero pero hindi yung pangalan, at TAHIMIK lang siyang nasira, nakasulat yung data sa
+  tamang column pero walang pangalan sa taas, kaya hindi makita ng Admin app.
+
+  Ngayon, IISA na lang: yung numero ay galing sa listahan ng pangalan. Imposible nang
+  hindi sila magkatugma, kasi iisa lang sila.
+
+  TECHNICAL:
+  Ordered header arrays keyed by sheet name. Consumed by:
+    - colsOf_()               to DERIVE every *_COLS index map (no more hand-typed numbers)
+    - initializeDatabase_()   to write the header row on sheet creation
+    - assertSheetSchema_()    to verify the LIVE header row still matches, and throw if not
+
+  🚩 ADDING A COLUMN: append the name here and add one alias line to the matching colsOf_
+  call. That is the whole change. Never hand-number a map again, and never write a header
+  array anywhere else, a second copy is exactly what caused the ActedBy defect.
+
+  🚩 APPEND ONLY. Inserting in the middle renumbers every column after it and silently
+  repoints existing data. If a column truly must move, it is a data migration, not an edit.
+
+  Data_Collection is owned by Phase 1 (it creates and writes that sheet); the copy here is
+  for PIA's reads and MUST match Phase 1/Code.js's `headers` array. Drafts is shared by both.
+*/
+const PIA_SCHEMA = {
+  'Applications': ['SessionID', 'ApplicantEmail', 'Status',
+    'PIA_1_Data', 'PIA_2_Data', 'PIA_3_Data', 'PIA_4_Data', 'PIA_5_Data',
+    'AdminExportID', 'SubmissionDate', 'IsFlagged', 'Notes', 'Linked_ReqID', 'Approver_Flags'],
+
+  'Approval_Workflow': ['ApprovalID', 'SessionID', 'CurrentStep', 'ApproverName',
+    'ApproverEmail', 'Decision', 'Comments', 'DecisionDate', 'Status', 'ReminderDate',
+    'EmailStatus', 'EmailError', 'NotifiedDate', 'RoundNumber', 'FlaggedFields', 'ActedBy'],
+
+  'ISM_Approval_Workflow': ['ISM_Approval_ID', 'SessionID', 'CurrentStep', 'ISM_Member_Name',
+    'ISM_Member_Email', 'Decision', 'Comments', 'DecisionDate', 'Status', 'Requires_DivHead',
+    'DivHead_Escalation_ID', 'Routing_Destination', 'ReminderDate', 'EmailStatus', 'EmailError',
+    'NotifiedDate', 'RoundNumber', 'FlaggedFields', 'ActedBy'],
+
+  'DivisionHead_Approval_Workflow': ['Escalation_ID', 'SessionID', 'DivHead_Email', 'Decision',
+    'Comments', 'DecisionDate', 'Status', 'ReminderDate', 'EmailStatus', 'EmailError',
+    'NotifiedDate', 'RoundNumber', 'FlaggedFields', 'ActedBy'],
+
+  'Application_Snapshots': ['SnapshotID', 'SessionID', 'RoundNumber', 'ApplicantEmail',
+    'Status_At_Snapshot', 'PIA_1_Data', 'PIA_2_Data', 'PIA_3_Data', 'PIA_4_Data', 'PIA_5_Data',
+    'Approver_Flags', 'Linked_ReqID', 'SnapshotAt'],
+
+  'Delegations': ['Delegation_ID', 'From_Email', 'To_Email', 'Start_Date', 'End_Date',
+    'Reason', 'Is_Active', 'Created_By', 'Created_At'],
+
+  'Email_Queue': ['Queue_ID', 'SessionID', 'Recipient', 'Subject', 'Body_Plain', 'Body_HTML',
+    'Type', 'Status', 'Attempts', 'Last_Error', 'Created_At', 'Sent_At', 'NotifiedAdmin'],
+
+  'Risk_Audit': ['LogID', 'SessionID', 'InternalFlags', 'Action', 'UserEmail', 'UserAgent',
+    'Timestamp'],
+
+  'InfoSec_Email_Config': ['Member_ID', 'Member_Name', 'Member_Email', 'Role', 'IsActive',
+    'JobPos', 'Site'],
+
+  'Admin_Notification_Config': ['Config_ID', 'Admin_Email', 'NotifyOnFailure', 'NotifyRequestor',
+    'Last_Notified'],
+
+  // Owned by Phase 1: keep in step with the `headers` array in Phase 1/Code.js.
+  'Data_Collection': ['LogID', 'ReqID', 'UserEmail', 'Status', 'ImmediateHeadEmail',
+    'DeptHeadEmail', 'DivHeadEmail', 'FileID', 'Metadata_JSON', 'Timestamp', 'Metadata_Agency'],
+
+  // Shared with Phase 1. Previously had NO column map in either project and was addressed by
+  // bare number in both, the last remaining place a magic index could hide.
+  // Column F is 'SavedTimestamp', NOT 'SavedAt'. The manual documented it as
+  // "SavedAt/SavedTimestamp" because nobody ever read it by name, both apps address Drafts
+  // by bare index. Verified against what PIA actually writes and Phase 1/Code.js:789.
+  'Drafts': ['DraftID', 'UserEmail', 'SessionID', 'Type', 'StateJSON', 'SavedTimestamp', 'ExpiresAt']
+};
+
+/*
+  Function: colsOf_
+
+  LAYMAN (Tropang Ex):
+  Ginagawa niyang numero yung mga pangalan. Bibigyan mo siya ng sheet at ng listahan tulad ng
+  { SESSION_ID: 'SessionID' }, ibabalik niya { SESSION_ID: 2 }, kasi pangalawa nga ang
+  SessionID sa listahan. Kaya hindi na kailangang mag-bilang ng tao.
+
+  TECHNICAL:
+  Derives a 1-based `{CONST_NAME: index}` map from PIA_SCHEMA plus an alias table, replacing
+  the hand-numbered literals. Runs at script load.
+
+  🚩 THROWS on an alias naming a header that is not in the schema. That is the entire point:
+  a typo or a stale alias fails at load with a precise message instead of silently reading
+  column `undefined - 1` → `NaN` → `undefined` at some unrelated call site months later.
+
+  PARAMS:
+  - sheetName: a PIA_SCHEMA key.
+  - aliases: { CONST_NAME: 'HeaderName', ... }.
+
+  RETURNS:
+  { CONST_NAME: 1-based column index }.
+
+  EXAMPLE
+    colsOf_('Approval_Workflow', { SESSION_ID: 'SessionID', STATUS: 'Status' })
+      → { SESSION_ID: 2, STATUS: 9 }
+    colsOf_('Approval_Workflow', { OOPS: 'NoSuchColumn' })
+      → throws: PIA_SCHEMA['Approval_Workflow'] has no column "NoSuchColumn" (alias OOPS)
+*/
+function colsOf_(sheetName, aliases) {
+  const headers = PIA_SCHEMA[sheetName];
+  if (!headers) throw new Error('colsOf_: no PIA_SCHEMA entry for sheet "' + sheetName + '"');
+  const out = {};
+  Object.keys(aliases).forEach(function (constName) {
+    const header = aliases[constName];
+    const idx = headers.indexOf(header);
+    if (idx === -1) {
+      throw new Error('colsOf_: PIA_SCHEMA["' + sheetName + '"] has no column "' + header +
+                      '" (alias ' + constName + ')');
+    }
+    out[constName] = idx + 1;   // 1-based, matching getRange()
+  });
+  return out;
+}
+
+/*
+  Function: assertSheetSchema_
+
+  LAYMAN (Tropang Ex):
+  Tinitingnan niya kung yung TOTOONG header sa spreadsheet ay tugma pa rin sa listahan natin
+  sa code. Kung may nagpalit ng pangalan ng column, o may nag-insert sa gitna, dito na siya
+  sisigaw: HINDI na yung tahimik na pagbasa ng maling column na siyang dahilan ng apat na
+  bug na naayos noong 2026-08-12.
+
+  TECHNICAL:
+  Compares the live header row against PIA_SCHEMA and THROWS on mismatch. Memoized per
+  execution: the check costs one header-row read the first time a sheet is validated and
+  nothing thereafter.
+
+  🚩 It checks a PREFIX, not equality. Extra trailing columns someone added by hand in the
+  spreadsheet are tolerated (they cannot shift anything the code addresses); a renamed,
+  reordered or missing column is fatal. That asymmetry is deliberate, this must not turn a
+  harmless manual annotation column into an outage.
+
+  🚩 Silent on a missing sheet. Creation is initializeDatabase_'s job, and several callers
+  legitimately probe for a sheet that does not exist yet.
+
+  PARAMS:
+  - sheetName: a PIA_SCHEMA key.
+  - sheet: optional, an already-opened Sheet (saves a lookup).
+
+  RETURNS:
+  true when the schema matches or the check could not run. Throws on genuine drift.
+
+  EXAMPLE
+    assertSheetSchema_('Approval_Workflow')     → true
+    // after someone renames column 9 in the spreadsheet:
+    → throws: Schema drift in "Approval_Workflow" col 9: expected "Status", found "State".
+*/
+const __SCHEMA_CHECKED = {};
+function assertSheetSchema_(sheetName, sheet) {
+  if (__SCHEMA_CHECKED[sheetName]) return true;
+  const expected = PIA_SCHEMA[sheetName];
+  if (!expected) return true;                       // sheet not under schema control
+  let sh = sheet;
+  try {
+    if (!sh) sh = getDatabaseSheet_(sheetName, false);
+    if (!sh || sh.getLastRow() === 0) return true;  // missing/empty is initializeDatabase_'s problem
+    const width = Math.max(sh.getLastColumn(), expected.length);
+    const actual = sh.getRange(1, 1, 1, width).getValues()[0];
+    for (let i = 0; i < expected.length; i++) {
+      const found = String(actual[i] || '').trim();
+      if (found !== expected[i]) {
+        throw new Error('Schema drift in "' + sheetName + '" col ' + (i + 1) +
+          ': expected "' + expected[i] + '", found "' + found + '". ' +
+          'Run repairSheetHeaders() if a header is merely missing, or fix PIA_SCHEMA if the ' +
+          'sheet is genuinely the newer shape. Do NOT reorder columns to make this pass.');
+      }
+    }
+    __SCHEMA_CHECKED[sheetName] = true;
+    return true;
+  } catch (e) {
+    if (String(e).indexOf('Schema drift') !== -1) throw e;   // real drift always propagates
+    Logger.log('assertSheetSchema_: could not verify ' + sheetName + ': ' + e);
+    return true;                                             // an API hiccup must not block the app
+  }
+}
+
 const DB_SPREADSHEET_ID_PROP = 'PIA_DB_SPREADSHEET_ID';
 const SESSION_ID_COUNTER_PROP = 'PIA_SESSION_ID_COUNTER';
 const DB_INIT_FLAG_PROP = 'PIA_DB_INIT_DONE';
+// One-shot marker for the 2026-08-12 header repair (see healSheetHeaders_). Delete this
+// property to force the repair to run again.
+const HEADER_HEAL_FLAG_PROP = 'PIA_HEADER_HEAL_DONE';
 const REMINDER_CONFIG_PROP = 'PIA_REMINDER_CONFIG';
 // CRITICAL FIX C1: EMAIL_FROM removed from module-level const. Use Session.getActiveUser().getEmail() at runtime.
 
@@ -319,7 +512,7 @@ const RISK_FLAG_THRESHOLD = 18;                      // PII field threshold for 
              person. Used so token checks and authorization are not fooled by Gmail aliases.
   TECHNICAL: Lowercases/trims, splits on '@', drops everything after '+' in the local part,
              rejoins. Returns the lowercased input unchanged if there is no '@'.
-  PARAMS:    - email — the raw address.
+  PARAMS:    - email: the raw address.
   RETURNS:   Normalized address string, or '' for falsy input.
   EXAMPLE:   getNormalizedEmail_('Me+Tag@X.com') -> 'me@x.com'
 */
@@ -339,7 +532,7 @@ function getNormalizedEmail_(email) {
              workflow sheet and columns to stamp email status into.
   TECHNICAL: Lookup mapping queue type → { name, cols, emailCol } for the matching
              *_Approval_Workflow sheet. Used by queueEmail_ stamping / processEmailQueue.
-  PARAMS:    - type — 'approver' | 'ism' | 'divhead'.
+  PARAMS:    - type: 'approver' | 'ism' | 'divhead'.
   RETURNS:   { name, cols, emailCol } object, or null for unknown types (e.g. 'applicant').
 */
 function getWorkflowInfoForType_(type) {
@@ -394,10 +587,10 @@ function getAdminNotificationConfig_() {
              link cannot be forged or its action swapped (approve→deny).
   TECHNICAL: HMAC-SHA256 over (sessionId + normalizedEmail + timestamp + action) keyed by
              SYSTEM_SECRET, hex-encoded. Binding the action prevents CSRF via action tampering.
-  PARAMS:    - sessionId — the application id.
-             - email — approver email (normalized internally).
-             - timestamp — issue time (ms) embedded in the link.
-             - action — the bound action string (e.g. 'approve'); default ''.
+  PARAMS:    - sessionId: the application id.
+             - email: approver email (normalized internally).
+             - timestamp: issue time (ms) embedded in the link.
+             - action: the bound action string (e.g. 'approve'); default ''.
   RETURNS:   Lowercase hex HMAC string.
 */
 function generateAuthToken_(sessionId, email, timestamp, action = '') {
@@ -413,7 +606,7 @@ function generateAuthToken_(sessionId, email, timestamp, action = '') {
   LAYMAN:    Checks that a string looks like a real email address.
   TECHNICAL: Simplified RFC-5322 pattern plus structural checks: exactly one '@', a domain with
              a dot, a TLD of >= 2 chars, and no consecutive dots.
-  PARAMS:    - email — candidate string.
+  PARAMS:    - email: candidate string.
   RETURNS:   Boolean. False for non-strings/empty.
   EXAMPLE:   isValidEmail_('a@b.com') -> true ; isValidEmail_('a@b') -> false
 */
@@ -442,7 +635,7 @@ function isValidEmail_(email) {
   Function: sanitizeEmail_
   LAYMAN:    Cleans an email (trim + lowercase) and returns it only if it is actually valid.
   TECHNICAL: Trim/lowercase then isValidEmail_ gate; logs a WARN and returns null on failure.
-  PARAMS:    - email — raw candidate.
+  PARAMS:    - email: raw candidate.
   RETURNS:   Clean email string, or null if invalid/non-string.
 */
 function sanitizeEmail_(email) {
@@ -460,8 +653,8 @@ function sanitizeEmail_(email) {
   LAYMAN:    Deletes several rows from a sheet at once, safely.
   TECHNICAL: Sorts row numbers descending and deletes bottom-to-top so earlier deletions do not
              shift the indices of rows still to delete. Each delete is in try/catch (logs WARN).
-  PARAMS:    - sheet — target Sheet.
-             - rowNumbers — 1-indexed row numbers to remove.
+  PARAMS:    - sheet: target Sheet.
+             - rowNumbers: 1-indexed row numbers to remove.
   RETURNS:   undefined (mutates the sheet). No-op for empty input.
 */
 function batchDeleteRows_(sheet, rowNumbers) {
@@ -479,13 +672,13 @@ function batchDeleteRows_(sheet, rowNumbers) {
 
 /*
   Function: findRowsToDelete_
-  LAYMAN:    Scans a sheet's data and lists which rows have a given value in a given column —
+  LAYMAN:    Scans a sheet's data and lists which rows have a given value in a given column,
              handy for collecting rows to delete in one batch.
   TECHNICAL: Skips the header (i=1..), trims-and-compares data[i][colIndex-1] to value, returns
              the 1-indexed sheet row numbers (i+1).
-  PARAMS:    - data — values from getDataRange().getValues().
-             - colIndex — 1-indexed column (matches *_COLS constants).
-             - value — value to match.
+  PARAMS:    - data: values from getDataRange().getValues().
+             - colIndex: 1-indexed column (matches *_COLS constants).
+             - value: value to match.
   RETURNS:   Array of 1-indexed row numbers (possibly empty).
 */
 function findRowsToDelete_(data, colIndex, value) {
@@ -506,13 +699,13 @@ function findRowsToDelete_(data, colIndex, value) {
   TECHNICAL: Up to 3 GmailApp.sendEmail attempts with 1s/3s/5s backoff. Only retries on
              retryable errors (quota / "too many times" / temporary / timeout); other errors fail
              immediately. Sleeps between retries (Utilities.sleep).
-  PARAMS:    - recipient — to-address.
-             - subject — subject line.
-             - body — plain-text body.
-             - options — GmailApp options (htmlBody, cc, bcc, name, ...).
-  RETURNS:   { success, attempts, error } — error is null on success.
+  PARAMS:    - recipient: to-address.
+             - subject: subject line.
+             - body: plain-text body.
+             - options: GmailApp options (htmlBody, cc, bcc, name, ...).
+  RETURNS:   { ok, attempts, detail }, detail is null on success.
   EXAMPLE:   sendEmailWithRetry_('a@x.com','Hi','text',{htmlBody:'<b>Hi</b>'})
-             -> { success:true, attempts:1, error:null }
+             -> { ok:true, attempts:1, detail:null }
 */
 function sendEmailWithRetry_(recipient, subject, body, options) {
   const MAX_ATTEMPTS = 3;
@@ -523,7 +716,7 @@ function sendEmailWithRetry_(recipient, subject, body, options) {
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      /* Step 1 — Try to send; success returns immediately. */
+      /* Step 1: Try to send; success returns immediately. */
       GmailApp.sendEmail(recipient, subject, body, options);
 
       if (attempt > 0) {
@@ -531,14 +724,14 @@ function sendEmailWithRetry_(recipient, subject, body, options) {
       }
 
       return {
-        ok: true, success: true,
+        ok: true,
         attempts: attempt + 1,
-        error: null
+        detail: null
       };
     } catch (e) {
       const errorMsg = e.toString();
 
-      /* Step 2 — Classify the error; only transient/quota errors are worth retrying. */
+      /* Step 2: Classify the error; only transient/quota errors are worth retrying. */
       // Check if error is retryable
       const isRetryable = errorMsg.includes('Service invoked too many times') ||
                          errorMsg.includes('quota') ||
@@ -550,13 +743,15 @@ function sendEmailWithRetry_(recipient, subject, body, options) {
         Logger.log('ERROR: Email send failed to ' + recipient +
                    ' after ' + (attempt + 1) + ' attempts: ' + errorMsg);
         return {
-          ok: false, success: false,
+          // 'detail' NOT 'message': errorMsg is a RAW Gmail exception. It is read by
+          // internal callers for logging only and must never reach a user-facing field.
+          ok: false,
           attempts: attempt + 1,
-          error: errorMsg
+          detail: errorMsg
         };
       }
 
-      /* Step 3 — Retryable and attempts remain: back off, then loop again. */
+      /* Step 3: Retryable and attempts remain: back off, then loop again. */
       // Wait and retry (exponential backoff)
       const delayMs = RETRY_DELAYS_MS[attempt];
       Logger.log('Retry attempt ' + (attempt + 2) + ' in ' + delayMs + 'ms for ' + recipient);
@@ -565,22 +760,22 @@ function sendEmailWithRetry_(recipient, subject, body, options) {
   }
 
   return {
-    ok: false, success: false,
+    ok: false,
     attempts: MAX_ATTEMPTS,
-    error: 'Failed after ' + MAX_ATTEMPTS + ' attempts'
+    detail: 'Failed after ' + MAX_ATTEMPTS + ' attempts'
   };
 }
 
 /*
   Function: isTokenValid_
   LAYMAN:    Checks that an approve/deny email link is genuine, not expired, and for the right
-             action — before honoring the click.
+             action, before honoring the click.
   TECHNICAL: Rejects missing token/timestamp or links older than TOKEN_VALIDITY_MS (14 days).
              Recomputes the action-bound HMAC and compares. For legacy links issued before the
              2026-06-01 cutoff it also accepts the old action-less HMAC (bounded backward compat).
-  PARAMS:    - sessionId, email, token, timestamp — fields from the link.
-             - action — expected bound action (default '').
-  RETURNS:   Boolean — true only if the token verifies and is within TTL.
+  PARAMS:    - sessionId, email, token, timestamp, fields from the link.
+             - action: expected bound action (default '').
+  RETURNS:   Boolean, true only if the token verifies and is within TTL.
 */
 function isTokenValid_(sessionId, email, token, timestamp, action = '') {
   if (!token || !timestamp) return false;
@@ -613,10 +808,10 @@ function isTokenValid_(sessionId, email, token, timestamp, action = '') {
 
 /*
   Function: encodePayload_
-  LAYMAN:    Packs an object into a compact URL-safe blob. NOT secret — anyone can decode it.
+  LAYMAN:    Packs an object into a compact URL-safe blob. NOT secret, anyone can decode it.
   TECHNICAL: JSON.stringify → base64. WARNING: encoding, not encryption; reversible. Use only for
              obfuscation/transport, never to protect sensitive data.
-  PARAMS:    - data — any JSON-serializable value.
+  PARAMS:    - data: any JSON-serializable value.
   RETURNS:   Base64 string.
 */
 function encodePayload_(data) {
@@ -629,7 +824,7 @@ function encodePayload_(data) {
   Function: decodePayload_
   LAYMAN:    Unpacks a blob made by encodePayload_ back into an object.
   TECHNICAL: base64Decode → JSON.parse, in try/catch. Returns null on any failure (logs it).
-  PARAMS:    - encodedStr — base64 string from encodePayload_.
+  PARAMS:    - encodedStr: base64 string from encodePayload_.
   RETURNS:   The decoded value, or null if decode/parse fails.
 */
 function decodePayload_(encodedStr) {
@@ -646,7 +841,7 @@ const makeFlagBtn = (label, isQuick = false) => `<button type="button" onclick="
 
 /*
   Helper: safeIdAttr_
-  LAYMAN:    Nililinis yung ID bago ilagay sa loob ng onclick="..." — puro letra, numero, dash at
+  LAYMAN:    Nililinis yung ID bago ilagay sa loob ng onclick="...", puro letra, numero, dash at
              underscore lang ang papasa. Session IDs at Drive file IDs ay ganun lang naman talaga.
   TECHNICAL: Whitelist filter, not a blacklist. Used instead of escapeHtml_ for values that land in a
              JS string literal INSIDE an HTML attribute, where entity-escaping alone would not stop a
@@ -661,9 +856,9 @@ const safeIdAttr_ = (v) => String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g,
   TECHNICAL: Replaces the former `<a href="https://drive.google.com/file/d/...">` markup. Keeps the
              exact same .btn.btn-sm styling so the review-form layout is unchanged. sessionId/fileId
              are whitelist-filtered; the visible label and title are HTML-escaped.
-  PARAMS:    - sessionId — PIA session id.  - fileId — Drive file id.
-             - label — visible button text (already-composed, e.g. 'View DSA').
-             - title — hover text, typically the filename.
+  PARAMS:    - sessionId: PIA session id.  - fileId: Drive file id.
+             - label: visible button text (already-composed, e.g. 'View DSA').
+             - title: hover text, typically the filename.
   RETURNS:   HTML string for one download button.
 */
 const makeDocDownloadBtn_ = (sessionId, fileId, label, title) =>
@@ -673,7 +868,7 @@ const makeDocDownloadBtn_ = (sessionId, fileId, label, title) =>
   Function: escapeHtml_
   LAYMAN:    Makes user text safe to drop into an email or HTML page (no broken markup / XSS).
   TECHNICAL: Escapes & < > " ' to their HTML entities. Coerces falsy input to ''.
-  PARAMS:    - str — value to escape.
+  PARAMS:    - str: value to escape.
   RETURNS:   Escaped string.
 */
 function escapeHtml_(str) {
@@ -697,24 +892,34 @@ function escapeHtml_(str) {
   mo lang yung code na yun sa Executions log at makikita mo yung buong detalye.
 
   TECHNICAL:
-  Closes F-06 (CWE-200, "Raw error text returned to the client"). 89 catch blocks across
+  Closes F-06 (CWE-200, "Raw error text returned to the client"). 110 catch blocks across
   the three projects returned `error: e.toString()`; GAS exceptions echo the offending
   resource ID, so a Drive failure leaked the folder id and a Sheets failure leaked the
   spreadsheet id.
 
-  🚩 THE ENVELOPE IS DUAL-KEY, ON PURPOSE, FOR ONE RELEASE:
+  🚩 THE ENVELOPE IS SINGLE-KEY (since 2026-08-12):
 
-      { ok: false, code: 'NOT_FOUND', message: '...', ref: '7f3a91',
-        success: false, error: '...' }        <- legacy pair, delete next release
+      { ok: false, code: 'NOT_FOUND', message: '...', ref: '7f3a91' }
 
-  `ok`/`code`/`message` are the contract going forward. `success`/`error` are kept so a
-  frontend call site that has not been migrated yet keeps working instead of silently
-  rendering "undefined" at a user. Three separate GAS projects deploy independently, so
-  a window where backend and frontend disagree is not hypothetical — it is the normal
-  case. Remove the legacy pair only after all three frontends are confirmed live on the
-  new keys, and remove it from all three projects in the same change.
+  It shipped DUAL-KEY for exactly one release, carrying a legacy `success`/`error` pair
+  beside these, so a frontend call site that had not been migrated yet kept working
+  instead of silently rendering "undefined" at a user. Three separate GAS projects deploy
+  independently, so a window where backend and frontend disagree is not hypothetical, it
+  is the normal case. That window is now closed: the pair was removed from all three
+  backends and all three frontends in one change.
 
-  ⚠️ The real exception goes to Logger.log ONLY — deliberately NOT to Risk_Audit. An audit
+  ⚠️ A `success` or `error` key you still see in this project is NOT this envelope.
+  `{ valid:false, error }` from validateComment_, `flags.error` inside audit JSON,
+  `Email_Queue.Last_Error`, the `result.errors` ARRAY from PIA validation, and every
+  `Logger.log('... error: ' + e)` label are unrelated and must stay.
+
+  🚩 The sweep that closed F-06 was incomplete on its first pass, and the reason
+  generalizes. The original pattern matched only a value that STARTED with the exception
+  identifier, so 21 sites shaped `error: 'Loading failed: ' + e.message` survived it,
+  including every getAdminData handler and both cross-app doPost handlers. When sweeping
+  for a leak, match the CONCATENATED form too, not just the bare one.
+
+  ⚠️ The real exception goes to Logger.log ONLY, deliberately NOT to Risk_Audit. An audit
   row per error is exactly the log-bloat pattern this repo already avoids elsewhere, and
   a sheet write inside an error handler is a second failure waiting to happen. Stackdriver
   ("exceptionLogging": "STACKDRIVER" in the manifest) already retains it, keyed by `ref`.
@@ -746,9 +951,9 @@ const ERR_MESSAGES = {
   LAYMAN:    Gumagawa ng standard na "hindi natuloy" na sagot. Isang hugis lang, kahit saan.
   TECHNICAL: Builds the dual-key failure envelope. Unknown codes degrade to INTERNAL rather
              than emitting a code the frontend cannot interpret.
-  PARAMS:    - code — one of ERR.*.
-             - message — optional override; defaults to the code's standard wording.
-  RETURNS:   { ok:false, code, message, success:false, error }.
+  PARAMS:    - code: one of ERR.*.
+             - message: optional override; defaults to the code's standard wording.
+  RETURNS:   { ok:false, code, message }.
   EXAMPLE
     return fail_(ERR.NOT_FOUND);
     return fail_(ERR.VALIDATION, 'Comment must be at least 20 characters.');
@@ -756,7 +961,7 @@ const ERR_MESSAGES = {
 function fail_(code, message) {
   const c = Object.prototype.hasOwnProperty.call(ERR_MESSAGES, code) ? code : ERR.INTERNAL;
   const m = message || ERR_MESSAGES[c];
-  return { ok: false, code: c, message: m, success: false, error: m };
+  return { ok: false, code: c, message: m };
 }
 
 /*
@@ -767,9 +972,9 @@ function fail_(code, message) {
              hanapin mo sa log.
   TECHNICAL: Logs `[ref] CODE :: stack` then returns fail_() with the ref appended to the
              public message. NEVER put e.toString()/e.message into the returned object.
-  PARAMS:    - e — the caught exception.
-             - code — one of ERR.* (defaults to INTERNAL).
-             - publicMessage — optional user-facing override.
+  PARAMS:    - e: the caught exception.
+             - code: one of ERR.* (defaults to INTERNAL).
+             - publicMessage: optional user-facing override.
   RETURNS:   The dual-key failure envelope, plus a `ref` field.
   EXAMPLE
     } catch (e) { return safeError_(e, ERR.INTERNAL); }
@@ -783,28 +988,27 @@ function safeError_(e, code, publicMessage) {
   const out = fail_(code || ERR.INTERNAL, publicMessage);
   out.ref = ref;
   out.message = out.message + ' Reference: ' + ref;
-  out.error = out.message;   // legacy key mirrors the new one for the transition window
   return out;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
-//  DELEGATION / OUT-OF-OFFICE  —  admin-managed
+//  DELEGATION / OUT-OF-OFFICE, admin-managed
 // ════════════════════════════════════════════════════════════════════════════════════
 /*
   ━━━ WHY THIS IS HARDER THAN A LOOKUP TABLE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   LAYMAN (Tropang Ex):
   Nag-leave yung approver, tumigil yung request. Walang makakagalaw para sa kanya. Mukhang
-  simpleng ayusin — "gawan ng table kung sino ang kapalit" — pero hindi.
+  simpleng ayusin, "gawan ng table kung sino ang kapalit", pero hindi.
 
   Yung email ng approver ay naka-BAON na sa row noong nag-submit pa lang. Tapos TATLONG
   magkakaibang bagay ang naka-sandal dun: (1) yung security check na "ikaw ba talaga si X?",
-  (2) yung lagda sa link mismo sa email — naka-sign yun sa email NIYA, at (3) yung paghahanap
+  (2) yung lagda sa link mismo sa email, naka-sign yun sa email NIYA, at (3) yung paghahanap
   ng tamang row. Kaya kung ipapasa mo lang yung link sa kapalit, TATLO ang babagsak, hindi isa.
 
   Ang solusyon: sa oras ng pag-email pa lang, ang DELEGATE na ang padadalhan AT ang delegate
   na ang pipirmahan ng link. Ganun, normal na normal na yung daan ng link. Yung row, sa
-  ORIHINAL na approver pa rin naka-pangalan — dinadagdagan lang ng ACTED_BY para malinaw sa
+  ORIHINAL na approver pa rin naka-pangalan, dinadagdagan lang ng ACTED_BY para malinaw sa
   audit trail kung sino talaga ang pumindot.
 
   TECHNICAL:
@@ -820,7 +1024,7 @@ function safeError_(e, code, publicMessage) {
       handleEmailAction_'s identity check and token check both pass without modification;
     - the F-02 guards widen from "is the same person" to canActAs_, which also accepts an
       active delegate;
-    - the row match is unchanged — still the original approver's row — and ACTED_BY records
+    - the row match is unchanged, still the original approver's row, and ACTED_BY records
       who really acted.
 
   🚩 ADMIN-MANAGED ONLY, and that is a security decision, not a UI convenience. If approvers
@@ -832,22 +1036,22 @@ function safeError_(e, code, publicMessage) {
   to C, A's requests go to B, not C. Chained delegation is a loop risk and an accountability
   hole; if it is ever needed, add cycle detection first.
 */
-const DELEGATION_COLS = {
-  DELEGATION_ID: 1,
-  FROM_EMAIL:    2,   // the approver who is away
-  TO_EMAIL:      3,   // who acts in their place
-  START_DATE:    4,   // inclusive, YYYY-MM-DD
-  END_DATE:      5,   // inclusive, YYYY-MM-DD
-  REASON:        6,
-  IS_ACTIVE:     7,   // 'YES' / 'NO' — a manual kill switch independent of the dates
-  CREATED_BY:    8,
-  CREATED_AT:    9
-};
+const DELEGATION_COLS = colsOf_("Delegations", {
+  DELEGATION_ID: 'Delegation_ID',
+  FROM_EMAIL: 'From_Email',
+  TO_EMAIL: 'To_Email',
+  START_DATE: 'Start_Date',
+  END_DATE: 'End_Date',
+  REASON: 'Reason',
+  IS_ACTIVE: 'Is_Active',
+  CREATED_BY: 'Created_By',
+  CREATED_AT: 'Created_At'
+});
 
 /*
   Function: getDelegationsSheet_
   LAYMAN:    Kinukuha (o ginagawa, kung wala pa) yung Delegations tab.
-  TECHNICAL: Self-healing accessor — creates the tab with headers on first use, mirroring
+  TECHNICAL: Self-healing accessor, creates the tab with headers on first use, mirroring
              getApplicationSnapshotSheet_, so a deployment that never re-ran
              initializeDatabase_ still works without a manual setup step.
   PARAMS:    (none)
@@ -858,14 +1062,104 @@ function getDelegationsSheet_() {
   if (!sheet) return null;
   try {
     if (sheet.getLastRow() === 0) {
-      sheet.appendRow(['Delegation_ID', 'From_Email', 'To_Email', 'Start_Date', 'End_Date',
-                       'Reason', 'Is_Active', 'Created_By', 'Created_At']);
+      sheet.appendRow(PIA_SCHEMA["Delegations"].slice());
       formatHeaderRow_(sheet);
     }
   } catch (e) {
-    Logger.log('getDelegationsSheet_: header init failed — ' + e);
+    Logger.log('getDelegationsSheet_: header init failed: ' + e);
   }
   return sheet;
+}
+
+/*
+  Function: healSheetHeaders_
+
+  LAYMAN (Tropang Ex):
+  Ayusin yung mga pangalan sa itaas na row (yung header) ng mga tab, kung may mali o kulang.
+  Bakit kailangan: noong nagdagdag ako ng ActedBy na column para sa delegation, na-update ko
+  yung listahan sa code pero HINDI ko na-update yung header na isinusulat sa sheet. So
+  nasusulat yung data sa tamang column, pero WALANG pangalan sa taas nito, kaya hindi
+  makita ng Admin app, na naghahanap by name. Ito yung nag-aayos nun, kusa, walang manual
+  na pag-edit ng spreadsheet.
+
+  TECHNICAL:
+  Idempotent header repair for live databases. initializeDatabase_ only writes headers when it
+  CREATES a sheet, so an existing deployment never picks up a column added later, the cell
+  gets written by setValue (extending the sheet) with a blank header above it.
+
+  Fixes the drift found on 2026-08-12:
+    - ActedBy missing from Approval_Workflow / ISM_Approval_Workflow / DivisionHead_Approval_Workflow
+    - Data_Collection col 11 headed 'Remarks' by PIA but 'Metadata_Agency' by Phase 1 (its owner);
+      Admin resolves that column BY NAME, so the wrong header made agency metadata invisible there.
+
+  🚩 Only ever writes to row 1, and only when a cell is blank or holds the known-wrong value.
+  It will not touch a header someone deliberately renamed to something else, and it never
+  reorders or inserts columns, a header repair must not be able to shift data.
+
+  PARAMS:    (none)
+  RETURNS:   { repaired: [ 'Sheet.Column', ... ] }, empty when nothing needed fixing.
+
+  EXAMPLE
+    healSheetHeaders_()
+    → { repaired: ['Approval_Workflow.ActedBy', 'Data_Collection.Metadata_Agency'] }
+    → { repaired: [] }   on an already-correct database
+*/
+function healSheetHeaders_() {
+  const repaired = [];
+
+  // [sheetName, 1-based column, expected header, the wrong value we are allowed to overwrite]
+  const FIXES = [
+    [DB_SHEET_NAMES.APPROVAL_WORKFLOW, APPROVAL_COLS.ACTED_BY,        'ActedBy',          ''],
+    [DB_SHEET_NAMES.ISM_WORKFLOW,      ISM_WORKFLOW_COLS.ACTED_BY,    'ActedBy',          ''],
+    [DB_SHEET_NAMES.DIV_HEAD_CONFIG,   DIV_HEAD_CONFIG_COLS.ACTED_BY, 'ActedBy',          ''],
+    [DB_SHEET_NAMES.DATA_COLLECTION,   DCS_COLS.METADATA_AGENCY,      'Metadata_Agency',  'Remarks']
+  ];
+
+  FIXES.forEach(function (fix) {
+    const sheetName = fix[0], col = fix[1], want = fix[2], replaceable = fix[3];
+    try {
+      const sheet = getDatabaseSheet_(sheetName, false);
+      if (!sheet || sheet.getLastRow() === 0) return;
+
+      const current = (col <= sheet.getLastColumn())
+        ? String(sheet.getRange(1, col).getValue() || '').trim()
+        : '';
+
+      if (current === want) return;                                   // already correct
+      if (current !== '' && current !== replaceable) {                // someone renamed it on purpose
+        Logger.log('healSheetHeaders_: ' + sheetName + ' col ' + col +
+                   ' holds "' + current + '", expected "' + want + '", left alone.');
+        return;
+      }
+      sheet.getRange(1, col).setValue(want);
+      repaired.push(sheetName + '.' + want);
+    } catch (e) {
+      Logger.log('healSheetHeaders_: could not repair ' + sheetName + ' col ' + col + ': ' + e);
+    }
+  });
+
+  if (repaired.length) Logger.log('healSheetHeaders_: repaired ' + repaired.join(', '));
+  return { repaired: repaired };
+}
+
+/*
+  Function: repairSheetHeaders
+  LAYMAN:    Patakbuhin ito NANG ISANG BESES sa editor pagkatapos mag-deploy, para maayos yung
+             mga kulang na header sa kasalukuyang database. Ligtas ulit-ulitin, kung ayos na,
+             wala siyang gagawin.
+  TECHNICAL: Owner-gated public wrapper over healSheetHeaders_. Public because it is meant to be
+             run from the Apps Script editor; isOwnerContext_() stops any domain user invoking a
+             header write from a browser console.
+  PARAMS:    (none)
+  RETURNS:   { ok, repaired[] } or an authorization failure.
+*/
+function repairSheetHeaders() {
+  if (!isOwnerContext_()) return fail_(ERR.FORBIDDEN, 'Not authorized.');
+  const result = healSheetHeaders_();
+  return { ok: true, repaired: result.repaired,
+           message: result.repaired.length
+             ? 'Repaired: ' + result.repaired.join(', ')
+             : 'All sheet headers are already correct.' };
 }
 
 /*
@@ -873,7 +1167,7 @@ function getDelegationsSheet_() {
 
   LAYMAN (Tropang Ex):
   Tanong: "May kapalit ba si <email> ngayon?" Kung meron at aktibo pa (nasa loob ng petsa at
-  naka-YES), ibabalik yung email ng kapalit. Kung wala, null — normal na daloy.
+  naka-YES), ibabalik yung email ng kapalit. Kung wala, null, normal na daloy.
 
   TECHNICAL:
   Single-hop lookup against the Delegations sheet. A row applies when Is_Active is YES and
@@ -886,8 +1180,8 @@ function getDelegationsSheet_() {
   never to "nobody is notified".
 
   PARAMS:
-  - email — the named approver's address.
-  - atDate — optional Date to evaluate against; defaults to now. Used by tests.
+  - email: the named approver's address.
+  - atDate: optional Date to evaluate against; defaults to now. Used by tests.
 
   RETURNS:
   { email, reason, delegationId } for an active delegate, or null.
@@ -906,7 +1200,7 @@ function resolveDelegate_(email, atDate) {
     if (!sheet) return null;
     rows = readSheetValues_(sheet);
   } catch (e) {
-    Logger.log('resolveDelegate_: delegation lookup failed, falling back to direct routing — ' + e);
+    Logger.log('resolveDelegate_: delegation lookup failed, falling back to direct routing: ' + e);
     return null;
   }
   if (!rows || rows.length < 2) return null;
@@ -939,12 +1233,12 @@ function resolveDelegate_(email, atDate) {
 
 /*
   Function: parseDelegationDate_
-  LAYMAN:    Ginagawang petsa yung laman ng cell. Kung walang laman o hindi mabasa, null —
+  LAYMAN:    Ginagawang petsa yung laman ng cell. Kung walang laman o hindi mabasa, null,
              ibig sabihin walang hangganan sa gilid na yun.
   TECHNICAL: Accepts a Date object (Sheets often auto-converts) or 'YYYY-MM-DD', normalized to
              local midnight so day comparisons are inclusive at both ends. Returns null for
              blank or unparseable, which callers treat as "unbounded on that side".
-  PARAMS:    - v — the raw cell value.
+  PARAMS:    - v: the raw cell value.
   RETURNS:   A Date at local midnight, or null.
 */
 function parseDelegationDate_(v) {
@@ -968,12 +1262,12 @@ function parseDelegationDate_(v) {
   TECHNICAL:
   The widened F-02 predicate.
 
-  🚩 EXCLUSIVE, NOT ADDITIVE — and that is the whole point. The first cut of this function
+  🚩 EXCLUSIVE, NOT ADDITIVE: and that is the whole point. The first cut of this function
   checked same-person FIRST and delegation second, which meant the original approver AND
   their delegate could both act on the same Pending row. That is not a handoff, it is a
   race: two people can hold a valid link to the same step and click Approve seconds apart,
   and whichever write lands second silently loses (the row is no longer Pending, so the
-  second caller gets "record not found" — confusing at best, and it makes "who actually
+  second caller gets "record not found", confusing at best, and it makes "who actually
   decided this" ambiguous).
 
   Delegation is therefore resolved FIRST and answers for the whole function: while a
@@ -985,11 +1279,11 @@ function parseDelegationDate_(v) {
   pre-delegation behaviour.
 
   PARAMS:
-  - callerEmail — the resolved Session.getActiveUser() address.
-  - approverEmail — the address named on the workflow row.
+  - callerEmail: the resolved Session.getActiveUser() address.
+  - approverEmail: the address named on the workflow row.
 
   RETURNS:
-  { allowed:boolean, onBehalfOf:string } — onBehalfOf is '' when the approver acted
+  { allowed:boolean, onBehalfOf:string }, onBehalfOf is '' when the approver acted
   personally, and the ORIGINAL approver's address when a delegate acted. Callers write that
   straight into ACTED_BY.
 
@@ -1017,10 +1311,10 @@ function canActAs_(callerEmail, approverEmail) {
       return { allowed: true, onBehalfOf: target };
     }
     if (me === target) {
-      Logger.log('DELEGATION: refused ' + me + ' on their own row — currently delegated to ' +
+      Logger.log('DELEGATION: refused ' + me + ' on their own row, currently delegated to ' +
                  del.email + (del.delegationId ? ' [' + del.delegationId + ']' : ''));
     }
-    return { allowed: false, onBehalfOf: '' };   // includes the original — no shared window
+    return { allowed: false, onBehalfOf: '' };   // includes the original, no shared window
   }
 
   if (me === target) return { allowed: true, onBehalfOf: '' };
@@ -1032,10 +1326,10 @@ function canActAs_(callerEmail, approverEmail) {
   LAYMAN:    Sino ang dapat padalhan ng email para sa approver na ito? Kung may kapalit,
              siya. Kung wala, yung approver mismo.
   TECHNICAL: The single choke point every notify path routes through, so delegation cannot
-             be half-applied (mail to one address, token signed for another — which would
+             be half-applied (mail to one address, token signed for another, which would
              produce a link that fails the identity check and look like a bug).
-  PARAMS:    - approverEmail — the address named on the workflow row.
-  RETURNS:   { email, onBehalfOf, reason } — onBehalfOf is '' when there is no delegation.
+  PARAMS:    - approverEmail: the address named on the workflow row.
+  RETURNS:   { email, onBehalfOf, reason }, onBehalfOf is '' when there is no delegation.
 */
 function recipientFor_(approverEmail) {
   const del = resolveDelegate_(approverEmail);
@@ -1046,11 +1340,11 @@ function recipientFor_(approverEmail) {
 /*
   Function: delegationNoticeHtml_
   LAYMAN:    Yung maliit na paalala sa email: "pinapadala ito sa'yo kasi ikaw ang kapalit ni
-             <X>." Kailangan yun — kung wala, magtataka yung tao kung bakit siya inemail
+             <X>." Kailangan yun: kung wala, magtataka yung tao kung bakit siya inemail
              tungkol sa request na hindi naman sa kanya.
   TECHNICAL: Returns '' when there is no delegation, so every call site can concatenate it
              unconditionally without a branch.
-  PARAMS:    - onBehalfOf — the original approver's address, or ''.  - reason — optional.
+  PARAMS:    - onBehalfOf: the original approver's address, or ''.  - reason: optional.
   RETURNS:   An HTML string, or ''.
 */
 function delegationNoticeHtml_(onBehalfOf, reason) {
@@ -1071,12 +1365,12 @@ function delegationNoticeHtml_(onBehalfOf, reason) {
              dcsReqId", sets each match to DOMAIN_WITH_LINK / VIEW. All wrapped in try/catch so a
              sharing failure never blocks the flow. (The legacy `|| ADMIN_FOLDER_ID` bare-constant
              fallback was removed: that identifier is not defined in this file, so it threw a
-             ReferenceError that the try/catch swallowed — it never actually acted as a fallback.)
-  PARAMS:    - dcsReqId — linked DCS Request ID.
+             ReferenceError that the try/catch swallowed, it never actually acted as a fallback.)
+  PARAMS:    - dcsReqId: linked DCS Request ID.
   RETURNS:   Array of { id, name, url }; [] if none found or on error.
 */
 /*
-  🚩 SECURITY — THE ONE DELIBERATE SHARING EXCEPTION IN THE SYSTEM. Do not "clean this up."
+  🚩 SECURITY: THE ONE DELIBERATE SHARING EXCEPTION IN THE SYSTEM. Do not "clean this up."
 
   Everywhere else, uploaded DCS documents are PRIVATE in Drive (Phase 1/Code.js uploadProxy_ sets
   no sharing at all) and are read only through apiDownloadDcsFile, which re-authorizes the caller.
@@ -1092,14 +1386,14 @@ function delegationNoticeHtml_(onBehalfOf, reason) {
     - it touches only the one request being routed, not the vault.
 
   If you ever remove the link from the certificate email (e.g. by attaching the document bytes
-  directly instead), delete this elevation with it — do not leave it running unused.
+  directly instead), delete this elevation with it, do not leave it running unused.
 */
 function getAndShareDCSFiles_(dcsReqId) {
   if (!dcsReqId) return [];
   const foundFiles = [];
   const seen = {};
 
-  // PRIMARY (#15): use the file IDs stored on the DCS Data_Collection record. This is reliable — it does
+  // PRIMARY (#15): use the file IDs stored on the DCS Data_Collection record. This is reliable, it does
   // not depend on the Admin folder configuration or the file-naming/search scope. Internal NDA/DPA docs
   // are included here too (previously the folder title-search could miss them).
   try {
@@ -1149,7 +1443,7 @@ function getAndShareDCSFiles_(dcsReqId) {
 /*
   Function: getDCSSupersededFiles_
   LAYMAN:    Reads the DCS request's list of REPLACED documents (the ones a requestor overwrote on a
-             revision). These stay viewable because they're archived, not trashed — so the certificate
+             revision). These stay viewable because they're archived, not trashed, so the certificate
              can show the full old→new document trail.
   TECHNICAL: Parses Data_Collection.Metadata_JSON for the linked reqId and returns its supersededFiles
              array, mapped to { type, name, id, url, supersededRound, supersededAt }. [] on any miss.
@@ -1160,7 +1454,7 @@ function getAndShareDCSFiles_(dcsReqId) {
              cannot call google.script.run. Uploads are otherwise private (Phase 1 uploadProxy_).
              If the certificate ever stops linking superseded documents, remove this elevation too.
 
-  PARAMS:    - dcsReqId — the linked DCS request id.
+  PARAMS:    - dcsReqId: the linked DCS request id.
   RETURNS:   Array of superseded-document descriptors (possibly empty).
 */
 function getDCSSupersededFiles_(dcsReqId) {
@@ -1177,7 +1471,7 @@ function getDCSSupersededFiles_(dcsReqId) {
         return list.map(function (f) {
           // Certificate exception (see the doc block): archived files are private at rest now, so
           // elevate this one request's superseded docs to domain-link at certificate time only.
-          // Guarded per file — a missing/trashed archive entry must not break the certificate.
+          // Guarded per file: a missing/trashed archive entry must not break the certificate.
           if (f && f.id) {
             try {
               DriveApp.getFileById(f.id)
@@ -1205,13 +1499,13 @@ function getDCSSupersededFiles_(dcsReqId) {
   Function: collectDcsFileIds_
 
   LAYMAN (Tropang Ex):
-  Lahat ng Drive file ID na TALAGANG kabilang sa isang DCS request — kasalukuyang attachments,
+  Lahat ng Drive file ID na TALAGANG kabilang sa isang DCS request, kasalukuyang attachments,
   lumang bersyon na na-replace, at yung endorsement letter. Ito yung listahang ikukumpara bago
   magbukas ng file.
 
   TECHNICAL:
   PIA-side twin of Phase 1's collectRequestFileIds_ (separate GAS projects cannot share code, so
-  this is a deliberate duplicate — keep the two in sync). Builds the set of Drive file IDs
+  this is a deliberate duplicate, keep the two in sync). Builds the set of Drive file IDs
   reachable from one Data_Collection row: FILE_ID JSON, Metadata_JSON.supersededFiles, and
   Metadata_Agency.endorsementLetter.id. Every parse is defensive.
 
@@ -1219,7 +1513,7 @@ function getDCSSupersededFiles_(dcsReqId) {
   arbitrary Drive file in the script owner's Drive.
 
   PARAMS:
-    - row — a Data_Collection row as a 0-indexed array.
+    - row: a Data_Collection row as a 0-indexed array.
   RETURNS:   { '<driveFileId>': true, ... }
 */
 function collectDcsFileIds_(row) {
@@ -1250,7 +1544,7 @@ function collectDcsFileIds_(row) {
 
   LAYMAN (Tropang Ex):
   Ganito na binubuksan ng approver yung mga dokumentong naka-attach sa request na nire-review niya.
-  Dati kasi direktang Drive link — at yung link na yun ay bukas sa kahit sino sa buong internet.
+  Dati kasi direktang Drive link: at yung link na yun ay bukas sa kahit sino sa buong internet.
   Ngayon, tinatanong muna ng server kung kasama ka ba sa request na to (ikaw ba yung nag-file, o
   isa ka sa mga approver / ISM / Division Head nito). Kung oo, ipapadala niya mismo yung laman ng
   file. Walang Drive link na lumalabas.
@@ -1265,37 +1559,37 @@ function collectDcsFileIds_(row) {
     (1) corporate domain,
     (2) per-application authority via isAuthorizedForApplication_,
     (3) file membership via collectDcsFileIds_ (anti-confused-deputy),
-    (4) size ceiling — base64 inflates ~33% and google.script.run payloads get unreliable well
+    (4) size ceiling, base64 inflates ~33% and google.script.run payloads get unreliable well
         before a 10 MB upload round-trips.
 
   Errors to the caller are generic; the real exception is logged server-side only, because Drive
   exceptions echo the offending resource ID and would leak ADMIN_FOLDER_ID.
 
   PARAMS:
-    - sessionId — the PIA session whose linked DCS request owns the document.
-    - fileId    — the Drive file ID. Validated against the request, never trusted alone.
-  RETURNS:   { success:true, data:{ base64, mimeType, filename } } |
-             { success:false, error } with a generic message.
+    - sessionId: the PIA session whose linked DCS request owns the document.
+    - fileId: the Drive file ID. Validated against the request, never trusted alone.
+  RETURNS:   { ok: true, data:{ base64, mimeType, filename } } |
+             { ok:false, code, message } with a generic message.
 
   EXAMPLE
     apiDownloadDcsFile('PIA-000075', '1AbC...xyz')
-      -> { success:true, data:{ base64:'JVBERi0…', mimeType:'application/pdf',
+      -> { ok: true, data:{ base64:'JVBERi0…', mimeType:'application/pdf',
                                 filename:'DCS-000007-NDA.pdf' } }
     apiDownloadDcsFile('PIA-000075', '<a file from another request>')
-      -> { success:false, error:'Document not available.' }
+      -> { ok: false, message: 'Document not available.' }
 */
 function apiDownloadDcsFile(sessionId, fileId) {
   const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024; // 8 MB decoded; ~10.7 MB once base64-encoded
-  // One opaque message for every authorization failure — never reveal which gate rejected.
-  const DENIED = { ok: false, success: false, error: 'Document not available.' };
+  // One opaque message for every authorization failure, never reveal which gate rejected.
+  const DENIED = { ok: false, message: 'Document not available.' };
 
   try {
-    /* Step 1 — Domain + argument gate. */
+    /* Step 1: Domain + argument gate. */
     const me = Session.getActiveUser().getEmail();
     if (!isAuthorizedDomain_(me)) return DENIED;
     if (!sessionId || !fileId) return DENIED;
 
-    /* Step 2 — Per-application authority (owner / head / ISM / DivHead). */
+    /* Step 2: Per-application authority (owner / head / ISM / DivHead). */
     const appData = getApplicationData_(sessionId);
     if (!appData) return DENIED;
     if (!isAuthorizedForApplication_(sessionId, appData)) {
@@ -1303,7 +1597,7 @@ function apiDownloadDcsFile(sessionId, fileId) {
       return DENIED;
     }
 
-    /* Step 3 — Resolve the linked DCS row that actually holds the file list. */
+    /* Step 3: Resolve the linked DCS row that actually holds the file list. */
     const linkedReqId = String(appData.linkedReqId || '').trim();
     if (!linkedReqId) return DENIED;
 
@@ -1319,7 +1613,7 @@ function apiDownloadDcsFile(sessionId, fileId) {
     }
     if (!dcsRow) return DENIED;
 
-    /* Step 4 — File-membership gate: the fileId must belong to THIS request. */
+    /* Step 4: File-membership gate: the fileId must belong to THIS request. */
     const allowed = collectDcsFileIds_(dcsRow);
     if (!allowed[String(fileId).trim()]) {
       Logger.log('SECURITY ALERT: ' + me + ' requested file ' + fileId +
@@ -1327,21 +1621,21 @@ function apiDownloadDcsFile(sessionId, fileId) {
       return DENIED;
     }
 
-    /* Step 5 — Size gate, then read and encode. */
+    /* Step 5: Size gate, then read and encode. */
     const file  = DriveApp.getFileById(String(fileId).trim());
     const blob  = file.getBlob();
     const bytes = blob.getBytes();
     if (bytes.length > MAX_DOWNLOAD_BYTES) {
       return {
-        ok: false, success: false,
-        error: 'This document is too large to open here (' +
+        ok: false,
+        message: 'This document is too large to open here (' +
                (bytes.length / 1024 / 1024).toFixed(1) +
                ' MB). Please request a copy from the ISM Department.'
       };
     }
 
     return {
-      ok: true, success: true,
+      ok: true,
       data: {
         base64  : Utilities.base64Encode(bytes),
         mimeType: blob.getContentType() || 'application/octet-stream',
@@ -1350,20 +1644,20 @@ function apiDownloadDcsFile(sessionId, fileId) {
     };
 
   } catch (e) {
-    // Generic to the caller, specific to the log — Drive errors echo resource IDs.
+    // Generic to the caller, specific to the log: Drive errors echo resource IDs.
     Logger.log('apiDownloadDcsFile failed for ' + sessionId + '/' + fileId + ': ' + e.toString());
-    return { ok: false, success: false, error: 'Could not open this document. Please try again or contact ISM.' };
+    return { ok: false, message: 'Could not open this document. Please try again or contact ISM.' };
   }
 }
 
 /*
   Function: getStyledHtmlWrapper_
-  LAYMAN:    Wraps a header + content into a complete, styled HTML page — used for the
+  LAYMAN:    Wraps a header + content into a complete, styled HTML page, used for the
              "access denied", approve/deny result, and other standalone pages the app serves.
   TECHNICAL: Returns a full HTML document string (fonts, :root design tokens, toast helpers)
              with header/content interpolated. Pure template builder, no side-effects.
-  PARAMS:    - header — HTML for the page title/badge area.
-             - content — HTML for the page body.
+  PARAMS:    - header: HTML for the page title/badge area.
+             - content: HTML for the page body.
   RETURNS:   Complete HTML document string.
 */
 function getStyledHtmlWrapper_(header, content) {
@@ -1373,7 +1667,7 @@ function getStyledHtmlWrapper_(header, content) {
     <head>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
       <style>
-        /* GENERATED from docs/design-tokens.css — this is the block an APPROVER sees on the
+        /* GENERATED from docs/design-tokens.css, this is the block an APPROVER sees on the
            page they land on from an email link. It drifted to navy #1a3a5c and radius 6/12 for
            months because nobody thinks of the backend as having a stylesheet. Edit the canonical
            file, then paste into all 6 targets. */
@@ -1710,12 +2004,12 @@ function getStyledHtmlWrapper_(header, content) {
         // now PRIVATE in Drive; apiDownloadDcsFile re-checks that the caller is party to this
         // request AND that the fileId belongs to it, then returns the bytes as base64.
         //
-        // This is the APPROVER-FACING copy — the page reached from an email link. It is a
+        // This is the APPROVER-FACING copy, the page reached from an email link. It is a
         // deliberate triplicate of the viewer in Phase 1/index.html and Phase 2/pia_index.html;
         // three separate GAS projects, and this page is not even the same document as the PIA
         // app. Edit all three together.
         //
-        // NOTE: plain string concatenation only, and NO backticks — this whole block sits inside
+        // NOTE: plain string concatenation only, and NO backticks, this whole block sits inside
         // a backtick template literal in pia_code.js. A dollar-brace sequence here would be
         // interpolated server-side, and a stray backtick would terminate the template early.
         // (Both failure modes pass node --check on the file and only break the SERVED page.)
@@ -1727,7 +2021,7 @@ function getStyledHtmlWrapper_(header, content) {
 
         // Revokes the blob. The preview cannot revoke right after creation the way the old
         // download-only path did, because the iframe/img reads the URL for as long as it is on
-        // screen — so every exit route (X, backdrop, Esc, opening another file) lands here.
+        // screen, so every exit route (X, backdrop, Esc, opening another file) lands here.
         function closeFilePreview() {
           var host = document.getElementById('filePreviewOverlay');
           if (host && host.parentNode) host.parentNode.removeChild(host);
@@ -1738,7 +2032,7 @@ function getStyledHtmlWrapper_(header, content) {
         // Renders into the CURRENT document rather than window.open(blobUrl): this page is served
         // inside Apps Script's sandboxed iframe, where popups are blocked and a blob: URL is not
         // reliably navigable as a top-level document. Filename goes in via textContent, never
-        // innerHTML — it is user-supplied and there is no escape helper in scope here.
+        // innerHTML, it is user-supplied and there is no escape helper in scope here.
         function showFilePreview(data) {
           closeFilePreview();
 
@@ -1865,123 +2159,110 @@ function getStyledHtmlWrapper_(header, content) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // COLUMN INDEX CONSTANTS (Anti-Magic Number Pattern)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const APPLICATIONS_COLS = {
-  SESSION_ID: 1,
-  APPLICANT_EMAIL: 2,
-  STATUS: 3,
-  PIA_1_DATA: 4,
-  PIA_2_DATA: 5,
-  PIA_3_DATA: 6,
-  PIA_4_DATA: 7,
-  PIA_5_DATA: 8,
-  ADMIN_EXPORT_ID: 9,
-  SUBMISSION_DATE: 10,
-  IS_FLAGGED: 11,
-  NOTES: 12,
-  LINKED_REQ_ID: 13,
-  APPROVER_FLAGS: 14
-};
+const APPLICATIONS_COLS = colsOf_("Applications", {
+  SESSION_ID: 'SessionID',
+  APPLICANT_EMAIL: 'ApplicantEmail',
+  STATUS: 'Status',
+  PIA_1_DATA: 'PIA_1_Data',
+  PIA_2_DATA: 'PIA_2_Data',
+  PIA_3_DATA: 'PIA_3_Data',
+  PIA_4_DATA: 'PIA_4_Data',
+  PIA_5_DATA: 'PIA_5_Data',
+  ADMIN_EXPORT_ID: 'AdminExportID',
+  SUBMISSION_DATE: 'SubmissionDate',
+  IS_FLAGGED: 'IsFlagged',
+  NOTES: 'Notes',
+  LINKED_REQ_ID: 'Linked_ReqID',
+  APPROVER_FLAGS: 'Approver_Flags'
+});
 
-const APPROVAL_COLS = {
-  APPROVAL_ID: 1,
-  SESSION_ID: 2,
-  CURRENT_STEP: 3,
-  APPROVER_NAME: 4,
-  APPROVER_EMAIL: 5,
-  DECISION: 6,
-  COMMENTS: 7,
-  DECISION_DATE: 8,
-  STATUS: 9,
-  REMINDER_DATE: 10,
-  EMAIL_STATUS: 11,
-  EMAIL_ERROR: 12,
-  NOTIFIED_DATE: 13, // Commit 6: date this approver was first notified (drives the 7-day first-reminder clock)
-  // ── Append-only workflow (2026-08-11). Appended at the END so no existing index shifts. ──
-  ROUND_NUMBER: 14,  // which resubmission cycle this row belongs to. Blank/0 is read as round 1.
-  FLAGGED_FIELDS: 15, // JSON of what THIS approver flagged on THIS round (only set on a Return).
-  // ── Delegation (2026-08-11). Also appended at the END, same reason. ──
-  ACTED_BY: 16       // who actually clicked, when that is NOT the named approver. Blank = the
-                     // approver acted personally. Set only on a delegated decision, so the
-                     // audit trail reads "approved by X on behalf of Y".
-};
+const APPROVAL_COLS = colsOf_("Approval_Workflow", {
+  APPROVAL_ID: 'ApprovalID',
+  SESSION_ID: 'SessionID',
+  CURRENT_STEP: 'CurrentStep',
+  APPROVER_NAME: 'ApproverName',
+  APPROVER_EMAIL: 'ApproverEmail',
+  DECISION: 'Decision',
+  COMMENTS: 'Comments',
+  DECISION_DATE: 'DecisionDate',
+  STATUS: 'Status',
+  REMINDER_DATE: 'ReminderDate',
+  EMAIL_STATUS: 'EmailStatus',
+  EMAIL_ERROR: 'EmailError',
+  NOTIFIED_DATE: 'NotifiedDate',
+  ROUND_NUMBER: 'RoundNumber',
+  FLAGGED_FIELDS: 'FlaggedFields',
+  ACTED_BY: 'ActedBy'
+});
 
-const AUDIT_COLS = {
-  LOG_ID: 1,
-  SESSION_ID: 2,
-  INTERNAL_FLAGS: 3,
-  ACTION: 4,
-  USER_EMAIL: 5,
-  USER_AGENT: 6,
-  TIMESTAMP: 7
-};
+const AUDIT_COLS = colsOf_("Risk_Audit", {
+  LOG_ID: 'LogID',
+  SESSION_ID: 'SessionID',
+  INTERNAL_FLAGS: 'InternalFlags',
+  ACTION: 'Action',
+  USER_EMAIL: 'UserEmail',
+  USER_AGENT: 'UserAgent',
+  TIMESTAMP: 'Timestamp'
+});
 
-const DCS_COLS = {
-  LOG_ID: 1,
-  REQ_ID: 2,
-  USER_EMAIL: 3,
-  STATUS: 4,
-  IMMEDIATE_HEAD_EMAIL: 5,
-  DEPT_HEAD_EMAIL: 6,
-  DIV_HEAD_EMAIL: 7,
-  FILE_ID: 8,
-  METADATA_JSON: 9,
-  TIMESTAMP: 10,
-  METADATA_AGENCY: 11,
-  REMARKS: 12
-};
+const DCS_COLS = colsOf_("Data_Collection", {
+  LOG_ID: 'LogID',
+  REQ_ID: 'ReqID',
+  USER_EMAIL: 'UserEmail',
+  STATUS: 'Status',
+  IMMEDIATE_HEAD_EMAIL: 'ImmediateHeadEmail',
+  DEPT_HEAD_EMAIL: 'DeptHeadEmail',
+  DIV_HEAD_EMAIL: 'DivHeadEmail',
+  FILE_ID: 'FileID',
+  METADATA_JSON: 'Metadata_JSON',
+  TIMESTAMP: 'Timestamp',
+  METADATA_AGENCY: 'Metadata_Agency'
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PHASE 3 WORKFLOW - ISM APPROVAL WORKFLOW SHEET COLUMNS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const ISM_WORKFLOW_COLS = {
-  ISM_APPROVAL_ID: 1,
-  SESSION_ID: 2,
-  CURRENT_STEP: 3,
-  ISM_MEMBER_NAME: 4,
-  ISM_MEMBER_EMAIL: 5,
-  DECISION: 6,
-  COMMENTS: 7,
-  DECISION_DATE: 8,
-  STATUS: 9,
-  REQUIRES_DIV_HEAD: 10,
-  DIV_HEAD_ESCALATION_ID: 11,
-  ROUTING_DESTINATION: 12,
-  REMINDER_DATE: 13,
-  EMAIL_STATUS: 14,
-  EMAIL_ERROR: 15,
-  NOTIFIED_DATE: 16, // Commit 6: date this ISM member was first notified (drives the 7-day first-reminder clock)
-  // ── Append-only workflow (2026-08-11). Appended at the END so no existing index shifts. ──
-  ROUND_NUMBER: 17,  // which resubmission cycle this row belongs to. Blank/0 is read as round 1.
-  FLAGGED_FIELDS: 18, // JSON of what THIS reviewer flagged on THIS round (only set on a Return).
-  // ── Delegation (2026-08-11). Also appended at the END, same reason. ──
-  ACTED_BY: 19        // who actually clicked, when that is NOT the named ISM member. Blank
-                      // means they acted personally. Set only on a delegated decision, so
-                      // the audit trail reads "approved by X on behalf of Y".
-};
+const ISM_WORKFLOW_COLS = colsOf_("ISM_Approval_Workflow", {
+  ISM_APPROVAL_ID: 'ISM_Approval_ID',
+  SESSION_ID: 'SessionID',
+  CURRENT_STEP: 'CurrentStep',
+  ISM_MEMBER_NAME: 'ISM_Member_Name',
+  ISM_MEMBER_EMAIL: 'ISM_Member_Email',
+  DECISION: 'Decision',
+  COMMENTS: 'Comments',
+  DECISION_DATE: 'DecisionDate',
+  STATUS: 'Status',
+  REQUIRES_DIV_HEAD: 'Requires_DivHead',
+  DIV_HEAD_ESCALATION_ID: 'DivHead_Escalation_ID',
+  ROUTING_DESTINATION: 'Routing_Destination',
+  REMINDER_DATE: 'ReminderDate',
+  EMAIL_STATUS: 'EmailStatus',
+  EMAIL_ERROR: 'EmailError',
+  NOTIFIED_DATE: 'NotifiedDate',
+  ROUND_NUMBER: 'RoundNumber',
+  FLAGGED_FIELDS: 'FlaggedFields',
+  ACTED_BY: 'ActedBy'
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PHASE 3 WORKFLOW - DIVISION HEAD CONFIG SHEET COLUMNS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const DIV_HEAD_CONFIG_COLS = {
-  ESCALATION_ID: 1,
-  SESSION_ID: 2,
-  DIV_HEAD_EMAIL: 3,
-  DECISION: 4,
-  COMMENTS: 5,
-  DECISION_DATE: 6,
-  STATUS: 7,
-  REMINDER_DATE: 8,
-  EMAIL_STATUS: 9,
-  EMAIL_ERROR: 10,
-  NOTIFIED_DATE: 11, // Commit 6: date this Division Head was first notified (drives the 7-day first-reminder clock)
-  // ── Append-only workflow (2026-08-11). Appended at the END so no existing index shifts. ──
-  ROUND_NUMBER: 12,  // which resubmission cycle this row belongs to. Blank/0 is read as round 1.
-  FLAGGED_FIELDS: 13, // JSON of what the Division Head flagged on THIS round (only set on a Return).
-  // ── Delegation (2026-08-11). Also appended at the END, same reason. ──
-  ACTED_BY: 14        // who actually clicked, when that is NOT the named Division Head.
-                      // Blank means they acted personally. Set only on a delegated
-                      // decision, so the audit trail reads "approved by X on behalf of Y".
-};
+const DIV_HEAD_CONFIG_COLS = colsOf_("DivisionHead_Approval_Workflow", {
+  ESCALATION_ID: 'Escalation_ID',
+  SESSION_ID: 'SessionID',
+  DIV_HEAD_EMAIL: 'DivHead_Email',
+  DECISION: 'Decision',
+  COMMENTS: 'Comments',
+  DECISION_DATE: 'DecisionDate',
+  STATUS: 'Status',
+  REMINDER_DATE: 'ReminderDate',
+  EMAIL_STATUS: 'EmailStatus',
+  EMAIL_ERROR: 'EmailError',
+  NOTIFIED_DATE: 'NotifiedDate',
+  ROUND_NUMBER: 'RoundNumber',
+  FLAGGED_FIELDS: 'FlaggedFields',
+  ACTED_BY: 'ActedBy'
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // REVISION HISTORY SHEET COLUMNS (durable return-cycle logbook)
@@ -1990,7 +2271,7 @@ const DIV_HEAD_CONFIG_COLS = {
 // APPLICATION SNAPSHOT COLUMNS (what the approvers actually saw, per round)
 //
 // LAYMAN (Tropang Ex): Tuwing nagre-resubmit ang applicant, dati ay SINASAPAWAN lang yung mga
-//   sagot niya sa Applications sheet — patay na yung luma, wala nang kopya. So kapag tinanong ka
+//   sagot niya sa Applications sheet, patay na yung luma, wala nang kopya. So kapag tinanong ka
 //   ng auditor ng "ano ba talaga yung inaprubahan ng Department Head noong round 1?", wala kang
 //   maisasagot. Dito na natin itinatago yung buong sagot bago pa man sapawan.
 //
@@ -2000,71 +2281,71 @@ const DIV_HEAD_CONFIG_COLS = {
 //   🚩 THIS IS NOT THE SAME KIND OF THING AS THE OLD Revision_History, which was retired when the
 //   workflow went append-only. That sheet was a copy-before-DELETE of rows that never needed
 //   deleting. This is a copy-before-UPDATE of Applications.PIA_1..5_Data, which genuinely is a
-//   single-current-state record looked up by SessionID across all three apps — versioning it into
+//   single-current-state record looked up by SessionID across all three apps, versioning it into
 //   multiple rows would break every reader in the system. Current-state row + separate history
 //   table is the correct pattern here, not a workaround.
 //
 //   The workflow sheets hold the DECISIONS of each round; this holds the SUBMISSION of that round.
 //   Both are keyed by (SessionID, RoundNumber) and are meant to be read together.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const APPLICATION_SNAPSHOT_COLS = {
-  SNAPSHOT_ID: 1,
-  SESSION_ID: 2,
-  ROUND_NUMBER: 3,
-  APPLICANT_EMAIL: 4,
-  STATUS_AT_SNAPSHOT: 5,
-  PIA_1_DATA: 6,
-  PIA_2_DATA: 7,
-  PIA_3_DATA: 8,
-  PIA_4_DATA: 9,
-  PIA_5_DATA: 10,
-  APPROVER_FLAGS: 11,
-  LINKED_REQ_ID: 12,
-  SNAPSHOT_AT: 13
-};
+const APPLICATION_SNAPSHOT_COLS = colsOf_("Application_Snapshots", {
+  SNAPSHOT_ID: 'SnapshotID',
+  SESSION_ID: 'SessionID',
+  ROUND_NUMBER: 'RoundNumber',
+  APPLICANT_EMAIL: 'ApplicantEmail',
+  STATUS_AT_SNAPSHOT: 'Status_At_Snapshot',
+  PIA_1_DATA: 'PIA_1_Data',
+  PIA_2_DATA: 'PIA_2_Data',
+  PIA_3_DATA: 'PIA_3_Data',
+  PIA_4_DATA: 'PIA_4_Data',
+  PIA_5_DATA: 'PIA_5_Data',
+  APPROVER_FLAGS: 'Approver_Flags',
+  LINKED_REQ_ID: 'Linked_ReqID',
+  SNAPSHOT_AT: 'SnapshotAt'
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PHASE 3 WORKFLOW - INFOSEC EMAIL CONFIG SHEET COLUMNS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const INFOSEC_CONFIG_COLS = {
-  MEMBER_ID: 1,
-  MEMBER_NAME: 2,
-  MEMBER_EMAIL: 3,
-  ROLE: 4,
-  IS_ACTIVE: 5,
-  JOB_POS: 6,
-  SITE: 7   // Batch 3: for TechServe rows, the Office/Site this email serves (AGT/TWS/CIP/EGP/Eastgate). Blank = fallback.
-};
+const INFOSEC_CONFIG_COLS = colsOf_("InfoSec_Email_Config", {
+  MEMBER_ID: 'Member_ID',
+  MEMBER_NAME: 'Member_Name',
+  MEMBER_EMAIL: 'Member_Email',
+  ROLE: 'Role',
+  IS_ACTIVE: 'IsActive',
+  JOB_POS: 'JobPos',
+  SITE: 'Site'
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// PHASE 3 — EMAIL QUEUE SHEET COLUMNS
+// PHASE 3: EMAIL QUEUE SHEET COLUMNS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const EMAIL_QUEUE_COLS = {
-  QUEUE_ID: 1,
-  SESSION_ID: 2,
-  RECIPIENT: 3,
-  SUBJECT: 4,
-  BODY_PLAIN: 5,
-  BODY_HTML: 6,
-  TYPE: 7,           // 'approver' | 'applicant' | 'ism' | 'divhead' | 'reminder'
-  STATUS: 8,         // 'Pending' | 'Sent' | 'Failed' | 'Cancelled'
-  ATTEMPTS: 9,
-  LAST_ERROR: 10,
-  CREATED_AT: 11,
-  SENT_AT: 12,
-  NOTIFIED_ADMIN: 13  // 'YES' if admin already alerted about this failure
-};
+const EMAIL_QUEUE_COLS = colsOf_("Email_Queue", {
+  QUEUE_ID: 'Queue_ID',
+  SESSION_ID: 'SessionID',
+  RECIPIENT: 'Recipient',
+  SUBJECT: 'Subject',
+  BODY_PLAIN: 'Body_Plain',
+  BODY_HTML: 'Body_HTML',
+  TYPE: 'Type',
+  STATUS: 'Status',
+  ATTEMPTS: 'Attempts',
+  LAST_ERROR: 'Last_Error',
+  CREATED_AT: 'Created_At',
+  SENT_AT: 'Sent_At',
+  NOTIFIED_ADMIN: 'NotifiedAdmin'
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// PHASE 4 — ADMIN NOTIFICATION CONFIG COLUMNS
+// PHASE 4: ADMIN NOTIFICATION CONFIG COLUMNS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const ADMIN_NOTIFICATION_COLS = {
-  CONFIG_ID: 1,
-  ADMIN_EMAIL: 2,
-  NOTIFY_ON_FAILURE: 3,
-  NOTIFY_REQUESTOR: 4,
-  LAST_NOTIFIED: 5
-};
+const ADMIN_NOTIFICATION_COLS = colsOf_("Admin_Notification_Config", {
+  CONFIG_ID: 'Config_ID',
+  ADMIN_EMAIL: 'Admin_Email',
+  NOTIFY_ON_FAILURE: 'NotifyOnFailure',
+  NOTIFY_REQUESTOR: 'NotifyRequestor',
+  LAST_NOTIFIED: 'Last_Notified'
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 📄 WEB APP HANDLERS
@@ -2078,17 +2359,32 @@ const ADMIN_NOTIFICATION_COLS = {
   TECHNICAL: GAS web-app entry. Lazy-inits the DB once. Enforces isAuthorizedDomain_. Routes:
              (a) e.parameter.action → handleEmailAction_; (b) requires e.parameter.parentID,
              else an error page; (c) renders the 'index' template (IFRAME sandbox) with parentID.
-  PARAMS:    - e — GAS event with .parameter (action, parentID, token, ...).
+  PARAMS:    - e: GAS event with .parameter (action, parentID, token, ...).
   RETURNS:   HtmlOutput (the served page).
 */
 function doGet(e) {
-  /* Step 1 — First-run guard: build the DB tabs if they do not exist yet. */
+  /* Step 1: First-run guard: build the DB tabs if they do not exist yet. */
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty(DB_INIT_FLAG_PROP) !== 'true') {
     initializeDatabase_();
   }
 
-  /* Step 2 — Domain gate: only corporate accounts may proceed. */
+  /* Step 1b: One-time header repair (2026-08-12).
+     initializeDatabase_ writes headers only when it CREATES a sheet, so a database that
+     already existed never picks up a column added later: ActedBy was being written into an
+     unnamed column, invisible to Admin's header-name readers. This runs once, guarded by its
+     own property, then never again. Non-blocking: a repair failure must not stop the page
+     from serving. */
+  if (props.getProperty(HEADER_HEAL_FLAG_PROP) !== 'true') {
+    try {
+      healSheetHeaders_();
+      props.setProperty(HEADER_HEAL_FLAG_PROP, 'true');
+    } catch (healErr) {
+      Logger.log('doGet: one-time header repair failed, will retry next load: ' + healErr);
+    }
+  }
+
+  /* Step 2: Domain gate: only corporate accounts may proceed. */
   // Domain authorization check
   const userEmail = Session.getActiveUser().getEmail();
   if (!isAuthorizedDomain_(userEmail)) {
@@ -2102,13 +2398,13 @@ function doGet(e) {
       .setTitle('Access Denied');
   }
 
-  /* Step 3 — Email action link (approve/deny one-click) → render the action page. */
+  /* Step 3: Email action link (approve/deny one-click) → render the action page. */
   // 1. Check if the URL contains an email action command
   if (e && e.parameter && e.parameter.action) {
     return handleEmailAction_(e.parameter).setTitle('Privacy Impact Assessment');
   }
 
-  /* Step 4 — Otherwise the SPA requires a DCS parentID; without it, show an error page. */
+  /* Step 4: Otherwise the SPA requires a DCS parentID; without it, show an error page. */
   // 2. If no action command, require parentID and load the SPA
   const parentId = e.parameter.parentID;
   if (!parentId) {
@@ -2137,7 +2433,7 @@ function doGet(e) {
              form-POST version of an approval action (POST instead of GET avoids CSRF on the link).
   TECHNICAL: Lazy-inits DB. If postData is application/json → handleAdminApiRequest_. Otherwise
              enforces the domain gate, then processes the token-validated approval form post.
-  PARAMS:    - e — GAS event with .postData and .parameter.
+  PARAMS:    - e: GAS event with .postData and .parameter.
   RETURNS:   ContentService/HtmlOutput depending on branch.
 */
 function doPost(e) {
@@ -2179,8 +2475,8 @@ function doPost(e) {
   TECHNICAL: Parses JSON { apiKey, action, params }, authenticates apiKey against the
              ADMIN_API_KEY Script Property (fail-closed), dispatches action via a switch to the
              admin* helpers, and returns the result as JSON ContentService output. All in try/catch.
-  PARAMS:    - e — GAS event; e.postData.contents is the JSON body.
-  RETURNS:   JSON TextOutput: { success, ... } or { success:false, error }.
+  PARAMS:    - e: GAS event; e.postData.contents is the JSON body.
+  RETURNS:   JSON TextOutput: { ok, ... } or { ok:false, code, message }.
 */
 function handleAdminApiRequest_(e) {
   try {
@@ -2191,7 +2487,7 @@ function handleAdminApiRequest_(e) {
     // Authenticate
     if (!validKey || apiKey !== validKey) {
       return ContentService.createTextOutput(JSON.stringify({
-        ok: false, success: false, error: 'Unauthorized — invalid or missing apiKey'
+        ok: false, message: 'Unauthorized, invalid or missing apiKey'
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -2250,15 +2546,18 @@ function handleAdminApiRequest_(e) {
         result = adminGetPipelineView_(params.sessionId);
         break;
       default:
-        result = { ok: false, success: false, error: 'Unknown action: ' + action };
+        result = { ok: false, message: 'Unknown action: ' + action };
     }
 
     return ContentService.createTextOutput(JSON.stringify(result))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (e) {
-    return ContentService.createTextOutput(JSON.stringify({
-      ok: false, success: false, error: 'API handler error: ' + e.toString()
-    })).setMimeType(ContentService.MimeType.JSON);
+    // F-06: this survived the original sweep because the leak is CONCATENATED
+    // ('prefix' + e.toString()) rather than a bare e.toString(), so the pattern that
+    // matched value-starts-with-identifier never saw it. This is the cross-app HTTP
+    // surface, so the raw exception was reachable by any holder of ADMIN_API_KEY.
+    return ContentService.createTextOutput(JSON.stringify(safeError_(e, ERR.INTERNAL)))
+      .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
@@ -2274,9 +2573,9 @@ function handleAdminApiRequest_(e) {
              On GET render the confirm page; on POST route to apiPhase3_ProcessISMDecision /
              processDivHeadDecision_ / processApprovalDecision_ and render the outcome. Heavy inline
              HTML; logic lives at the step markers below.
-  PARAMS:    - params — query/form params: action, sessionId, token, ts, email, isPost,
+  PARAMS:    - params: query/form params: action, sessionId, token, ts, email, isPost,
                         approverType, step, comment, approverFlags, routingDestination, ...
-  RETURNS:   HtmlOutput — review page, "already recorded" page, access-denied page, or result page.
+  RETURNS:   HtmlOutput, review page, "already recorded" page, access-denied page, or result page.
 */
 function handleEmailAction_(params) {
   const webAppUrl = getWebAppUrl_() || ScriptApp.getService().getUrl();
@@ -2298,7 +2597,7 @@ function handleEmailAction_(params) {
   // Normalize both emails to handle aliases (e.g., user+alias@domain.com matches user@domain.com)
   const normalizedActiveUser = getNormalizedEmail_(activeUser);
   const normalizedTargetEmail = getNormalizedEmail_(targetEmail);
-  /* Step 1 — Identity + token gate: the signed-in user must BE the link's target AND the
+  /* Step 1: Identity + token gate: the signed-in user must BE the link's target AND the
      action-bound HMAC must verify. Both conditions required (no CSRF, no forwarding abuse). */
   // CRITICAL FIX: Include action in token validation to prevent CSRF
   const isAuthorized = (normalizedActiveUser === normalizedTargetEmail) && isTokenValid_(sessionId, targetEmail, token, ts, action);
@@ -2317,7 +2616,7 @@ function handleEmailAction_(params) {
   
   const stepParam = params.step ? Number(params.step) : null;
 
-  /* Step 2 — Idempotency: scan the relevant workflow sheet (ISM / divhead / standard) for this
+  /* Step 2: Idempotency: scan the relevant workflow sheet (ISM / divhead / standard) for this
      approver's row. If a non-pending decision already exists, short-circuit to a "Review Completed"
      page so decisions can never be re-submitted or changed. */
   // Check if decision has already been recorded for this user (prevent duplicate actions or modifications)
@@ -2406,7 +2705,7 @@ function handleEmailAction_(params) {
     ));
   }
 
-  /* Step 3 — Load the PIA application and its linked DCS context for the review preview. */
+  /* Step 3: Load the PIA application and its linked DCS context for the review preview. */
   // Fetch Application Data
   const appData = getApplicationData_(sessionId);
 
@@ -2655,7 +2954,7 @@ function handleEmailAction_(params) {
         const fn = (f.name || '').toUpperCase();
         let docType = '';
 
-        // ── LAYER 0 (Commit 5): explicit type on the FILE_ID entry — supplementary docs have no
+        // ── LAYER 0 (Commit 5): explicit type on the FILE_ID entry, supplementary docs have no
         //    template suffix/keyword, so label them directly instead of falling through to "NDA Document".
         if (f.type === 'SUPPLEMENTARY' || /SUPPLEMENTARY/i.test(fn)) docType = 'Additional Supporting Document';
 
@@ -2713,7 +3012,7 @@ function handleEmailAction_(params) {
         else if (docType === 'DSA') docFlagLabel = 'DCS - DSA Document';
         else if (docType === 'Endorsement Letter') docFlagLabel = 'DCS - Endorsement Letter';
 
-        // SECURITY: was a raw Drive link (f.url). Documents are private now — go through the
+        // SECURITY: was a raw Drive link (f.url). Documents are private now, go through the
         // authorization-checked proxy instead. f.url is left on the object for the certificate
         // email path, which cannot use google.script.run (see getAndShareDCSFiles_'s comment).
         return `<span style="display: inline-flex; align-items: center; gap: 2px;">${makeDocDownloadBtn_(sessionId, f.id, 'View ' + docType, f.name)}${makeFlagBtn(docFlagLabel)}</span>`;
@@ -2732,7 +3031,7 @@ function handleEmailAction_(params) {
     const badgeClass = (() => {
       const s = String(appData.status || '').toLowerCase();
       if (s.includes('approve')) return 'approved';
-      // Round-4: Returned is a fixable loop, not a terminal denial — amber, not red.
+      // Round-4: Returned is a fixable loop, not a terminal denial, amber, not red.
       // 'Rejected by ISM' stays terminal-red; plain 'Rejected' is the legacy Returned label.
       if (s.includes('rejected by ism')) return 'denied';
       if (s.includes('reject') || s.includes('return')) return 'returned';
@@ -3308,7 +3607,7 @@ function handleEmailAction_(params) {
         
         function showReturnOptions() {
           // Round-4: a Return must identify at least one flagged item (was unchecked on the ISM form,
-          // while the standard form demanded 2 — both now consistently require 1).
+          // while the standard form demanded 2, both now consistently require 1).
           if (Object.keys(flagData).length < 1) {
             showError('Please flag at least 1 field or document before returning the application.');
             return;
@@ -3388,7 +3687,7 @@ function handleEmailAction_(params) {
     return HtmlService.createHtmlOutput(getStyledHtmlWrapper_(`<span class="step-badge">InfoSec Review Required</span><h1>Privacy Assessment Review</h1>`, content));
   };
 
-  /* Step 4a — ISM branch: GET shows the InfoSec review form; POST validates the comment then
+  /* Step 4a: ISM branch: GET shows the InfoSec review form; POST validates the comment then
      records the decision via apiPhase3_ProcessISMDecision (handles approve/deny/escalate/route). */
   // Handle ISM Review (Phase 3) - display the form
   if (action === 'ISMReview') {
@@ -3429,7 +3728,7 @@ function handleEmailAction_(params) {
     // Round-4: no boilerplate default comment; an empty comment is stored empty and hidden at render.
     const result = apiPhase3_ProcessISMDecision(sessionId, targetEmail, ismDecision, comment || '', routingDestination, stepParam, approverFlags);
     
-    if (result.success) {
+    if (result.ok) {
       let displayDecision = ismDecision;
       if (ismDecision === 'Approve') displayDecision = 'Approved';
       if (ismDecision === 'Deny') displayDecision = 'Denied';
@@ -3443,7 +3742,7 @@ function handleEmailAction_(params) {
         <p style="text-align: center; color: var(--text2); margin-top: 1.5rem; font-size: 13px;">Your response has been saved. You may now safely close this window.</p>`
       ));
     } else {
-      return renderISMReviewForm('Error processing decision: ' + (result.error || 'Unknown error'), comment);
+      return renderISMReviewForm('Error processing decision: ' + (result.message || 'Unknown error'), comment);
     }
   }
 
@@ -3699,12 +3998,12 @@ function handleEmailAction_(params) {
     return HtmlService.createHtmlOutput(getStyledHtmlWrapper_(`<span class="step-badge">Action Required</span><h1>Review Access Request</h1>`, content));
   };
 
-  /* Step 4b — Standard approver / Division-Head branch: GET shows the review form; POST below. */
+  /* Step 4b: Standard approver / Division-Head branch: GET shows the review form; POST below. */
   if (isPost !== 'true') {
     return renderReviewForm('', '', params.approverType);
   }
 
-  /* Step 5 — On a Deny/Return POST, enforce a meaningful reason (length + anti-gibberish checks)
+  /* Step 5: On a Deny/Return POST, enforce a meaningful reason (length + anti-gibberish checks)
      before recording; re-render the form with an error if it fails. */
   // Validate POST decisions (Approve, Return, Deny)
   if (action === 'Return' || action === 'Deny') {
@@ -3725,7 +4024,7 @@ function handleEmailAction_(params) {
     }
   }
 
-  /* Step 6 — Record the decision in the right sheet, then render success/failure. A failure here
+  /* Step 6: Record the decision in the right sheet, then render success/failure. A failure here
      usually means the application advanced/closed in the meantime (race), so the link is now stale. */
   let result;
   if (approverType === 'divhead') {
@@ -3743,7 +4042,7 @@ function handleEmailAction_(params) {
     );
   }
 
-  if (result.success) {
+  if (result.ok) {
     let displayAction = action;
     if (action === 'Approve') displayAction = 'Approved';
     if (action === 'Deny') displayAction = 'Denied';
@@ -3760,7 +4059,7 @@ function handleEmailAction_(params) {
   } else {
     return HtmlService.createHtmlOutput(getStyledHtmlWrapper_(
       `<h1>Action Failed</h1>`,
-      `<div class="alert alert-danger">${escapeHtml_(result.error)}</div>
+      `<div class="alert alert-danger">${escapeHtml_(result.message)}</div>
       <p style="text-align: center; color: var(--text2); margin-top: 1.5rem; font-size: 13px;">This application has already been processed, making this approval form invalid. You may now safely close this window.</p>`
     ));
   }
@@ -3771,7 +4070,7 @@ function handleEmailAction_(params) {
 
   LAYMAN (Tropang Ex):
   Isang execution lang ito buhay. Dati, kada beses na may kailangang tab sa database,
-  binubuksan ulit ng code yung buong spreadsheet file — kahit kaka-bukas lang niya.
+  binubuksan ulit ng code yung buong spreadsheet file, kahit kaka-bukas lang niya.
   Isang approver na nag-click ng email link = 13 beses na pagbukas ng parehong file.
   Ngayon, unang bukas lang ang tunay; yung sunod-sunod, yung nakabukas na ang gamit.
 
@@ -3787,11 +4086,11 @@ var __SS_HANDLE_CACHE = { id: null, ss: null };
   Function: getDatabaseSpreadsheet_
   LAYMAN:    Opens the one shared Google Spreadsheet that is the whole system's database. Finds it
              by stored id, or falls back to the active/bound spreadsheet, or creates a new one.
-             Only actually opens it once per run — after that it hands back the same handle.
+             Only actually opens it once per run, after that it hands back the same handle.
   TECHNICAL: Resolves DB via DB_SPREADSHEET_ID_PROP; else uses getActiveSpreadsheet() and caches its
              id; else (createIfMissing !== false) creates 'PIA System Database' and caches its id.
              The resolved handle is memoized in __SS_HANDLE_CACHE for the rest of the execution.
-  PARAMS:    - createIfMissing — pass false to never create (returns null instead).
+  PARAMS:    - createIfMissing: pass false to never create (returns null instead).
   RETURNS:   Spreadsheet object, or null when not found and createIfMissing === false.
 */
 function getDatabaseSpreadsheet_(createIfMissing) {
@@ -3831,8 +4130,8 @@ function getDatabaseSpreadsheet_(createIfMissing) {
              if it is missing and you allow that.
   TECHNICAL: Gets the spreadsheet, returns getSheetByName(sheetName); if absent and
              createIfMissing !== false, insertSheet (try/catch). Logs and returns null on failure.
-  PARAMS:    - sheetName — tab name (use DB_SHEET_NAMES.*).
-             - createIfMissing — pass false to require an existing tab.
+  PARAMS:    - sheetName: tab name (use DB_SHEET_NAMES.*).
+             - createIfMissing: pass false to require an existing tab.
   RETURNS:   Sheet object, or null if not found/createIfMissing is false/creation fails.
 */
 function getDatabaseSheet_(sheetName, createIfMissing) {
@@ -3862,7 +4161,14 @@ function getDatabaseSheet_(sheetName, createIfMissing) {
   if (!sheet) {
     Logger.log(`     Sheet "${sheetName}" not found and createIfMissing is false`);
   }
-  
+
+  // Verify the live header row still matches PIA_SCHEMA, once per sheet per execution. This is
+  // the chokepoint every sheet access already goes through, so putting the check here means a
+  // renamed or reordered column throws on first touch instead of silently returning the wrong
+  // cell somewhere downstream. See assertSheetSchema_ for why it tolerates extra trailing
+  // columns but not a rename.
+  if (sheet) assertSheetSchema_(sheetName, sheet);
+
   return sheet;
 }
 
@@ -3874,7 +4180,7 @@ function getDatabaseSheet_(sheetName, createIfMissing) {
   mo dun." Isang approver na nag-click ng link sa email = 13 beses na buong-tab download,
   at yung iba dun ay yung PAREHONG tab, paulit-ulit. Ngayon, may maliit na notepad na
   buhay habang tumatakbo yung request: kapag hiningi ulit yung parehong tab, dun na kukuha.
-  Pagkatapos ng request, burado agad — walang natitirang luma.
+  Pagkatapos ng request, burado agad, walang natitirang luma.
 
   🚩 PERO: PATAY ang cache by default. Kailangan mong SADYANG buksan sa pamamagitan ng
   withSheetCache_(). Yun ang buong point.
@@ -3893,7 +4199,7 @@ function getDatabaseSheet_(sheetName, createIfMissing) {
      151 setValue/appendRow/deleteRow sites in this file. invalidateSheetCache_ exists
      for the narrow case of a read-only path that must re-read after a repair write.
 
-  3. On a cache HIT the caller gets the SAME array reference, not a copy — that is the
+  3. On a cache HIT the caller gets the SAME array reference, not a copy, that is the
      whole saving. So a cached read must never be mutated in place. Rule 2 already
      guarantees this (read-only paths do not write back), but if you ever widen the
      cache to a mutating path, copy before mutating or you will corrupt a later reader.
@@ -3915,7 +4221,7 @@ var __SHEET_CACHE = null;
   TECHNICAL: Enables __SHEET_CACHE for the duration of fn and restores the previous state in a
              finally block, so a throw cannot leave the cache switched on. Re-entrant: a nested
              call detects a live outer cache and yields lifetime ownership to it.
-  PARAMS:    - fn — zero-arg function to run with caching enabled.
+  PARAMS:    - fn: zero-arg function to run with caching enabled.
   RETURNS:   Whatever fn returns (exceptions propagate untouched).
   EXAMPLE
     return withSheetCache_(function () { return buildDashboard_(); });
@@ -3933,7 +4239,7 @@ function withSheetCache_(fn) {
 /*
   Function: readSheetValues_
   LAYMAN:    Kunin lahat ng laman ng isang tab. Kung nakabukas yung cache at nakuha na dati
-             sa parehong takbo, yung naka-imbak na ang ibabalik — walang bagong download.
+             sa parehong takbo, yung naka-imbak na ang ibabalik, walang bagong download.
   TECHNICAL: Drop-in replacement for `sheet.getDataRange().getValues()`. With the cache off
              it IS that call. With it on, memoizes by sheet.getName().
 
@@ -3943,8 +4249,8 @@ function withSheetCache_(fn) {
              has been reminded" and blast every pending approver in the system. Returning []
              here would have quietly converted those fail-loud paths into fail-silent ones.
              Same control flow as before, just a message you can actually read.
-  PARAMS:    - sheet — a Sheet object (usually straight from getDatabaseSheet_).
-  RETURNS:   2-D array of cell values. Shared reference on a cache hit — do not mutate.
+  PARAMS:    - sheet: a Sheet object (usually straight from getDatabaseSheet_).
+  RETURNS:   2-D array of cell values. Shared reference on a cache hit, do not mutate.
 */
 function readSheetValues_(sheet) {
   if (!sheet) throw new Error('readSheetValues_: sheet is null (the tab could not be opened or created).');
@@ -3962,7 +4268,7 @@ function readSheetValues_(sheet) {
              yung susunod na basa. Kailangan lang ito kung may sinulat ka habang bukas ang cache.
   TECHNICAL: No-op when the cache is off. Drops one entry by Sheet or by name, or clears all
              when called with no argument.
-  PARAMS:    - sheetOrName — a Sheet, a tab-name string, or nothing (clear everything).
+  PARAMS:    - sheetOrName: a Sheet, a tab-name string, or nothing (clear everything).
   RETURNS:   undefined.
 */
 function invalidateSheetCache_(sheetOrName) {
@@ -3979,7 +4285,7 @@ function invalidateSheetCache_(sheetOrName) {
 /*
   Function: getApplicationSnapshotSheet_
   LAYMAN:    Kinukuha (o ginagawa, kung wala pa) yung tab na pinag-iimbakan ng mga lumang sagot.
-  TECHNICAL: Self-healing accessor — creates the tab with headers on first use, so a deployment
+  TECHNICAL: Self-healing accessor, creates the tab with headers on first use, so a deployment
              that never re-ran initializeDatabase_ still gets it without a manual setup step.
   PARAMS:    (none)
   RETURNS:   The Sheet, or null if it could not be created.
@@ -3988,11 +4294,7 @@ function getApplicationSnapshotSheet_() {
   const sheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATION_SNAPSHOTS, true);
   if (!sheet) return null;
   if (sheet.getLastRow() === 0) {
-    const headers = [
-      'SnapshotID', 'SessionID', 'RoundNumber', 'ApplicantEmail', 'Status_At_Snapshot',
-      'PIA_1_Data', 'PIA_2_Data', 'PIA_3_Data', 'PIA_4_Data', 'PIA_5_Data',
-      'Approver_Flags', 'Linked_ReqID', 'SnapshotAt'
-    ];
+    const headers = PIA_SCHEMA["Application_Snapshots"].slice();
     sheet.appendRow(headers);
     try { formatHeaderRow_(sheet); } catch (e) { /* header formatting is best-effort */ }
   }
@@ -4010,12 +4312,12 @@ function getApplicationSnapshotSheet_() {
   Dati kasi wala nito. Ang naitatago lang ay yung DESISYON ("inaprubahan ni X, ganito comment"),
   pero hindi yung SAGOT na tinitignan nila. Kaya kapag nag-resubmit ka, wala nang paraan para
   patunayan kung ano talaga yung inaprubahan. Yung mga desisyon ay nasa workflow sheets na mismo
-  (hindi na binubura), pero yung sagot ay nasa-overwrite pa rin — kaya nandito sila.
+  (hindi na binubura), pero yung sagot ay nasa-overwrite pa rin, kaya nandito sila.
 
   TECHNICAL:
   Appends one row capturing the pre-overwrite PIA_1..5 blobs, the applicant, the status, the
   approver flags and the linked DCS id. Must be called INSIDE submitApplication_'s lock and BEFORE
-  the setValue overwrite block — round derivation (max prior + 1) is only race-free under that lock.
+  the setValue overwrite block, round derivation (max prior + 1) is only race-free under that lock.
 
   🚩 FAILURE HANDLING. The write stays non-blocking, because a history failure must never block a
   resubmit. But it does NOT fail silently: a failure writes a 'Snapshot Failed' row into Risk_Audit
@@ -4023,8 +4325,8 @@ function getApplicationSnapshotSheet_() {
   loss was the defect in the old snapshot mechanism; blocking the user was never the fix.
 
   PARAMS:
-    - sessionId — the application id being resubmitted.
-    - row       — the current Applications row as a 0-indexed array (read before any overwrite).
+    - sessionId: the application id being resubmitted.
+    - row: the current Applications row as a 0-indexed array (read before any overwrite).
   RETURNS:   The round number written, or 0 if nothing was written.
 
   EXAMPLE
@@ -4097,7 +4399,7 @@ function writeApplicationSnapshot_(sessionId, row) {
              hardcoded {} here because only the retired photocopy carried flags).
              When includePending is true, Pending/blank rows are kept as status 'Pending' so
              in-progress surfaces can show who is next in line.
-  PARAMS:    - sessionId — application id.  - includePending — keep Pending rows too.
+  PARAMS:    - sessionId: application id.  - includePending: keep Pending rows too.
   RETURNS:   Array of decision objects (possibly empty). Never throws.
 */
 function collectAllRoundDecisions_(sessionId, includePending) {
@@ -4172,14 +4474,14 @@ function collectAllRoundDecisions_(sessionId, includePending) {
   TECHNICAL: One call to collectAllRoundDecisions_, sorted ascending by round, with isCurrent set on
              the round matching getCurrentRound_. Previously unioned Revision_History with a separate
              current-round scan; the append-only workflow made that union unnecessary.
-  PARAMS:    - sessionId — application id.  - includePending — include Pending rows in the current round.
+  PARAMS:    - sessionId: application id.  - includePending: include Pending rows in the current round.
   RETURNS:   { rounds: [{round, isCurrent, decisions:[...]}] } (rounds may be empty).
 */
 function getUnifiedHistory_(sessionId, includePending) {
   // Append-only (2026-08-11): this used to union Revision_History (prior rounds, from a
   // best-effort photocopy taken before the rows were deleted) with a separate scan of the live
   // current round. Nothing is deleted any more, so every round is right here in the workflow
-  // sheets and the union — plus the entire Revision_History sheet — is gone.
+  // sheets and the union, plus the entire Revision_History sheet: is gone.
   const byRound = collectAllRoundDecisions_(sessionId, includePending);
   const currentRound = getCurrentRound_(sessionId);
 
@@ -4202,26 +4504,26 @@ function getUnifiedHistory_(sessionId, includePending) {
              applicantEmail); then getUnifiedHistory_(sessionId, true). Dates are stringified because
              google.script.run cannot serialize Date objects. Separate endpoint on purpose:
              apiGetDCSContext runs pre-submission (no PIA session yet) and stays untouched.
-  PARAMS:    - sessionId — the requestor's own application id.
-  RETURNS:   { success:true, rounds } or { success:false, error }.
+  PARAMS:    - sessionId: the requestor's own application id.
+  RETURNS:   { ok:true, rounds } or { ok:false, code, message }.
 */
 function apiGetApprovalHistory(sessionId) {
   try {
     const me = getNormalizedEmail_(Session.getActiveUser().getEmail());
-    if (!me) return { ok: false, success: false, error: 'Unauthorized' };
+    if (!me) return { ok: false, message: 'Unauthorized' };
 
     // PERF: getApplicationData_ and getUnifiedHistory_ between them pull the three workflow
     // sheets about eleven times, mostly the same ones over and over (each one calls
     // getCurrentRound_, which alone reads all three). Gather both under ONE cache so the
-    // repeats collapse to three reads. Pure read path — nothing here writes.
+    // repeats collapse to three reads. Pure read path, nothing here writes.
     const gathered = withSheetCache_(function () {
       const ad = getApplicationData_(sessionId);
       if (!ad) return null;
       if (getNormalizedEmail_(String(ad.applicantEmail || '')) !== me) return { denied: true };
       return { appData: ad, unified: getUnifiedHistory_(sessionId, true) };
     });
-    if (!gathered) return { ok: false, success: false, error: 'Application not found' };
-    if (gathered.denied) return { ok: false, success: false, error: 'Unauthorized' };
+    if (!gathered) return { ok: false, message: 'Application not found' };
+    if (gathered.denied) return { ok: false, message: 'Unauthorized' };
 
     const unified = gathered.unified;
     unified.rounds.forEach(function (r) {
@@ -4236,7 +4538,7 @@ function apiGetApprovalHistory(sessionId) {
         }
       });
     });
-    return { ok: true, success: true, rounds: unified.rounds };
+    return { ok: true, rounds: unified.rounds };
   } catch (e) {
     Logger.log('apiGetApprovalHistory failed: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -4292,11 +4594,7 @@ function initializeDatabase_() {
       Logger.log('  Creating Applications sheet...');
       const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
       if (!appSheet) throw new Error('Failed to create Applications sheet');
-    const headers = [
-      'SessionID', 'ApplicantEmail', 'Status', 
-      'PIA_1_Data', 'PIA_2_Data', 'PIA_3_Data', 'PIA_4_Data', 'PIA_5_Data',
-      'AdminExportID', 'SubmissionDate', 'IsFlagged', 'Notes', 'Linked_ReqID', 'Approver_Flags'
-    ];
+    const headers = PIA_SCHEMA["Applications"].slice();
       appSheet.appendRow(headers);
       formatHeaderRow_(appSheet);
       Logger.log('✓ Applications sheet created');
@@ -4309,11 +4607,7 @@ function initializeDatabase_() {
       Logger.log('  Creating Approval_Workflow sheet...');
       const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
       if (!apprSheet) throw new Error('Failed to create Approval_Workflow sheet');
-      const headers = [
-        'ApprovalID', 'SessionID', 'CurrentStep', 'ApproverName',
-        'ApproverEmail', 'Decision', 'Comments', 'DecisionDate', 'Status', 'ReminderDate',
-        'EmailStatus', 'EmailError', 'NotifiedDate', 'RoundNumber', 'FlaggedFields'
-      ];
+      const headers = PIA_SCHEMA["Approval_Workflow"].slice();
       apprSheet.appendRow(headers);
       formatHeaderRow_(apprSheet);
       Logger.log('✓ Approval_Workflow sheet created');
@@ -4326,10 +4620,7 @@ function initializeDatabase_() {
       Logger.log('  Creating Risk_Audit sheet...');
       const auditSheet = getDatabaseSheet_(DB_SHEET_NAMES.RISK_AUDIT, true);
       if (!auditSheet) throw new Error('Failed to create Risk_Audit sheet');
-      const headers = [
-        'LogID', 'SessionID', 'InternalFlags', 'Action', 
-        'UserEmail', 'UserAgent', 'Timestamp'
-      ];
+      const headers = PIA_SCHEMA["Risk_Audit"].slice();
       auditSheet.appendRow(headers);
       formatHeaderRow_(auditSheet);
       Logger.log('✓ Risk_Audit sheet created');
@@ -4342,9 +4633,7 @@ function initializeDatabase_() {
       Logger.log('  Creating Drafts sheet...');
       const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
       if (!draftsSheet) throw new Error('Failed to create Drafts sheet');
-      const headers = [
-        'DraftID', 'UserEmail', 'SessionID', 'Type', 'StateJSON', 'SavedTimestamp', 'ExpiresAt'
-      ];
+      const headers = PIA_SCHEMA["Drafts"].slice();
       draftsSheet.appendRow(headers);
       formatHeaderRow_(draftsSheet);
       Logger.log('✓ Drafts sheet created');
@@ -4357,10 +4646,7 @@ function initializeDatabase_() {
       Logger.log('  Creating Data_Collection sheet...');
       const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
       if (!dcsSheet) throw new Error('Failed to create Data_Collection sheet');
-      const headers = [
-        'LogID', 'ReqID', 'UserEmail', 'Status', 'ImmediateHeadEmail', 'DeptHeadEmail', 
-        'DivHeadEmail', 'FileID', 'Metadata_JSON', 'Timestamp', 'Remarks'
-      ];
+      const headers = PIA_SCHEMA["Data_Collection"].slice();
       dcsSheet.appendRow(headers);
       formatHeaderRow_(dcsSheet);
       Logger.log('✓ Data_Collection sheet created');
@@ -4375,11 +4661,7 @@ function initializeDatabase_() {
 
     // Create ISM Approval Workflow table with validation
     if (!sheetExists_(DB_SHEET_NAMES.ISM_WORKFLOW)) {
-      const ismHeaders = [
-        'ISM_Approval_ID', 'SessionID', 'CurrentStep', 'ISM_Member_Name', 'ISM_Member_Email',
-        'Decision', 'Comments', 'DecisionDate', 'Status', 'Requires_DivHead', 'DivHead_Escalation_ID', 'Routing_Destination', 'ReminderDate',
-        'EmailStatus', 'EmailError', 'NotifiedDate', 'RoundNumber', 'FlaggedFields'
-      ];
+      const ismHeaders = PIA_SCHEMA["ISM_Approval_Workflow"].slice();
       createPhase3SheetWithValidation_(DB_SHEET_NAMES.ISM_WORKFLOW, ismHeaders, []);
     } else {
       Logger.log(`✓ ISM_Approval_Workflow sheet already exists`);
@@ -4387,10 +4669,7 @@ function initializeDatabase_() {
 
     // Create Division Head Config table with validation
     if (!sheetExists_(DB_SHEET_NAMES.DIV_HEAD_CONFIG)) {
-      const divHeadHeaders = [
-        'Escalation_ID', 'SessionID', 'DivHead_Email', 'Decision', 'Comments',
-        'DecisionDate', 'Status', 'ReminderDate', 'EmailStatus', 'EmailError', 'NotifiedDate', 'RoundNumber', 'FlaggedFields'
-      ];
+      const divHeadHeaders = PIA_SCHEMA["DivisionHead_Approval_Workflow"].slice();
       createPhase3SheetWithValidation_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, divHeadHeaders, []);
     } else {
       Logger.log(`✓ DivisionHead_Approval_Workflow sheet already exists`);
@@ -4398,9 +4677,7 @@ function initializeDatabase_() {
 
     // Create InfoSec Email Config table with validation and seed data
     if (!sheetExists_(DB_SHEET_NAMES.INFOSEC_CONFIG)) {
-      const infoSecHeaders = [
-        'Member_ID', 'Member_Name', 'Member_Email', 'Role', 'IsActive', 'JobPos', 'Site'
-      ];
+      const infoSecHeaders = PIA_SCHEMA["InfoSec_Email_Config"].slice();
 
       const seedData = [
         ['INFOSEC-001', 'InfoSec Member 1', 'infosec1@company.com', 'InfoSec', 'YES', 'Security Officer', ''],
@@ -4416,9 +4693,7 @@ function initializeDatabase_() {
 
     // Create Admin Notification Config table
     if (!sheetExists_(DB_SHEET_NAMES.ADMIN_NOTIFICATION)) {
-      const adminNotifHeaders = [
-        'Config_ID', 'Admin_Email', 'NotifyOnFailure', 'NotifyRequestor', 'Last_Notified'
-      ];
+      const adminNotifHeaders = PIA_SCHEMA["Admin_Notification_Config"].slice();
       const seedData = [
         ['ADMIN-001', 'systems.manager@company.com', 'YES', 'YES', '']
       ];
@@ -4429,27 +4704,19 @@ function initializeDatabase_() {
 
     // Create Email Queue table for deferred/reliable email delivery
     if (!sheetExists_(DB_SHEET_NAMES.EMAIL_QUEUE)) {
-      const emailQueueHeaders = [
-        'Queue_ID', 'SessionID', 'Recipient', 'Subject', 'Body_Plain',
-        'Body_HTML', 'Type', 'Status', 'Attempts', 'Last_Error',
-        'Created_At', 'Sent_At', 'NotifiedAdmin'
-      ];
+      const emailQueueHeaders = PIA_SCHEMA["Email_Queue"].slice();
       createPhase3SheetWithValidation_(DB_SHEET_NAMES.EMAIL_QUEUE, emailQueueHeaders, []);
     } else {
       Logger.log(`✓ Email_Queue sheet already exists`);
     }
 
-    // Create Application Snapshots table — per-round copy of the submitted answers, captured
+    // Create Application Snapshots table: per-round copy of the submitted answers, captured
     // before a resubmit overwrites PIA_1..5 in place. See APPLICATION_SNAPSHOT_COLS.
     // (getApplicationSnapshotSheet_ also self-heals this tab at first write, so an existing
     //  deployment that never re-runs initializeDatabase_ still gets it.)
     if (!sheetExists_(DB_SHEET_NAMES.APPLICATION_SNAPSHOTS)) {
       Logger.log('  Creating Application_Snapshots sheet...');
-      const snapshotHeaders = [
-        'SnapshotID', 'SessionID', 'RoundNumber', 'ApplicantEmail', 'Status_At_Snapshot',
-        'PIA_1_Data', 'PIA_2_Data', 'PIA_3_Data', 'PIA_4_Data', 'PIA_5_Data',
-        'Approver_Flags', 'Linked_ReqID', 'SnapshotAt'
-      ];
+      const snapshotHeaders = PIA_SCHEMA["Application_Snapshots"].slice();
       createPhase3SheetWithValidation_(DB_SHEET_NAMES.APPLICATION_SNAPSHOTS, snapshotHeaders, []);
     } else {
       Logger.log('✓ Application_Snapshots sheet already exists');
@@ -4462,10 +4729,7 @@ function initializeDatabase_() {
     //  that never re-runs initializeDatabase_ still gets it.)
     if (!sheetExists_(DB_SHEET_NAMES.DELEGATIONS)) {
       Logger.log('  Creating Delegations sheet...');
-      const delegationHeaders = [
-        'Delegation_ID', 'From_Email', 'To_Email', 'Start_Date', 'End_Date',
-        'Reason', 'Is_Active', 'Created_By', 'Created_At'
-      ];
+      const delegationHeaders = PIA_SCHEMA["Delegations"].slice();
       createPhase3SheetWithValidation_(DB_SHEET_NAMES.DELEGATIONS, delegationHeaders, []);
     } else {
       Logger.log('✓ Delegations sheet already exists');
@@ -4479,9 +4743,9 @@ function initializeDatabase_() {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     Logger.log('\n  Verifying Phase 3 sheets were created...');
     const verificationChecks = [
-      { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, expectedCols: 15 },
-      { name: DB_SHEET_NAMES.ISM_WORKFLOW, expectedCols: 18 },
-      { name: DB_SHEET_NAMES.DIV_HEAD_CONFIG, expectedCols: 13 },
+      { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, expectedCols: 16 },
+      { name: DB_SHEET_NAMES.ISM_WORKFLOW, expectedCols: 19 },
+      { name: DB_SHEET_NAMES.DIV_HEAD_CONFIG, expectedCols: 14 },
       { name: DB_SHEET_NAMES.ADMIN_NOTIFICATION, expectedCols: 5 }
     ];
     
@@ -4530,7 +4794,7 @@ function initializeDatabase_() {
   Function: sheetExists_
   LAYMAN:    True/false: does this tab already exist?
   TECHNICAL: getDatabaseSheet_(name, false) coerced to boolean (no creation).
-  PARAMS:    - name — tab name.
+  PARAMS:    - name: tab name.
   RETURNS:   Boolean.
 */
 function sheetExists_(name) {
@@ -4543,9 +4807,9 @@ function sheetExists_(name) {
              column count came out right. Used during initialization for the Phase 3 sheets.
   TECHNICAL: getDatabaseSheet_(create) → appendRow(headers) → formatHeaderRow_ → append seedData →
              assert getLastColumn() === headers.length, else throw. Re-throws on any error.
-  PARAMS:    - sheetName — tab to create.
-             - headers — header row array.
-             - seedData — optional array of rows to append.
+  PARAMS:    - sheetName: tab to create.
+             - headers: header row array.
+             - seedData: optional array of rows to append.
   RETURNS:   true on success; throws on failure.
 */
 function createPhase3SheetWithValidation_(sheetName, headers, seedData) {
@@ -4595,7 +4859,7 @@ function createPhase3SheetWithValidation_(sheetName, headers, seedData) {
   LAYMAN:    A manual debug tool (run from the Apps Script editor) that forces a fresh DB build and
              logs whether every Phase 3 sheet and column came out correct.
   TECHNICAL: Clears DB_INIT_FLAG_PROP, runs initializeDatabase_(), then verifies expected column
-             counts and dumps headers for each Phase 3 sheet to Logger. Diagnostics only — not
+             counts and dumps headers for each Phase 3 sheet to Logger. Diagnostics only, not
              called by the app at runtime.
   PARAMS:    (none)
   RETURNS:   undefined (writes to Logger).
@@ -4604,7 +4868,7 @@ function testPhase3DatabaseInitialization() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   Logger.log('╔════════════════════════════════════════════════════════════╗');
   Logger.log('║  PHASE 3 DATABASE INITIALIZATION TEST & FIX                 ║');
   Logger.log('╚════════════════════════════════════════════════════════════╝');
@@ -4628,10 +4892,10 @@ function testPhase3DatabaseInitialization() {
     // Verify Phase 3 sheets were created
     Logger.log('\nVERIFICATION - Phase 3 Sheets:');
     const sheets = [
-      { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, expectedCols: 15 },
-      { name: DB_SHEET_NAMES.ISM_WORKFLOW, expectedCols: 18 },
-      { name: DB_SHEET_NAMES.DIV_HEAD_CONFIG, expectedCols: 13 },
-      { name: DB_SHEET_NAMES.INFOSEC_CONFIG, expectedCols: 6 },
+      { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, expectedCols: 16 },
+      { name: DB_SHEET_NAMES.ISM_WORKFLOW, expectedCols: 19 },
+      { name: DB_SHEET_NAMES.DIV_HEAD_CONFIG, expectedCols: 14 },
+      { name: DB_SHEET_NAMES.INFOSEC_CONFIG, expectedCols: 7 },
       { name: DB_SHEET_NAMES.EMAIL_QUEUE, expectedCols: 13 },
       { name: DB_SHEET_NAMES.ADMIN_NOTIFICATION, expectedCols: 5 }
     ];
@@ -4725,7 +4989,7 @@ function testPhase3DatabaseInitialization() {
 
 /*
   Function: reinitializePhase3Database
-  LAYMAN:    Manual "rebuild the database" button — clears the init flag and runs setup again.
+  LAYMAN:    Manual "rebuild the database" button, clears the init flag and runs setup again.
   TECHNICAL: Deletes DB_INIT_FLAG_PROP then calls initializeDatabase_(). Existing sheets are kept
              (initializeDatabase_ only creates missing ones).
   PARAMS:    (none)
@@ -4735,7 +4999,7 @@ function reinitializePhase3Database() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   Logger.log('  Attempting to reinitialize Phase 3 database...');
   const scriptProperties = PropertiesService.getScriptProperties();
   scriptProperties.deleteProperty(DB_INIT_FLAG_PROP);
@@ -4747,7 +5011,7 @@ function reinitializePhase3Database() {
   Function: formatHeaderRow_
   LAYMAN:    Styles the top row of a sheet (navy background, white bold text) so headers stand out.
   TECHNICAL: Sets background/fontColor/fontWeight/fontSize on row 1 across all columns.
-  PARAMS:    - sheet — target Sheet.
+  PARAMS:    - sheet: target Sheet.
   RETURNS:   undefined (mutates formatting).
 */
 function formatHeaderRow_(sheet) {
@@ -4797,8 +5061,8 @@ function seedSessionCounterFromDatabase_() {
   LAYMAN:    Builds the application id string, e.g. 'PIA-000042', adding '-V2' for revisions.
   TECHNICAL: Zero-pads sequenceNumber to 6 digits; appends '-V<versionNumber>' when version > 0.
              Throws if sequence exceeds 999999.
-  PARAMS:    - sequenceNumber — the running counter value.
-             - versionNumber — 0 for a fresh id, >0 for a revision suffix.
+  PARAMS:    - sequenceNumber: the running counter value.
+             - versionNumber: 0 for a fresh id, >0 for a revision suffix.
   RETURNS:   Session id string. Throws on overflow.
   EXAMPLE:   formatSessionId_(42, 0) -> 'PIA-000042' ; formatSessionId_(42, 2) -> 'PIA-000042-V2'
 */
@@ -4855,7 +5119,7 @@ function nextBaseSessionId_() {
   TECHNICAL: Under a script lock, strips any '-V#' from baseSessionId, scans Applications for ids
              sharing that base, finds the highest existing -V# and returns base-V<max+1>. Falls back
              to nextBaseSessionId_() if the base is empty.
-  PARAMS:    - baseSessionId — the original (or any version of the) application id.
+  PARAMS:    - baseSessionId: the original (or any version of the) application id.
   RETURNS:   Revision id string (e.g. 'PIA-000042-V3'). Throws on lock failure.
 */
 function getNextRevisionSessionId_(baseSessionId) {
@@ -4916,7 +5180,7 @@ function getNextRevisionSessionId_(baseSessionId) {
              formatted version of a base id, or a brand-new id if neither is given.
   TECHNICAL: Precedence: appData.appId → formatSessionId_(base seq, version) when baseSessionId looks
              like PIA-###### → nextBaseSessionId_(). Strips -V# from the base before formatting.
-  PARAMS:    - appData — submission object (appId?, baseSessionId?, version?).
+  PARAMS:    - appData: submission object (appId?, baseSessionId?, version?).
   RETURNS:   The resolved session id string.
 */
 function resolveSubmissionId_(appData) {
@@ -4956,7 +5220,7 @@ function resolveSubmissionId_(appData) {
   TECHNICAL: Pure heuristic checks over pia1/pia2/pia4. Normalizes the polymorphic pia2 shape
              (flat array / {fields,customOthers} / numeric-key object), counts 'YES' PII fields,
              and applies the conflict / short-entry / redundancy rules. No side-effects.
-  PARAMS:    - appData — the full submission object.
+  PARAMS:    - appData: the full submission object.
   RETURNS:   { isFlagged: boolean, reasons: string[] }.
 */
 function analyzeApplicationRisk_(appData) {
@@ -5033,13 +5297,13 @@ function analyzeApplicationRisk_(appData) {
              otherwise it INSERTs a new row. Blocks resubmission while the linked DCS is 'Returned'.
              Then initializeApprovalWorkflow_ and notifyApprover_(…,0)/notifyApplicant_; email failures
              are caught and surfaced as a warning (never roll back the DB write).
-  PARAMS:    - appData — full submission: pia1..pia5, pia2CustomOthers, linkedReqId, appId/base/version.
-  RETURNS:   { success:true, appId, timestamp, message, warning } or { success:false, error }.
+  PARAMS:    - appData: full submission: pia1..pia5, pia2CustomOthers, linkedReqId, appId/base/version.
+  RETURNS:   { ok:true, appId, timestamp, message, warning } or { ok:false, code, message }.
 */
 function submitApplication_(appData) {
   try {
     Logger.log('submitApplication_ called with: appId=' + (appData?.appId || 'empty') + ', baseSessionId=' + (appData?.baseSessionId || 'empty') + ', isEditing=' + appData?.isEditing);
-    /* Step 1 — Resolve the id and stamp applicant email + timestamp. */
+    /* Step 1: Resolve the id and stamp applicant email + timestamp. */
     const sessionId = resolveSubmissionId_(appData);
     Logger.log('  Resolved sessionId: ' + sessionId);
     appData.appId = sessionId;
@@ -5063,7 +5327,7 @@ function submitApplication_(appData) {
     const pia4Data = JSON.stringify(appData.pia4);
     const pia5Data = JSON.stringify(appData.pia5);
     
-    /* Step 2 — Risk-screen; only build an audit payload if real anomalies were found. */
+    /* Step 2: Risk-screen; only build an audit payload if real anomalies were found. */
     // ── Risk analysis for isFlagged column (Applications sheet metadata) ──
     const riskAnalysis = analyzeApplicationRisk_(appData);
     appData.isFlagged = riskAnalysis.isFlagged;
@@ -5078,7 +5342,7 @@ function submitApplication_(appData) {
     let rowNum = findRowBySessionID_(sessionId);
     const isEditing = rowNum > 0;
 
-    /* Step 3 — Gate: if the linked DCS request was Returned, block the PIA resubmission. */
+    /* Step 3: Gate: if the linked DCS request was Returned, block the PIA resubmission. */
     // ENFORCE DCS COMPLETION BEFORE PIA EDITING
     if (appData.linkedReqId) {
       let hasDCSFlags = false;
@@ -5098,7 +5362,7 @@ function submitApplication_(appData) {
           if(dcsData[i][DCS_COLS.REQ_ID - 1] === appData.linkedReqId) {
             const dcsStatus = dcsData[i][DCS_COLS.STATUS - 1];
             if (dcsStatus === 'Returned') {
-              return { ok: false, success: false, error: 'Your application has been returned back, you will need to check the DCS to review & resubmit.' };
+              return { ok: false, message: 'Your application has been returned back, you will need to check the DCS to review & resubmit.' };
             }
             break;
           }
@@ -5106,7 +5370,7 @@ function submitApplication_(appData) {
       }
     }
 
-    /* Step 4 — Existing id → UPDATE path: lock, re-verify ownership, overwrite the PIA cells, then
+    /* Step 4: Existing id → UPDATE path: lock, re-verify ownership, overwrite the PIA cells, then
        clear and rebuild the approval/ISM/divhead workflow rows. */
     if (rowNum > 0) {
       // CRITICAL FIX C5: Acquire lock to prevent race condition on resubmission
@@ -5115,8 +5379,8 @@ function submitApplication_(appData) {
         lock.waitLock(LOCK_TIMEOUT_MS);
       } catch (e) {
         return {
-          ok: false, success: false,
-          error: 'System is busy. Please try again in a moment.'
+          ok: false,
+          message: 'System is busy. Please try again in a moment.'
         };
       }
       
@@ -5137,8 +5401,8 @@ function submitApplication_(appData) {
           Logger.log('SECURITY ALERT: User ' + userEmail + ' attempted to edit application ' + sessionId + ' owned by ' + existingEmail);
           lock.releaseLock();
           return {
-            ok: false, success: false,
-            error: 'You do not have permission to edit this application.'
+            ok: false,
+            message: 'You do not have permission to edit this application.'
           };
         }
         
@@ -5189,7 +5453,7 @@ function submitApplication_(appData) {
         SpreadsheetApp.flush();
 
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        // 🔁 APPEND THE NEXT ROUND — nothing is deleted (2026-08-11)
+        // 🔁 APPEND THE NEXT ROUND, nothing is deleted (2026-08-11)
         //
         // LAYMAN (Tropang Ex): Dati dito, BINUBURA lahat ng approval rows ng session na 'to sa
         //   tatlong sheet, tapos gagawa ulit ng bago mula sa simula. Kaya kailangan pa ng
@@ -5201,7 +5465,7 @@ function submitApplication_(appData) {
         //   `SessionID = X AND Status = 'Pending'` scan could match an abandoned row from a
         //   previous round (e.g. an ISM member who was never reached before the return). With
         //   ROUND_NUMBER present, routing scans scope to the current round and the old rows are
-        //   harmless — and they are now the authoritative history, so Revision_History and its
+        //   harmless, and they are now the authoritative history, so Revision_History and its
         //   best-effort snapshot are gone.
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         const nextRound = getCurrentRound_(sessionId) + 1;
@@ -5212,13 +5476,13 @@ function submitApplication_(appData) {
         if (hasParanormalFlags) {
           logAuditTrail_(sessionId, 'Application Resubmitted', internalFlagsStr);
         } else {
-          Logger.log(`[AUDIT] ${sessionId}: Application Resubmitted — No anomalous flags`);
+          Logger.log(`[AUDIT] ${sessionId}: Application Resubmitted: No anomalous flags`);
         }
       } finally {
         lock.releaseLock();
       }
     } else {
-      /* Step 5 — New id → INSERT a fresh Applications row, then seed the approval workflow. */
+      /* Step 5: New id → INSERT a fresh Applications row, then seed the approval workflow. */
       // INSERT new row (new submission)
       appSheet.appendRow([
         sessionId,               // SessionID
@@ -5246,11 +5510,11 @@ function submitApplication_(appData) {
       if (hasParanormalFlags) {
         logAuditTrail_(sessionId, 'Application Submitted', internalFlagsStr);
       } else {
-        Logger.log(`[AUDIT] ${sessionId}: Application Submitted — No anomalous flags`);
+        Logger.log(`[AUDIT] ${sessionId}: Application Submitted: No anomalous flags`);
       }
     }
     
-    /* Step 6 — Notify first approver + applicant; isolate email failures so a saved app never fails. */
+    /* Step 6: Notify first approver + applicant; isolate email failures so a saved app never fails. */
     // Send email notification to first approver
     // Wrap in try-catch so email failure never rolls back a successful DB write
     let emailWarning = null;
@@ -5260,11 +5524,11 @@ function submitApplication_(appData) {
     } catch (emailErr) {
       emailWarning = 'Email notification failed: ' + emailErr.toString();
       Logger.log('WARNING: Application saved but ' + emailWarning);
-      // Application is already in the database — do NOT throw
+      // Application is already in the database, do NOT throw
     }
     
     return {
-      ok: true, success: true,
+      ok: true,
       appId: sessionId,
       timestamp: timestamp,
       message: 'Application ' + (isEditing ? 'resubmitted' : 'submitted') + ' successfully',
@@ -5291,18 +5555,18 @@ function submitApplication_(appData) {
              marks the app 'Approved by ISM', notifies the applicant, updates DCS to 'Complete', and
              routes; otherwise resumes notifyISMember_ at the next step. On Deny/Return:
              sets app status, optionally returns the DCS, and notifies the applicant. Lock in finally.
-  PARAMS:    - sessionId — application id.
-             - approverEmail — the Division Head acting.
-             - decision — 'Approve' | 'Deny' | 'Return'.
-             - comments — decision reason/notes.
-             - approverFlags — JSON of field flags (used on Return); default '{}'.
-  RETURNS:   { success:true, message } or { success:false, error }.
+  PARAMS:    - sessionId: application id.
+             - approverEmail: the Division Head acting.
+             - decision: 'Approve' | 'Deny' | 'Return'.
+             - comments: decision reason/notes.
+             - approverFlags: JSON of field flags (used on Return); default '{}'.
+  RETURNS:   { ok:true, message } or { ok:false, code, message }.
 */
 function processDivHeadDecision_(sessionId, approverEmail, decision, comments, approverFlags = '{}') {
   const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   // SECURITY (F-02): authorize the actual caller server-side (see apiPhase3_ProcessISMDecision).
   // Widened for delegation (2026-08-11, made EXCLUSIVE 2026-08-12): canActAs_ accepts exactly
-  // ONE identity at a time — the named approver normally, or their admin-configured active
+  // ONE identity at a time, the named approver normally, or their admin-configured active
   // delegate INSTEAD OF them while a delegation is running. It is not additive: the original is
   // refused on their own row while delegated, which is what stops both of them approving the
   // same Pending step. With an empty Delegations sheet this is the identical check it replaced.
@@ -5311,7 +5575,7 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
   const _me = getNormalizedEmail_(Session.getActiveUser().getEmail());
   const _act = canActAs_(_me, approverEmail);
   if (!_act.allowed) {
-    return { ok: false, success: false, error: 'Access denied: you may only submit your own decision.' };
+    return { ok: false, message: 'Access denied: you may only submit your own decision.' };
   }
   const _actedBy = _act.onBehalfOf ? _me : '';
   const lock = LockService.getScriptLock();
@@ -5323,7 +5587,7 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
       lockAcquired = true;
     } catch (lockErr) {
       Logger.log('ERROR: Lock acquisition timeout - concurrent modification risk on DivHead decision');
-      return { ok: false, success: false, error: 'System busy, please try again' };
+      return { ok: false, message: 'System busy, please try again' };
     }
 
     // CRITICAL: Re-read data after acquiring lock to prevent race conditions
@@ -5336,7 +5600,7 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
       if (rowMatches_(divHeadData[i], DIV_HEAD_CONFIG_COLS, sessionId, __round) &&
           // Was a raw .toLowerCase() compare while the other two decision paths used
           // getNormalizedEmail_. That inconsistency meant a '+alias' address matched here but
-          // not there — and with delegation it would have been worse, because canActAs_
+          // not there, and with delegation it would have been worse, because canActAs_
           // normalizes, so the guard could pass and then this row lookup miss, producing a
           // confusing "record not found" on a decision the caller was entitled to make.
           getNormalizedEmail_(divHeadData[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1]) === getNormalizedEmail_(approverEmail) &&
@@ -5347,7 +5611,7 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
     }
 
     if (divHeadRow === -1) {
-      return { ok: false, success: false, error: 'Division Head approval record not found or already processed.' };
+      return { ok: false, message: 'Division Head approval record not found or already processed.' };
     }
 
     // Handle Division Head decision
@@ -5409,12 +5673,12 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
           let certResult = null;
           try { certResult = routeApprovedRequest_(sessionId, routingDest); } catch (e) {}
           notifyApplicant_(sessionId, 'approved_divhead_final', {
-            certBlob: (certResult && certResult.success) ? certResult.pdfBlob : null,
-            techserveEmails: (certResult && certResult.success) ? certResult.techserveEmails : ''
+            certBlob: (certResult && certResult.ok) ? certResult.pdfBlob : null,
+            techserveEmails: (certResult && certResult.ok) ? certResult.techserveEmails : ''
           });
         }
       } else {
-        // Don't notify applicant here — the ISM member's approval handler
+        // Don't notify applicant here, the ISM member's approval handler
         // will notify the applicant when they act (progressing_ism or approved_ism_final).
         notifyISMember_(sessionId, escalatedStep + 1);
         Logger.log(`processDivHeadDecision_: Resumed ISM workflow at step ${escalatedStep + 1}`);
@@ -5447,7 +5711,7 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
       }
       notifyApplicant_(sessionId, decision === 'Deny' ? 'denied' : 'returned');
     }
-    return { ok: true, success: true, message: 'Division Head decision recorded successfully' };
+    return { ok: true, message: 'Division Head decision recorded successfully' };
   } catch (e) {
     Logger.log('Error processing Division Head approval: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -5465,9 +5729,9 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
              the configured Privacy Officer.
   TECHNICAL: Reads pia1, sanitizeEmail_-validates each head email, and pushes {name,email,step}. If
              the list is empty, falls back to PRIVACY_OFFICER_EMAIL Script Property (validated).
-             Invalid emails are logged and skipped. (Division Head is NOT seeded here — that comes via
+             Invalid emails are logged and skipped. (Division Head is NOT seeded here, that comes via
              the ISM escalation path.)
-  PARAMS:    - appData — submission with a pia1 section.
+  PARAMS:    - appData: submission with a pia1 section.
   RETURNS:   Array of { name, email, step } (may be empty if nothing valid configured).
 */
 function buildApproversFromAppData_(appData) {
@@ -5523,12 +5787,12 @@ function buildApproversFromAppData_(appData) {
 
 /*
   Function: initializeApprovalWorkflow_
-  LAYMAN:    Creates the to-do rows in the approval sheet — one per approver in the ladder — all
+  LAYMAN:    Creates the to-do rows in the approval sheet, one per approver in the ladder, all
              starting as 'Pending'.
   TECHNICAL: buildApproversFromAppData_ → append one Approval_Workflow row per approver with id
              '<sessionId>-<n>', the step number, and Pending Status/EmailStatus.
-  PARAMS:    - sessionId — application id.
-             - appData — submission (source of the approver ladder).
+  PARAMS:    - sessionId: application id.
+             - appData: submission (source of the approver ladder).
   RETURNS:   undefined (writes rows). No rows if no approvers resolved.
 */
 function initializeApprovalWorkflow_(sessionId, appData, roundNumber) {
@@ -5542,7 +5806,7 @@ function initializeApprovalWorkflow_(sessionId, appData, roundNumber) {
   const approversToUse = appData ? buildApproversFromAppData_(appData) : [];
 
   approversToUse.forEach((approver, index) => {
-    // ApprovalID must stay unique across rounds now that old rows survive — suffix round 2+.
+    // ApprovalID must stay unique across rounds now that old rows survive, suffix round 2+.
     const approvalId = sessionId + '-' + (index + 1) + (round > 1 ? ('-R' + round) : '');
     apprSheet.appendRow([
       approvalId,              // ApprovalID
@@ -5576,14 +5840,14 @@ function initializeApprovalWorkflow_(sessionId, appData, roundNumber) {
              notify the next approver. Return: status 'Returned', save flags, optionally return the
              linked DCS. Deny: status 'Denied'. Always notifies the applicant; lock released in finally.
   PARAMS:    - sessionId, approverEmail, decision('Approve'|'Return'|'Deny'), comments.
-             - stepParam — optional step to disambiguate; approverFlags — JSON flags (default '{}').
-  RETURNS:   { success:true, message } or { success:false, error }.
+             - stepParam: optional step to disambiguate; approverFlags: JSON flags (default '{}').
+  RETURNS:   { ok:true, message } or { ok:false, code, message }.
 */
 function processApprovalDecision_(sessionId, approverEmail, decision, comments, stepParam = null, approverFlags = '{}') {
   const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   // SECURITY (F-02): authorize the actual caller server-side (see apiPhase3_ProcessISMDecision).
   // Widened for delegation (2026-08-11, made EXCLUSIVE 2026-08-12): canActAs_ accepts exactly
-  // ONE identity at a time — the named approver normally, or their admin-configured active
+  // ONE identity at a time, the named approver normally, or their admin-configured active
   // delegate INSTEAD OF them while a delegation is running. It is not additive: the original is
   // refused on their own row while delegated, which is what stops both of them approving the
   // same Pending step. With an empty Delegations sheet this is the identical check it replaced.
@@ -5592,13 +5856,13 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
   const _me = getNormalizedEmail_(Session.getActiveUser().getEmail());
   const _act = canActAs_(_me, approverEmail);
   if (!_act.allowed) {
-    return { ok: false, success: false, error: 'Access denied: you may only submit your own decision.' };
+    return { ok: false, message: 'Access denied: you may only submit your own decision.' };
   }
   const _actedBy = _act.onBehalfOf ? _me : '';
   try {
     const allowedDecisions = ['Approve', 'Return', 'Deny'];
     if (allowedDecisions.indexOf(decision) === -1) {
-      return { ok: false, success: false, error: 'Invalid decision value' };
+      return { ok: false, message: 'Invalid decision value' };
     }
 
     const lock = LockService.getScriptLock();
@@ -5610,7 +5874,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
         lockAcquired = true;
       } catch (lockErr) {
         Logger.log('ERROR: Lock acquisition timeout - concurrent modification risk');
-        return { ok: false, success: false, error: 'System busy, please try again' };
+        return { ok: false, message: 'System busy, please try again' };
       }
       
       try {
@@ -5643,7 +5907,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
       }
       
       if (currentRow === -1) {
-        return { ok: false, success: false, error: 'Approval record not found.' };
+        return { ok: false, message: 'Approval record not found.' };
       }
       
       const timestamp = new Date().toLocaleString('en-PH', {
@@ -5660,7 +5924,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
       writeActedBy_(apprSheet, currentRow, APPROVAL_COLS, _actedBy);
       
       if (decision === 'Approve') {
-        /* Approve branch — when every approver row is Approved, hand off to the ISM stage;
+        /* Approve branch: when every approver row is Approved, hand off to the ISM stage;
            otherwise advance to the next approver. */
         apprSheet.getRange(currentRow, APPROVAL_COLS.STATUS).setValue('Approved');
 
@@ -5691,11 +5955,11 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
           let ismInitSuccess = false;
           try {
             const ismInitResult = apiPhase3_InitializeISMWorkflow_(sessionId);
-            if (ismInitResult.success) {
+            if (ismInitResult.ok) {
               ismInitSuccess = true;
               Logger.log(`[AUDIT] ${sessionId}: ISM_WORKFLOW_INITIALIZED`);
             } else {
-              Logger.log('[AUDIT] ' + sessionId + ': ISM_WORKFLOW_INIT_FAILED: ' + ismInitResult.error);
+              Logger.log('[AUDIT] ' + sessionId + ': ISM_WORKFLOW_INIT_FAILED: ' + ismInitResult.message);
             }
           } catch (ismError) {
             Logger.log('[AUDIT] ' + sessionId + ': Phase 3 error: ' + ismError.toString());
@@ -5710,7 +5974,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
               // Notify the first ISM member
               notifyISMember_(sessionId, 1);
             } else {
-              // ISM init failed — set non-terminal status so admin knows to configure ISM
+              // ISM init failed: set non-terminal status so admin knows to configure ISM
               appSheet.getRange(appRow, APPLICATIONS_COLS.STATUS).setValue('Approved (ISM Pending)');
               Logger.log('[AUDIT] ' + sessionId + ': Heads approved, but ISM workflow could not be initialized. '
                 + 'Set status to "Approved (ISM Pending)". Configure InfoSec_Email_Config and run apiPhase3_RetryISMWorkflow_.');
@@ -5768,7 +6032,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
         notifyApplicant_(sessionId, 'denied');
       }
       
-      return { ok: true, success: true, message: 'Decision recorded successfully' };
+      return { ok: true, message: 'Decision recorded successfully' };
       } finally {
         // CRITICAL FIX: Only release lock if it was actually acquired
         if (lockAcquired) {
@@ -5790,7 +6054,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
   LAYMAN:    Tells you whether every approver in the ladder has approved this application.
   TECHNICAL: Scans Approval_Workflow rows for sessionId; returns false on the first non-'Approved'
              status, true otherwise. Logs a warning for any unrecognized status value.
-  PARAMS:    - sessionId — application id.
+  PARAMS:    - sessionId: application id.
   RETURNS:   Boolean (true also if there are no matching rows).
 */
 function checkAllApproved_(sessionId) {
@@ -5835,7 +6099,7 @@ function checkAllApproved_(sessionId) {
 */
 function updateDCSStatus_(reqId, newStatus, approverFlags) {
   // SECURITY (F-02): constrain the cross-phase write. These are the only two values any call site
-  // passes ('Complete' at ~4376/~7865, 'Returned' at ~4414/~4698/~7929). Mixed case is intentional —
+  // passes ('Complete' at ~4376/~7865, 'Returned' at ~4414/~4698/~7929). Mixed case is intentional,
   // it matches what is already stored in Data_Collection and what the DCS frontend reads. Do NOT
   // "normalize" to uppercase here; that would be a behavior change disguised as a cleanup.
   const ALLOWED_DCS_STATUSES = ['Complete', 'Returned'];
@@ -5869,7 +6133,7 @@ function updateDCSStatus_(reqId, newStatus, approverFlags) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// EMAIL QUEUE ENGINE — Decouples email sending from web requests
+// EMAIL QUEUE ENGINE: Decouples email sending from web requests
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Instead of calling GmailApp.sendEmail() during a web request (which
 // can fail silently under Gmail quota/throttling), all email functions
@@ -5884,7 +6148,7 @@ function updateDCSStatus_(reqId, newStatus, approverFlags) {
 
 /*
   Function: queueEmail_
-  LAYMAN:    Does NOT send an email — it drops it into the Email_Queue sheet so the background
+  LAYMAN:    Does NOT send an email, it drops it into the Email_Queue sheet so the background
              trigger can send it later. This keeps slow/throttled Gmail off the web-request path.
   TECHNICAL: Appends a Pending Email_Queue row (generated EQ-<ts>-<rand> id, plain+html bodies,
              type, 0 attempts). Then best-effort stamps EmailStatus='Pending' on the matching
@@ -5921,7 +6185,7 @@ function queueEmail_(sessionId, recipient, subject, plainBody, type, htmlBody) {
       // Band-aid removed (2026-08-11): this used to hand-roll the sheet/cols mapping and then
       // resolve the approver email by chaining
       //     cols.APPROVER_EMAIL || cols.ISM_MEMBER_EMAIL || cols.DIV_HEAD_EMAIL
-      // across three DIFFERENT column maps — it only ever worked because the two wrong keys
+      // across three DIFFERENT column maps, it only ever worked because the two wrong keys
       // evaluate to `undefined`, making `row[undefined - 1]` undefined and falling through.
       // getWorkflowInfoForType_ already returns the correct { name, cols, emailCol } triple, so
       // use it instead of re-deriving (and mis-deriving) the same thing.
@@ -5965,20 +6229,20 @@ function queueEmail_(sessionId, recipient, subject, plainBody, type, htmlBody) {
   TECHNICAL: Iterates Email_Queue Pending rows (cap MAX_SENDS_PER_CYCLE, 10s spacing, stops if daily
              quota < 2). On success marks Sent + logs audit. On error increments attempts; after 9
              attempts marks Failed and runs the failsafe: stamps the workflow row EmailStatus/Error,
-             and — once per queue entry (NOTIFIED_ADMIN guard) — emails the admin and optionally the
+             and, once per queue entry (NOTIFIED_ADMIN guard), emails the admin and optionally the
              requestor per getAdminNotificationConfig_.
-  PARAMS:    (none) — invoked by the time trigger.
-  RETURNS:   { success:true, sent:<count> } or { success:false, error }.
+  PARAMS:    (none), invoked by the time trigger.
+  RETURNS:   { ok:true, sent:<count> } or { ok:false, code, message }.
 */
 function processEmailQueue() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   const MAX_SENDS_PER_CYCLE = 15;   // Cap to stay well within 30-min execution limit
-  const SPACING_MS = 10000;         // 10 seconds between sends — safe for Gmail quota
+  const SPACING_MS = 10000;         // 10 seconds between sends, safe for Gmail quota
 
-  Logger.log('📬 Email Queue Processor — Starting cycle');
+  Logger.log('📬 Email Queue Processor: Starting cycle');
 
   try {
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
@@ -6095,7 +6359,7 @@ function processEmailQueue() {
               var adminEmail = notifConfig.adminEmail || 'systems.manager@company.com';
 
               if (notifConfig.notifyOnFailure === 'YES') {
-                var adminSubject = '[PIA SYSTEM ALERT] Email Delivery Failed — Session ' + sessionId;
+                var adminSubject = '[PIA SYSTEM ALERT] Email Delivery Failed: Session ' + sessionId;
                 var adminBody = 'An email in the PIA system has failed after ' + newAttempts + ' retry attempts.\n\n' +
                   'Session ID: ' + sessionId + '\n' +
                   'Recipient: ' + recipient + '\n' +
@@ -6118,7 +6382,7 @@ function processEmailQueue() {
                       if (String(appsData[ar][APPLICATIONS_COLS.SESSION_ID - 1] || '').trim() === sessionId) {
                         var requestorEmail = String(appsData[ar][APPLICATIONS_COLS.APPLICANT_EMAIL - 1] || '').trim();
                         if (requestorEmail && requestorEmail !== '') {
-                          var reqSubject = '[PIA System] Email Delivery Issue — Session ' + sessionId;
+                          var reqSubject = '[PIA System] Email Delivery Issue: Session ' + sessionId;
                           var reqBody = 'Dear Requestor,\n\n' +
                             'We encountered an issue delivering an approval email for your PIA session (' + sessionId + ').\n' +
                             'The system administrator has been notified and will resolve this shortly.\n\n' +
@@ -6145,13 +6409,13 @@ function processEmailQueue() {
           }
         }
 
-        Logger.log('  ✗ Failed (' + newAttempts + '/9): ' + type + ' → ' + recipient + ' [' + queueId + '] — ' + errMsg.substring(0, 120));
+        Logger.log('  ✗ Failed (' + newAttempts + '/9): ' + type + ' → ' + recipient + ' [' + queueId + ']: ' + errMsg.substring(0, 120));
         sentCount++;  // Count failed attempts toward the cycle cap
       }
     }
 
-    Logger.log('📬 Email Queue Processor — Cycle complete. Sent: ' + sentCount);
-    return { ok: true, success: true, sent: sentCount };
+    Logger.log('📬 Email Queue Processor: Cycle complete. Sent: ' + sentCount);
+    return { ok: true, sent: sentCount };
   } catch (e) {
     Logger.log('ERROR: Email queue processor crashed: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -6164,13 +6428,13 @@ function processEmailQueue() {
   TECHNICAL: Deletes any existing processEmailQueue trigger (dedupe), then creates a new time-based
              everyMinutes(1) trigger. Requires the script.scriptapp scope.
   PARAMS:    (none)
-  RETURNS:   { success:true, message }.
+  RETURNS:   { ok:true, message }.
 */
 function setupEmailQueueTrigger() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   // Remove any existing trigger to prevent duplicates
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(t => {
@@ -6185,8 +6449,8 @@ function setupEmailQueueTrigger() {
     .everyMinutes(1)
     .create();
 
-  Logger.log('✓ Email Queue trigger created — processEmailQueue() will run every 1 minute');
-  return { ok: true, success: true, message: 'Email queue trigger created. processEmailQueue will run every 1 minute.' };
+  Logger.log('✓ Email Queue trigger created: processEmailQueue() will run every 1 minute');
+  return { ok: true, message: 'Email queue trigger created. processEmailQueue will run every 1 minute.' };
 }
 
 /*
@@ -6203,11 +6467,11 @@ function getNotifiedDateStamp_() {
 
 /*
   Function: stampNotifiedDate_
-  LAYMAN:   Records "this approver was notified today" on their workflow row — but only the first time,
+  LAYMAN:   Records "this approver was notified today" on their workflow row, but only the first time,
             so a later notification never resets the 7-day reminder countdown.
   TECHNICAL: Sets the NOTIFIED_DATE cell (1-based colNum) on the given 1-based sheet row to today's
-            YYYY-MM-DD, only when currently blank. Fully guarded — never throws into the caller.
-  PARAMS:   - sheet — workflow Sheet object.  - rowNum1 — 1-based sheet row.  - colNum — 1-based NOTIFIED_DATE column.
+            YYYY-MM-DD, only when currently blank. Fully guarded, never throws into the caller.
+  PARAMS:   - sheet: workflow Sheet object.  - rowNum1: 1-based sheet row.  - colNum: 1-based NOTIFIED_DATE column.
   RETURNS:  undefined.
 */
 function stampNotifiedDate_(sheet, rowNum1, colNum) {
@@ -6219,7 +6483,7 @@ function stampNotifiedDate_(sheet, rowNum1, colNum) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 🔔 DAILY REMINDER ENGINE — Nags pending approvers on a 7-day-then-every-3-days cadence
+// 🔔 DAILY REMINDER ENGINE: Nags pending approvers on a 7-day-then-every-3-days cadence
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Scans all three workflow sheets for Pending rows and nudges only the next pending approver per
 // request, on a cadence: first reminder 7 days after they were notified (NOTIFIED_DATE), then every
@@ -6230,7 +6494,7 @@ function stampNotifiedDate_(sheet, rowNum1, colNum) {
 /*
   Function: sendDailyReminders
   LAYMAN:    The reminder engine (runs daily). Looks across all three approval sheets for whoever is
-             currently holding things up and nudges only the next person in line — never people who
+             currently holding things up and nudges only the next person in line, never people who
              haven't been reached yet. It doesn't nag every day: the first nudge goes out a week after
              that approver was notified, then follow-ups every 3 days until they act.
   TECHNICAL: Trigger-driven; no-op if config.enabled is false. Pre-filters to sessionIds whose
@@ -6243,18 +6507,18 @@ function stampNotifiedDate_(sheet, rowNum1, colNum) {
              continuation token + MAX_SCAN_ROWS cap to survive the execution-time limit, and stops
              early if the Gmail daily quota is nearly exhausted.
   PARAMS:    (none)
-  RETURNS:   { success:true, processed, reminded } (plus skipped/capped/quotaExhausted flags).
+  RETURNS:   { ok:true, processed, reminded } (plus skipped/capped/quotaExhausted flags).
 */
 /*
-  Function: sendDailyReminders  (PUBLIC TRIGGER ENTRY POINT — thin guarded wrapper)
+  Function: sendDailyReminders  (PUBLIC TRIGGER ENTRY POINT, thin guarded wrapper)
 
   LAYMAN (Tropang Ex):
   Ito lang yung pinto na nakikita ng daily trigger. Ang totoong trabaho ay nasa
   sendDailyReminders_() sa baba. Bakit hiwalay? Dahil ang trigger ay naka-bind sa PANGALAN
   ('sendDailyReminders' bilang text sa loob ng ScriptApp.newTrigger), kaya hindi pwedeng bigyan
-  ng underscore yung pangalan — kung papalitan, hindi na tatakbo yung naka-install nang trigger.
+  ng underscore yung pangalan, kung papalitan, hindi na tatakbo yung naka-install nang trigger.
   Pero kung public siya, kahit sinong empleyado kayang i-loop siya galing browser console hanggang
-  maubos yung Gmail quota ng buong sistema — at pag naubos yun, TAHIMIK na hihinto lahat ng
+  maubos yung Gmail quota ng buong sistema, at pag naubos yun, TAHIMIK na hihinto lahat ng
   approval emails. Kaya may bantay dito.
 
   TECHNICAL:
@@ -6265,10 +6529,10 @@ function stampNotifiedDate_(sheet, rowNum1, colNum) {
   unaffected by this gate.
 
   PARAMS:    (none)
-  RETURNS:   sendDailyReminders_()'s result, or { success:false, error } when not authorized.
+  RETURNS:   sendDailyReminders_()'s result, or { ok:false, code, message } when not authorized.
 */
 function sendDailyReminders() {
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   return sendDailyReminders_();
 }
 
@@ -6276,11 +6540,11 @@ function sendDailyReminders_() {
   // Check if reminders are enabled
   const config = getReminderConfig_();
   if (!config.enabled) {
-    Logger.log('🔔 Daily Reminders — DISABLED via config. Skipping.');
-    return { ok: true, success: true, skipped: true, reason: 'disabled' };
+    Logger.log('🔔 Daily Reminders: DISABLED via config. Skipping.');
+    return { ok: true, skipped: true, reason: 'disabled' };
   }
 
-  Logger.log('🔔 Daily Reminders — Starting scan...');
+  Logger.log('🔔 Daily Reminders: Starting scan...');
   var today = new Date();
   // Use local date string in YYYY-MM-DD format for consistent comparison
   var todayStr = today.getFullYear() + '-' +
@@ -6305,7 +6569,7 @@ function sendDailyReminders_() {
   var CONTINUATION_KEY = 'reminder_continuation';
   var MAX_SCAN_ROWS = 300; // Safety cap per execution
 
-  // Commit 6: reminder cadence — first nudge 7 days after the approver was notified, then every 3 days.
+  // Commit 6: reminder cadence, first nudge 7 days after the approver was notified, then every 3 days.
   var REMINDER_FIRST_DAYS = 7;
   var REMINDER_REPEAT_DAYS = 3;
   // Whole-day difference (local midnight-to-midnight) between a 'YYYY-MM-DD' string and today. -1 if unparseable.
@@ -6339,7 +6603,7 @@ function sendDailyReminders_() {
   //
   // 🚩 THE PRE-FILTER IS LOAD-BEARING, SO ITS FAILURE MUST BE FATAL TO THIS RUN.
   // The scan loop below does `if (!validSessionIds[sid]) continue;`, so an EMPTY map does not mean
-  // "remind everyone" — it means "remind nobody". The previous code caught a read failure, logged
+  // "remind everyone", it means "remind nobody". The previous code caught a read failure, logged
   // "will process all pending rows" (which was simply untrue) and carried on, producing a silent
   // zero-reminder run: every pending approver stops being nudged and nothing anywhere says so.
   // Aborting loudly with a return value is the fix. Do not soften this back into a warning.
@@ -6348,8 +6612,8 @@ function sendDailyReminders_() {
   try {
     var appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
     if (!appSheet) {
-      Logger.log('⛔ Daily Reminders — ABORTED: Applications sheet not found. No reminders sent this run.');
-      return { ok: false, success: false, aborted: true, reason: 'prefilter_unavailable', detail: 'Applications sheet not found' };
+      Logger.log('⛔ Daily Reminders: ABORTED: Applications sheet not found. No reminders sent this run.');
+      return { ok: false, aborted: true, reason: 'prefilter_unavailable', detail: 'Applications sheet not found' };
     }
     var appData = readSheetValues_(appSheet);
     for (var ai = 1; ai < appData.length; ai++) {
@@ -6360,8 +6624,8 @@ function sendDailyReminders_() {
     }
     Logger.log('🔔 Pre-filter: ' + Object.keys(validSessionIds).length + ' applications in active approval states');
   } catch (e) {
-    Logger.log('⛔ Daily Reminders — ABORTED: Applications pre-filter read failed. No reminders sent this run: ' + e.toString());
-    return { ok: false, success: false, aborted: true, reason: 'prefilter_unavailable', detail: String(e).substring(0, 300) };
+    Logger.log('⛔ Daily Reminders: ABORTED: Applications pre-filter read failed. No reminders sent this run: ' + e.toString());
+    return { ok: false, aborted: true, reason: 'prefilter_unavailable', detail: String(e).substring(0, 300) };
   }
 
   // Define the three sheets to scan
@@ -6406,7 +6670,7 @@ function sendDailyReminders_() {
 
     // ── FIRST PASS: Collect pending rows grouped by sessionId ──
     // For sheets with steps (Approval_Workflow, ISM_Workflow), only the
-    // LOWEST pending step per sessionId is eligible — this preserves
+    // LOWEST pending step per sessionId is eligible, this preserves
     // the sequential approval order and prevents reminding approvers
     // who haven't been reached yet.
     var pendingBySession = {};  // sessionId → { rowIndex, step, approverEmail, approverName, reminderDate }
@@ -6469,19 +6733,19 @@ function sendDailyReminders_() {
       // Safety cap
       if (processedCount >= MAX_SCAN_ROWS) {
         cache.put(CONTINUATION_KEY, JSON.stringify({ sheetIdx: sIdx, row: row.rowIndex }), 3600);
-        Logger.log('🔔 Daily Reminders — Capped at ' + MAX_SCAN_ROWS + ' rows. Resuming next cycle.');
-        return { ok: true, success: true, capped: true, processed: processedCount, reminded: remindedCount };
+        Logger.log('🔔 Daily Reminders: Capped at ' + MAX_SCAN_ROWS + ' rows. Resuming next cycle.');
+        return { ok: true, capped: true, processed: processedCount, reminded: remindedCount };
       }
       processedCount++;
 
-      // Commit 6: cadence gate — first reminder 7 days after notification, then every 3 days.
+      // Commit 6: cadence gate, first reminder 7 days after notification, then every 3 days.
       // Legacy pending rows created before NOTIFIED_DATE existed have no notified date: stamp it
       // today to start their 7-day clock (avoids a burst of reminders on the first scan) and skip.
       if (!row.notifiedDate) {
         try { sheet.getRange(row.rowIndex + 1, sheetDef.cols.NOTIFIED_DATE).setValue(todayStr); } catch (_) {}
         continue;
       }
-      // Already reminded today — nothing to do.
+      // Already reminded today: nothing to do.
       if (row.reminderDate === todayStr) continue;
       // Decide by cadence: never reminded → wait 7 days from notification; else → every 3 days.
       var shouldSend = row.reminderDate
@@ -6493,9 +6757,9 @@ function sendDailyReminders_() {
       try {
         var remaining = MailApp.getRemainingDailyQuota();
         if (remaining < 2) {
-          Logger.log('🔔 Daily Reminders — Quota exhausted. Stopping.');
+          Logger.log('🔔 Daily Reminders: Quota exhausted. Stopping.');
           cache.put(CONTINUATION_KEY, JSON.stringify({ sheetIdx: sIdx, row: row.rowIndex }), 3600);
-          return { ok: true, success: true, quotaExhausted: true, processed: processedCount, reminded: remindedCount };
+          return { ok: true, quotaExhausted: true, processed: processedCount, reminded: remindedCount };
         }
       } catch (_) {}
 
@@ -6519,7 +6783,7 @@ function sendDailyReminders_() {
     }
   }
 
-  // Clear continuation token — all done
+  // Clear continuation token: all done
   cache.remove(CONTINUATION_KEY);
 
   // Record last successful run
@@ -6528,8 +6792,8 @@ function sendDailyReminders_() {
       new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }));
   } catch (_) {}
 
-  Logger.log('🔔 Daily Reminders — Complete. Processed: ' + processedCount + ', Reminded: ' + remindedCount);
-  return { ok: true, success: true, processed: processedCount, reminded: remindedCount };
+  Logger.log('🔔 Daily Reminders: Complete. Processed: ' + processedCount + ', Reminded: ' + remindedCount);
+  return { ok: true, processed: processedCount, reminded: remindedCount };
 }
 
 /*
@@ -6550,20 +6814,20 @@ function buildReminderEmail_(sessionId, approverEmail, approverName, stepInfo) {
       try { webAppUrl = ScriptApp.getService().getUrl(); } catch (_) {}
     }
     if (!webAppUrl) {
-      Logger.log('  ⚠ Cannot build reminder — WEB_APP_URL not configured and ScriptApp service unavailable (running from editor?)');
+      Logger.log('  ⚠ Cannot build reminder: WEB_APP_URL not configured and ScriptApp service unavailable (running from editor?)');
       return;
     }
 
     var appData = getApplicationData_(sessionId);
     if (!appData) {
-      Logger.log('  ⚠ Cannot build reminder — no app data for ' + sessionId);
+      Logger.log('  ⚠ Cannot build reminder: no app data for ' + sessionId);
       return;
     }
 
     var ts = new Date().getTime().toString();
     // DELEGATION: nudge whoever is actually expected to act right now. Without this the daily
-    // reminder would keep chasing someone on leave while their delegate — who holds the only
-    // usable link — hears nothing, which is worse than not reminding at all.
+    // reminder would keep chasing someone on leave while their delegate, who holds the only
+    // usable link, hears nothing, which is worse than not reminding at all.
     var _routed = recipientFor_(approverEmail);
     var normalizedEmail = getNormalizedEmail_(_routed.email);
     var token = generateAuthToken_(sessionId, normalizedEmail, ts, 'Review');
@@ -6577,11 +6841,11 @@ function buildReminderEmail_(sessionId, approverEmail, approverName, stepInfo) {
     var subject = 'Reminder: Review pending for ' + sessionId;
 
     var htmlBody = buildPiaEmailHtml_({
-      heading: 'Reminder — Review Pending',
+      heading: 'Reminder: Review Pending',
       contentHtml: '' +
         delegationNoticeHtml_(_routed.onBehalfOf, _routed.reason) +
         '<p style="margin:0 0 14px;font-size:14px;">This is a friendly reminder that your review is still pending for the following Privacy Impact Assessment.</p>' +
-        '<div style="background:#fff8e1;color:#b46d14;border:1px solid rgba(180,109,20,0.2);padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:16px;">⏳ <strong>Pending Review</strong> — ' + escapeHtml_(stepInfo || 'Awaiting your action') + '</div>' +
+        '<div style="background:#fff8e1;color:#b46d14;border:1px solid rgba(180,109,20,0.2);padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:16px;">⏳ <strong>Pending Review</strong>: ' + escapeHtml_(stepInfo || 'Awaiting your action') + '</div>' +
         '<div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">' +
         'Pending review by: <strong>' + escapeHtml_(approverName) + '</strong><br><br>' +
         '<strong>App ID:</strong> ' + escapeHtml_(sessionId) + '<br>' +
@@ -6595,7 +6859,7 @@ function buildReminderEmail_(sessionId, approverEmail, approverName, stepInfo) {
         '<p style="font-size:12px;color:#9ca3af;margin-top:16px;">You will receive periodic reminders until you take action on this application.</p>'
     });
 
-    // Queue via existing email infrastructure — use 'reminder' type for all
+    // Queue via existing email infrastructure, use 'reminder' type for all
     queueEmail_(sessionId, _routed.email, subject,
       'Please view this email in an HTML-compatible client.',
       'reminder', htmlBody);
@@ -6627,16 +6891,16 @@ function getReminderConfig_() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 📧 EMAIL NOTIFICATIONS  (now queue-based — see Email Queue above)
+// 📧 EMAIL NOTIFICATIONS  (now queue-based, see Email Queue above)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
   Function: buildPiaEmailHtml_
-  LAYMAN:    The shared navy "letterhead" every PIA email uses — header bar, white card, and the
+  LAYMAN:    The shared navy "letterhead" every PIA email uses, header bar, white card, and the
              do-not-reply footer. You give it a heading and inner content; it returns the full HTML.
   TECHNICAL: Pure string builder. Wraps opts.contentHtml in the standard navy (#2a5285) card shell
              matching the Admin/DCS template. No side-effects.
-  PARAMS:    - opts — { heading?, contentHtml?, accent? }.
+  PARAMS:    - opts: { heading?, contentHtml?, accent? }.
   RETURNS:   HTML string for the email body.
 */
 function buildPiaEmailHtml_(opts) {
@@ -6661,10 +6925,10 @@ function buildPiaEmailHtml_(opts) {
              secure one-click "Review" link. Queues the email (does not send inline).
   TECHNICAL: Reads Approval_Workflow to find the row whose CurrentStep === approverIndex+1 and the
              total step count. Builds an action-bound HMAC 'Review' URL, renders via buildPiaEmailHtml_,
-             and queueEmail_(type:'approver'). Whole body in try/catch — email failure is logged to the
+             and queueEmail_(type:'approver'). Whole body in try/catch, email failure is logged to the
              audit trail and never thrown (the DB write already happened).
-  PARAMS:    - sessionId — application id.
-             - approverIndex — 0-based index of the approver to notify (step = index+1).
+  PARAMS:    - sessionId: application id.
+             - approverIndex: 0-based index of the approver to notify (step = index+1).
   RETURNS:   undefined. No-op if no approver exists at that step.
 */
 function notifyApprover_(sessionId, approverIndex) {
@@ -6708,7 +6972,7 @@ function notifyApprover_(sessionId, approverIndex) {
     const ts = new Date().getTime().toString();
     // CRITICAL FIX: Normalize email before token generation to prevent authorization mismatch
     // DELEGATION: resolve who should actually receive this, then mint the token over THAT
-    // address. Both must move together — a link addressed to the delegate but signed for the
+    // address. Both must move together, a link addressed to the delegate but signed for the
     // original fails handleEmailAction_ identity check, and the reverse fails isTokenValid_.
     const _routed = recipientFor_(approver.email);
     const normalizedApproverEmail = getNormalizedEmail_(_routed.email);
@@ -6728,12 +6992,12 @@ function notifyApprover_(sessionId, approverIndex) {
     const subject = `Action Required: Review ${sessionId}`;
 
     const htmlBody = buildPiaEmailHtml_({
-      heading: 'Action Required — Review',
+      heading: 'Action Required: Review',
       contentHtml: `
         <p style="margin:0 0 14px;font-size:14px;">Hello, ${escapeHtml_(approver.name || 'Approver')},</p>
         ${delegationNoticeHtml_(_routed.onBehalfOf, _routed.reason)}
         <p style="margin:0 0 14px;font-size:14px;">A new Privacy Impact Assessment (PIA) requires your review.</p>
-        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Approval chain — step ${stepCount} of ${totalSteps}</div>
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">Approval chain, step ${stepCount} of ${totalSteps}</div>
         <div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">
           Pending review by: <strong>${escapeHtml_(approver.name)}</strong><br><br>
           <strong>App ID:</strong> ${escapeHtml_(sessionId)}<br>
@@ -6775,8 +7039,8 @@ function notifyApprover_(sessionId, approverIndex) {
              and action URL/label from the status code (many branches; returns/rejections vary based on
              whether DCS-level flags exist). Renders via buildPiaEmailHtml_ and queueEmail_(type:
              'applicant'). Fully wrapped in try/catch; failures are audited, never thrown.
-  PARAMS:    - sessionId — application id.
-             - status — status code string (e.g. 'submitted','progressing','approved_main',
+  PARAMS:    - sessionId: application id.
+             - status: status code string (e.g. 'submitted','progressing','approved_main',
                         'returned','denied','approved_ism_final','routed_implementation', ...).
   RETURNS:   undefined. No-op if app data is missing.
 */
@@ -6830,7 +7094,7 @@ function notifyApplicant_(sessionId, status, options) {
   } else if (status === 'progressing') {
     statusMessage = `<div style="background: #e3f2fd; color: #1e88e5; border: 1px solid rgba(30,136,229,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application has been approved by the current reviewer and is now <strong>PROGRESSING</strong> to the next Head for review.</div></div>`;
   } else if (status === 'approved_main') {
-    statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application is now <strong>HEADS APPROVED</strong> — it cleared all required Head approvals and is being reviewed by the ISM (InfoSec) team. This is not yet final approval.</div></div>`;
+    statusMessage = `<div style="background: #e8f5e9; color: #1D9E75; border: 1px solid rgba(29,158,117,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application is now <strong>HEADS APPROVED</strong>, it cleared all required Head approvals and is being reviewed by the ISM (InfoSec) team. This is not yet final approval.</div></div>`;
   } else if (status === 'escalated_divhead') {
     statusMessage = `<div style="background: #eff6ff; color: #1e40af; border: 1px solid rgba(30,64,175,0.2); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; display:flex; align-items:flex-start; gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> <div>Your application has been <strong>ESCALATED</strong> to the Division Head for executive review.</div></div>`;
   } else if (status === 'approved_divhead_progressing') {
@@ -6882,7 +7146,7 @@ function notifyApplicant_(sessionId, status, options) {
     }
   }
 
-  // Item 2: on full approval — a "certificate attached" note up top, and a clean TechServe
+  // Item 2: on full approval, a "certificate attached" note up top, and a clean TechServe
   // contact list (Name / email per line) placed AFTER the Review Status.
   let certNote = '';
   let techserveBlock = '';
@@ -6915,7 +7179,7 @@ function notifyApplicant_(sessionId, status, options) {
       <div><a href="${actionUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">${buttonText}</a></div>`
   });
 
-  // Final-approval emails carry the Certificate of Approval PDF, which the async queue can't hold —
+  // Final-approval emails carry the Certificate of Approval PDF, which the async queue can't hold,
   // send those synchronously with the attachment; every other status stays on the reliable queue.
   if (opts.certBlob) {
     var certSend;
@@ -6925,13 +7189,13 @@ function notifyApplicant_(sessionId, status, options) {
         attachments: [opts.certBlob]
       });
     } catch (sendErr) {
-      certSend = { ok: false, success: false, error: String(sendErr) };
+      certSend = { ok: false, detail: String(sendErr) };
     }
     // L1: if the synchronous send (with attachment) ultimately fails, fall back to the reliable queue
     // (without the attachment) so the applicant is still notified of full approval. The certificate
     // itself already went to DCOPS/TechServe.
-    if (!certSend || !certSend.success) {
-      Logger.log('Final-approval email with cert failed for ' + sessionId + '; queueing fallback. ' + (certSend && certSend.error ? certSend.error : ''));
+    if (!certSend || !certSend.ok) {
+      Logger.log('Final-approval email with cert failed for ' + sessionId + '; queueing fallback. ' + (certSend && certSend.detail ? certSend.detail : ''));
       queueEmail_(sessionId, appData.applicantEmail, subject, "Please view this email in an HTML-compatible client.", 'applicant', htmlBody);
     }
   } else {
@@ -6962,13 +7226,13 @@ function notifyApplicant_(sessionId, status, options) {
   TECHNICAL: getUnifiedHistory_ rounds strictly BELOW the current round, walked descending; matches
              getNormalizedEmail_(approverEmail) against the target. Division Head rows have blank
              names but always carry the email, so matching is email-only by design. Never throws.
-  PARAMS:    - sessionId — application id.  - email — the approver being notified/reviewing.
+  PARAMS:    - sessionId: application id.  - email: the approver being notified/reviewing.
   RETURNS:   { round, decision, status, dateStr } or null.
 */
 function getLatestPriorDecisionByEmail_(sessionId, email) {
   try {
     if (!email) return null;
-    // Append-only: read the live rounds and drop the current one — "prior" means a round this
+    // Append-only: read the live rounds and drop the current one, "prior" means a round this
     // approver already closed, not the one they are being asked to act on right now.
     const currentRound = getCurrentRound_(sessionId);
     const rounds = (getUnifiedHistory_(sessionId, false).rounds || [])
@@ -7005,7 +7269,7 @@ function getLatestPriorDecisionByEmail_(sessionId, email) {
              screen. Personalized: it states THEIR OWN prior decision, not just "this was returned".
   TECHNICAL: Email-safe inline hex styles, plain string concatenation. Wrapped in try/catch returning
              '' so a chip failure can never break an email send or the review page.
-  PARAMS:    - sessionId — application id.  - email — the recipient/reviewer.
+  PARAMS:    - sessionId: application id.  - email: the recipient/reviewer.
   RETURNS:   HTML string or ''.
 */
 function buildPriorReviewChipHtml_(sessionId, email) {
@@ -7039,7 +7303,7 @@ function buildPriorReviewChipHtml_(sessionId, email) {
   TECHNICAL: Consumes getUnifiedHistory_ output. Email-safe: inline styles, hex colors only.
              Status colors follow the unified matrix (approved green #065f46, returned amber
              #92400e, denied red #991b1b, escalated/pending blue #1e40af). Legacy boilerplate
-  PARAMS:    - unified — { rounds } from getUnifiedHistory_.
+  PARAMS:    - unified: { rounds } from getUnifiedHistory_.
   RETURNS:   HTML string ('' when there are no rounds).
 */
 function buildUnifiedHistoryHtml_(unified) {
@@ -7122,7 +7386,7 @@ function buildUnifiedHistoryHtml_(unified) {
              rounds" block stacked on top of the current decisions.
   TECHNICAL: Round-4 refactor: delegates to getUnifiedHistory_(sessionId, false) +
              buildUnifiedHistoryHtml_. Name/signature kept so all five email call sites are untouched.
-  PARAMS:    - sessionId — application id.
+  PARAMS:    - sessionId: application id.
   RETURNS:   HTML string; a "No decisions recorded yet." note if nothing is found.
 */
 function generateEmailDecisionsHTML_(sessionId) {
@@ -7145,7 +7409,7 @@ function generateEmailDecisionsHTML_(sessionId) {
              cells and approverFlags, then joins Approval_Workflow rows. Roles are inferred from step
              order (Immediate Head step 1 / Dept Head step 2, shifting if no immediate head) plus the
              Privacy Officer email. Computes approvalStep = count of Approved rows.
-  PARAMS:    - sessionId — application id (trim/uppercase-insensitive).
+  PARAMS:    - sessionId: application id (trim/uppercase-insensitive).
   RETURNS:   The app object, or null if not found.
 */
 function getApplicationData_(sessionId) {
@@ -7193,7 +7457,7 @@ function getApplicationData_(sessionId) {
   const deptEmail = getNormalizedEmail_(appData.pia1.deptHeadEmail);
   const hasImmHead = !!immEmail;
 
-  // Append-only workflow: appData.approvers is the CURRENT ladder — one clean row per approver —
+  // Append-only workflow: appData.approvers is the CURRENT ladder, one clean row per approver,
   // so every existing consumer (review forms, certificate, status logic) keeps seeing exactly one
   // set instead of one per round. Prior rounds are history and are read via getUnifiedHistory_.
   // ⚠ Authorization does NOT rely on this list being complete: isAuthorizedForApplication_ scans
@@ -7238,7 +7502,7 @@ function getApplicationData_(sessionId) {
   TECHNICAL: Filters Applications rows by the active user's email, formats the submission date, and
              pulls program/dept from parsed PIA 1. Fully try/catch-guarded; returns [] on any error or
              empty sheet.
-  PARAMS:    (none) — uses Session.getActiveUser().
+  PARAMS:    (none), uses Session.getActiveUser().
   RETURNS:   Array of { id, program, dept, status, date, isFlagged }.
 */
 function getUserSubmissions_() {
@@ -7297,17 +7561,17 @@ function getUserSubmissions_() {
 /*
   Function: findRowBySessionID_
   LAYMAN:    Finds which row of the Applications sheet holds a given application id.
-  TECHNICAL: Linear scan of column A (case-insensitive, trimmed) — deliberately avoids createTextFinder
+  TECHNICAL: Linear scan of column A (case-insensitive, trimmed), deliberately avoids createTextFinder
              for consistent behavior. Returns the 1-indexed sheet row.
-  PARAMS:    - sessionId — application id.
+  PARAMS:    - sessionId: application id.
   RETURNS:   Row number (>=2), or -1 if not found / sheet empty.
 */
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 🔁 ROUND HELPERS — the core of the append-only workflow
+// 🔁 ROUND HELPERS: the core of the append-only workflow
 //
 // LAYMAN (Tropang Ex): Dati, tuwing nag-re-resubmit ang applicant, BINUBURA lahat ng lumang
 //   approval rows para malinis yung "sino ang susunod?" na tanong. Ngayon hindi na natin
-//   binubura — sa halip, may bagong column na RoundNumber, at nagdadagdag lang tayo ng
+//   binubura, sa halip, may bagong column na RoundNumber, at nagdadagdag lang tayo ng
 //   bagong round sa ibaba. Yung dalawang helper dito ang nagsasabi kung anong round na tayo.
 //
 // TECHNICAL: The delete existed only because a scan for `SessionID = X AND Status = 'Pending'`
@@ -7323,8 +7587,8 @@ function getUserSubmissions_() {
   TECHNICAL: Reads the ROUND_NUMBER cell from a 0-indexed row array and coerces it to a positive
              integer. Blank / 0 / non-numeric all normalize to 1, which is what makes this change
              backward-compatible with rows written before the column existed.
-  PARAMS:    - row  — a workflow row as a 0-indexed array.
-             - cols — the matching column map (APPROVAL_COLS / ISM_WORKFLOW_COLS / DIV_HEAD_CONFIG_COLS).
+  PARAMS:    - row: a workflow row as a 0-indexed array.
+             - cols: the matching column map (APPROVAL_COLS / ISM_WORKFLOW_COLS / DIV_HEAD_CONFIG_COLS).
   RETURNS:   A positive integer round number (never 0, never NaN).
 */
 function roundOf_(row, cols) {
@@ -7337,7 +7601,7 @@ function roundOf_(row, cols) {
 
   LAYMAN (Tropang Ex):
   Isang tanong lang ang sinasagot nito: "kabilang ba itong row sa request na hinahanap ko, at sa
-  tamang round?" Kapag `round` ay null, ibig sabihin "kahit anong round" — ginagamit yon ng mga
+  tamang round?" Kapag `round` ay null, ibig sabihin "kahit anong round", ginagamit yon ng mga
   history view na dapat makita LAHAT ng round.
 
   TECHNICAL:
@@ -7351,10 +7615,10 @@ function roundOf_(row, cols) {
                         this request?" Must span every round.
 
   PARAMS:
-    - row       — workflow row as a 0-indexed array.
-    - cols      — matching column map.
-    - sessionId — the application id being matched.
-    - round     — a round number to scope to, or null for all rounds.
+    - row: workflow row as a 0-indexed array.
+    - cols: matching column map.
+    - sessionId: the application id being matched.
+    - round: a round number to scope to, or null for all rounds.
   RETURNS:   Boolean.
 */
 function rowMatches_(row, cols, sessionId, round) {
@@ -7368,7 +7632,7 @@ function rowMatches_(row, cols, sessionId, round) {
 
   LAYMAN (Tropang Ex):
   Kapag nag-Return ang isang approver, may mga item siyang na-flag ("ayusin mo 'to"). Dati,
-  yung listahan na 'yon ay nakatago lang sa Applications.Approver_Flags — na BINUBURA tuwing
+  yung listahan na 'yon ay nakatago lang sa Applications.Approver_Flags, na BINUBURA tuwing
   nag-re-resubmit ang applicant. Kaya kinailangan pa ng photocopy (Revision_History) para hindi
   mawala. Ngayon, isinusulat natin diretso sa row mismo ng approver na nag-flag, kaya buhay siya
   habambuhay kasama ng desisyon niya.
@@ -7378,14 +7642,14 @@ function rowMatches_(row, cols, sessionId, round) {
   Revision_History.FlaggedFields as the durable per-round record.
 
   No-ops on an empty/blank/'{}' payload so an ordinary Approve does not stamp noise. Fully
-  guarded — a failure here must never break an already-committed decision, which is the same
+  guarded, a failure here must never break an already-committed decision, which is the same
   rule the old snapshot followed.
 
   PARAMS:
-    - sheet         — the workflow Sheet being written.
-    - rowNum1       — 1-based sheet row of the approver's decision row.
-    - cols          — matching column map (must expose FLAGGED_FIELDS).
-    - approverFlags — the flags payload; object or JSON string, as received by the decision fn.
+    - sheet: the workflow Sheet being written.
+    - rowNum1: 1-based sheet row of the approver's decision row.
+    - cols: matching column map (must expose FLAGGED_FIELDS).
+    - approverFlags: the flags payload; object or JSON string, as received by the decision fn.
   RETURNS:   undefined.
 */
 function writeDecisionFlags_(sheet, rowNum1, cols, approverFlags) {
@@ -7399,7 +7663,7 @@ function writeDecisionFlags_(sheet, rowNum1, cols, approverFlags) {
       const raw = String(approverFlags || '').trim();
       payload = (raw && raw !== '{}' && raw !== 'null') ? raw : '';
     }
-    if (!payload) return; // nothing flagged (e.g. a plain Approve) — leave the cell blank
+    if (!payload) return; // nothing flagged (e.g. a plain Approve), leave the cell blank
 
     sheet.getRange(rowNum1, cols.FLAGGED_FIELDS).setValue(payload);
   } catch (e) {
@@ -7412,12 +7676,12 @@ function writeDecisionFlags_(sheet, rowNum1, cols, approverFlags) {
 
   LAYMAN (Tropang Ex):
   Kapag ang kapalit (delegate) ang pumindot, dito naitatala kung SINO talaga ang pumindot.
-  Yung row mismo, naka-pangalan pa rin sa orihinal na approver — kaya kung wala ito, mukhang
+  Yung row mismo, naka-pangalan pa rin sa orihinal na approver, kaya kung wala ito, mukhang
   siya mismo ang umaksyon kahit naka-leave siya. Ito yung nagpapaliwanag sa audit trail.
 
   TECHNICAL:
   Writes ACTED_BY on a decision row. Called immediately after writeDecisionFlags_ at all three
-  decision sites, and only ever with a non-empty value when canActAs_ reported a delegation —
+  decision sites, and only ever with a non-empty value when canActAs_ reported a delegation,
   so a normal, personally-made decision leaves the cell blank and every pre-delegation row
   stays meaningful.
 
@@ -7426,9 +7690,9 @@ function writeDecisionFlags_(sheet, rowNum1, cols, approverFlags) {
   to find, because "who actually approved this" is exactly the question an auditor asks.
 
   PARAMS:
-  - sheet — the workflow sheet.  - rowNum1 — 1-indexed row.
-  - cols — the matching *_COLS map (must carry ACTED_BY).
-  - actedBy — the delegate's email, or '' when the approver acted personally.
+  - sheet: the workflow sheet.  - rowNum1: 1-indexed row.
+  - cols: the matching *_COLS map (must carry ACTED_BY).
+  - actedBy: the delegate's email, or '' when the approver acted personally.
 
   RETURNS:
   undefined.
@@ -7437,7 +7701,7 @@ function writeActedBy_(sheet, rowNum1, cols, actedBy) {
   try {
     if (!sheet || !rowNum1 || !cols || !cols.ACTED_BY) return;
     const val = String(actedBy || '').trim();
-    if (!val) return;   // acted personally — leave blank, which is the overwhelming majority
+    if (!val) return;   // acted personally, leave blank, which is the overwhelming majority
     sheet.getRange(rowNum1, cols.ACTED_BY).setValue(val);
   } catch (e) {
     Logger.log('writeActedBy_ FAILED (non-blocking) for row ' + rowNum1 + ': ' + e.toString());
@@ -7456,13 +7720,13 @@ function writeActedBy_(sheet, rowNum1, cols, actedBy) {
   Deliberately derived rather than stored on Applications: a stored copy is a second source of
   truth that can drift from the rows it describes.
 
-  Scans all three sheets because a session's highest round can live in any of them — e.g. an
+  Scans all three sheets because a session's highest round can live in any of them, e.g. an
   escalation creates a DivisionHead row for the current round while the ISM chain is paused.
 
   Returns 0 when the session has no workflow rows at all, which is how callers distinguish
   "never initialized" from "round 1".
 
-  PARAMS:    - sessionId — the application id.
+  PARAMS:    - sessionId: the application id.
   RETURNS:   Integer: highest round found, or 0 if the session has no workflow rows.
 
   EXAMPLE
@@ -7525,15 +7789,15 @@ function findRowBySessionID_(sessionId) {
 
 /*
   Function: logAuditTrail_
-  LAYMAN:    Records an event — but only writes to the Risk_Audit sheet when it is genuinely
+  LAYMAN:    Records an event, but only writes to the Risk_Audit sheet when it is genuinely
              anomalous (risk flags, conflicts, email failures). Normal workflow actions are logged to
              the console only, keeping the audit sheet signal-rich.
   TECHNICAL: If flagsData === false → Logger only. If flagsData is a string parsing to a LOW/empty risk
              payload → Logger only. Otherwise appends a Risk_Audit row (UUID logId, active user, PH
              timestamp, normalized flags JSON; true coerces to a legacy HIGH payload). All try/catch.
-  PARAMS:    - sessionId — application id.
-             - action — human-readable event label.
-             - flagsData — JSON string of risk details, true (legacy), or false (skip sheet write).
+  PARAMS:    - sessionId: application id.
+             - action: human-readable event label.
+             - flagsData: JSON string of risk details, true (legacy), or false (skip sheet write).
   RETURNS:   undefined.
 */
 function logAuditTrail_(sessionId, action, flagsData) {
@@ -7550,15 +7814,15 @@ function logAuditTrail_(sessionId, action, flagsData) {
         const parsed = JSON.parse(flagsData);
         if (parsed && parsed.riskLevel === 'LOW' &&
             (!parsed.reasons || parsed.reasons.length === 0)) {
-          Logger.log(`[AUDIT] ${sessionId}: ${action} — No anomalous flags`);
+          Logger.log(`[AUDIT] ${sessionId}: ${action}: No anomalous flags`);
           return;
         }
       } catch (_) {
-        // Not valid JSON — proceed and log to sheet as-is
+        // Not valid JSON: proceed and log to sheet as-is
       }
     }
 
-    // ── Paranormal event — write to Risk_Audit sheet ──
+    // ── Paranormal event: write to Risk_Audit sheet ──
     const auditSheet = getDatabaseSheet_(DB_SHEET_NAMES.RISK_AUDIT, true);
     if (!auditSheet) {
       Logger.log(`[AUDIT-WARN] Risk_Audit sheet unavailable for: ${sessionId}: ${action}`);
@@ -7586,14 +7850,14 @@ function logAuditTrail_(sessionId, action, flagsData) {
       timestamp           // Timestamp
     ]);
 
-    Logger.log(`[AUDIT-FLAG] ${sessionId}: ${action} — Written to Risk_Audit`);
+    Logger.log(`[AUDIT-FLAG] ${sessionId}: ${action}: Written to Risk_Audit`);
   } catch (e) {
     Logger.log('Error logging audit trail: ' + e.toString());
   }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 🛠️ ADMIN API — EMAIL FAILOVER
+// 🛠️ ADMIN API: EMAIL FAILOVER
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // These functions are called by the external Admin Panel app via
 // google.script.run. They allow ISM InfoSec admins to view failed
@@ -7605,7 +7869,7 @@ function logAuditTrail_(sessionId, action, flagsData) {
   LAYMAN:    Admin lookup: all email-related audit entries for one application.
   TECHNICAL: Scans Risk_Audit for sessionId rows whose Action starts with 'Email '; parses the flags
              JSON. try/catch → [] on error.
-  PARAMS:    - sessionId — application id.
+  PARAMS:    - sessionId: application id.
   RETURNS:   Array of { logId, action, flags, timestamp } ([] if none/error).
 */
 function adminGetEmailLog_(sessionId) {
@@ -7633,7 +7897,7 @@ function adminGetEmailLog_(sessionId) {
   LAYMAN:    Admin lookup: every email that ultimately failed to send, across all applications.
   TECHNICAL: Scans Risk_Audit for Action === 'Email Failed', flattening the flags payload. (Note:
              sinceDays is coerced to a default of 7 but not used to time-filter here.) try/catch → [].
-  PARAMS:    - sinceDays — numeric window hint (defaulted to 7).
+  PARAMS:    - sinceDays: numeric window hint (defaulted to 7).
   RETURNS:   Array of { sessionId, recipient, type, error, timestamp, attempts }.
 */
 function adminGetFailedEmails_(sinceDays) {
@@ -7665,13 +7929,13 @@ function adminGetFailedEmails_(sinceDays) {
              notifyApprover_ / notifyISMember_ at that step; for 'applicant' it maps the current
              app status to a status code and calls notifyApplicant_. Audits the resend. try/catch.
   PARAMS:    - sessionId, recipient, type ('approver'|'applicant'|'ism').
-  RETURNS:   { success, error, message }.
+  RETURNS:   { ok, error, message }.
 */
 function adminResendEmail_(sessionId, recipient, type) {
   const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
     var appData = getApplicationData_(sessionId);
-    if (!appData) return { ok: false, success: false, error: 'Application not found: ' + sessionId, message: null };
+    if (!appData) return { ok: false, message: 'Application not found: ' + sessionId};
     var normalizedType = String(type || '').toLowerCase().trim();
     if (normalizedType === 'approver') {
       var apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
@@ -7683,7 +7947,7 @@ function adminResendEmail_(sessionId, recipient, type) {
           break;
         }
       }
-      if (foundStep < 0) return { ok: false, success: false, error: 'No pending approval step for: ' + recipient, message: null };
+      if (foundStep < 0) return { ok: false, message: 'No pending approval step for: ' + recipient};
       notifyApprover_(sessionId, foundStep);
     } else if (normalizedType === 'applicant') {
       var currentStatus = String(appData.status || '').toLowerCase();
@@ -7702,13 +7966,13 @@ function adminResendEmail_(sessionId, recipient, type) {
           break;
         }
       }
-      if (foundStep < 0) return { ok: false, success: false, error: 'No pending ISM step for: ' + recipient, message: null };
+      if (foundStep < 0) return { ok: false, message: 'No pending ISM step for: ' + recipient};
       notifyISMember_(sessionId, foundStep);
     } else {
-      return { ok: false, success: false, error: 'Invalid type: ' + type + '. Must be approver, applicant, or ism.', message: null };
+      return { ok: false, message: 'Invalid type: ' + type + '. Must be approver, applicant, or ism.'};
     }
     logAuditTrail_(sessionId, 'Email Resend', JSON.stringify({ recipient: recipient, type: normalizedType, attempts: 1, error: null, source: 'admin' }));
-    return { ok: true, success: true, error: null, message: 'Notification resent to ' + recipient + ' for ' + sessionId };
+    return { ok: true, message: 'Notification resent to ' + recipient + ' for ' + sessionId };
   } catch (e) {
     Logger.log('Error in adminResendEmail_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -7716,15 +7980,15 @@ function adminResendEmail_(sessionId, recipient, type) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ADMIN API — EMAIL QUEUE MANAGEMENT
+// ADMIN API: EMAIL QUEUE MANAGEMENT
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
   Function: adminGetEmailQueue_
   LAYMAN:    Admin view of the email queue, optionally filtered by status or application.
   TECHNICAL: Scans Email_Queue, applies status/session filters, projects each row to a summary object.
-  PARAMS:    - filter — { status:'Pending'|'Failed'|'Sent'|'Cancelled'|'all', sessionId? }.
-  RETURNS:   { success:true, data:[...], total } or { success:false, error }.
+  PARAMS:    - filter: { status:'Pending'|'Failed'|'Sent'|'Cancelled'|'all', sessionId? }.
+  RETURNS:   { ok: true, data:[...], total } or { ok:false, code, message }.
 */
 function adminGetEmailQueue_(filter) {
   try {
@@ -7758,7 +8022,7 @@ function adminGetEmailQueue_(filter) {
       });
     }
 
-    return { ok: true, success: true, data: results, total: results.length };
+    return { ok: true, data: results, total: results.length };
   } catch (e) {
     Logger.log('Error in adminGetEmailQueue_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -7770,12 +8034,12 @@ function adminGetEmailQueue_(filter) {
   LAYMAN:    Admin action: kick one stuck/failed email back into the queue to be sent again.
   TECHNICAL: Finds the Email_Queue row by Queue_ID and resets Status='Pending', Attempts=0, clears
              error so the next processEmailQueue cycle retries it.
-  PARAMS:    - queueId — the EQ-... id.
-  RETURNS:   { success, message } or { success:false, error }.
+  PARAMS:    - queueId: the EQ-... id.
+  RETURNS:   { ok, message } or { ok:false, code, message }.
 */
 function adminRetryQueuedEmail_(queueId) {
   try {
-    if (!queueId) return { ok: false, success: false, error: 'queueId is required' };
+    if (!queueId) return { ok: false, message: 'queueId is required' };
 
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
     const data = readSheetValues_(queueSheet);
@@ -7794,8 +8058,8 @@ function adminRetryQueuedEmail_(queueId) {
     }
 
     return found
-      ? { ok: true, success: true, message: 'Queue item ' + queueId + ' reset to Pending. It will be sent on the next trigger cycle.' }
-      : { ok: false, success: false, error: 'Queue item not found: ' + queueId };
+      ? { ok: true, message: 'Queue item ' + queueId + ' reset to Pending. It will be sent on the next trigger cycle.' }
+      : { ok: false, message: 'Queue item not found: ' + queueId };
   } catch (e) {
     Logger.log('Error in adminRetryQueuedEmail_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -7807,12 +8071,12 @@ function adminRetryQueuedEmail_(queueId) {
   LAYMAN:    Admin action: retry every queued email of a given status for one application at once.
   TECHNICAL: Resets all Email_Queue rows matching (sessionId, targetStatus default 'Failed') to
              Pending/0/'' for the next cycle.
-  PARAMS:    - sessionId — application id; status — status to retry (default 'Failed').
-  RETURNS:   { success, message, retried } or { success:false, error }.
+  PARAMS:    - sessionId: application id; status, status to retry (default 'Failed').
+  RETURNS:   { ok, message, retried } or { ok:false, code, message }.
 */
 function adminRetryAllForSession_(sessionId, status) {
   try {
-    if (!sessionId) return { ok: false, success: false, error: 'sessionId is required' };
+    if (!sessionId) return { ok: false, message: 'sessionId is required' };
     const targetStatus = String(status || 'Failed').trim();
 
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
@@ -7833,7 +8097,7 @@ function adminRetryAllForSession_(sessionId, status) {
     }
 
     return {
-      ok: true, success: true,
+      ok: true,
       message: retriedCount + ' queue items for ' + sessionId + ' reset to Pending.',
       retried: retriedCount
     };
@@ -7848,12 +8112,12 @@ function adminRetryAllForSession_(sessionId, status) {
   LAYMAN:    Admin action: stop pending emails for an application from ever sending (e.g. wrong
              recipient or duplicates) by marking them Cancelled.
   TECHNICAL: Sets Status='Cancelled' on Pending Email_Queue rows matching sessionId (and optional type).
-  PARAMS:    - sessionId — application id; type — optional email type filter.
-  RETURNS:   { success, message, cancelled } or { success:false, error }.
+  PARAMS:    - sessionId: application id; type, optional email type filter.
+  RETURNS:   { ok, message, cancelled } or { ok:false, code, message }.
 */
 function adminCancelQueuedEmails_(sessionId, type) {
   try {
-    if (!sessionId) return { ok: false, success: false, error: 'sessionId is required' };
+    if (!sessionId) return { ok: false, message: 'sessionId is required' };
     const typeFilter = String(type || '').trim();
 
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
@@ -7872,7 +8136,7 @@ function adminCancelQueuedEmails_(sessionId, type) {
       }
     }
 
-    return { ok: true, success: true, message: cancelled + ' pending queue items cancelled for ' + sessionId, cancelled: cancelled };
+    return { ok: true, message: cancelled + ' pending queue items cancelled for ' + sessionId, cancelled: cancelled };
   } catch (e) {
     Logger.log('Error in adminCancelQueuedEmails_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -7885,7 +8149,7 @@ function adminCancelQueuedEmails_(sessionId, type) {
              breakdown by type.
   TECHNICAL: Single pass over Email_Queue tallying status counts and a byType map.
   PARAMS:    (none)
-  RETURNS:   { success:true, data:{ total, pending, sent, failed, cancelled, byType } } or error.
+  RETURNS:   { ok: true, data:{ total, pending, sent, failed, cancelled, byType } } or error.
 */
 function adminGetQueueSummary_() {
   try {
@@ -7907,7 +8171,7 @@ function adminGetQueueSummary_() {
       summary.byType[type]++;
     }
 
-    return { ok: true, success: true, data: summary };
+    return { ok: true, data: summary };
   } catch (e) {
     Logger.log('Error in adminGetQueueSummary_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -7915,7 +8179,7 @@ function adminGetQueueSummary_() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 🔔 ADMIN API — DAILY REMINDER CONFIGURATION
+// 🔔 ADMIN API: DAILY REMINDER CONFIGURATION
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
@@ -7925,7 +8189,7 @@ function adminGetQueueSummary_() {
   TECHNICAL: getReminderConfig_() augmented with triggerActive (sendDailyReminders trigger present?) and
              lastRun (PIA_LAST_REMINDER_RUN property).
   PARAMS:    (none)
-  RETURNS:   { success:true, data:{ enabled, hour, timezone, triggerActive, lastRun? } } or error.
+  RETURNS:   { ok: true, data:{ enabled, hour, timezone, triggerActive, lastRun? } } or error.
 */
 function adminGetReminderConfig_() {
   try {
@@ -7945,7 +8209,7 @@ function adminGetReminderConfig_() {
       var lastRun = PropertiesService.getScriptProperties().getProperty('PIA_LAST_REMINDER_RUN');
       if (lastRun) config.lastRun = lastRun;
     } catch (_) {}
-    return { ok: true, success: true, data: config };
+    return { ok: true, data: config };
   } catch (e) {
     Logger.log('Error in adminGetReminderConfig_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -7958,8 +8222,8 @@ function adminGetReminderConfig_() {
              match (on → install/refresh, off → delete).
   TECHNICAL: Merges partial config over current (clamps hour to 0-23), persists REMINDER_CONFIG_PROP,
              then setupReminderTrigger_() if enabled else deletes the sendDailyReminders trigger.
-  PARAMS:    - config — { enabled?, hour?, timezone? }.
-  RETURNS:   { success:true, data:updated, message } or { success:false, error }.
+  PARAMS:    - config: { enabled?, hour?, timezone? }.
+  RETURNS:   { ok: true, data:updated, message } or { ok:false, code, message }.
 */
 function adminSetReminderConfig_(config) {
   try {
@@ -7986,7 +8250,7 @@ function adminSetReminderConfig_(config) {
     }
 
     Logger.log('🔔 Reminder config updated: ' + JSON.stringify(updated));
-    return { ok: true, success: true, data: updated, message: 'Reminder configuration updated.' };
+    return { ok: true, data: updated, message: 'Reminder configuration updated.' };
   } catch (e) {
     Logger.log('Error in adminSetReminderConfig_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -7994,7 +8258,7 @@ function adminSetReminderConfig_(config) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ADMIN API — Email Failsafe / Notification Config
+// ADMIN API: Email Failsafe / Notification Config
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
@@ -8002,12 +8266,12 @@ function adminSetReminderConfig_(config) {
   LAYMAN:    Admin read of the failure-notification settings (who to alert, whether to tell the requestor).
   TECHNICAL: Thin wrapper around getAdminNotificationConfig_().
   PARAMS:    (none)
-  RETURNS:   { success:true, data:config } or { success:false, error }.
+  RETURNS:   { ok: true, data:config } or { ok:false, code, message }.
 */
 function adminGetNotificationConfig_() {
   try {
     var config = getAdminNotificationConfig_();
-    return { ok: true, success: true, data: config };
+    return { ok: true, data: config };
   } catch (e) {
     Logger.log('Error in adminGetNotificationConfig_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -8020,15 +8284,15 @@ function adminGetNotificationConfig_() {
              notify-requestor).
   TECHNICAL: Ensures a data row exists in Admin_Notification_Config (seeds one if empty), then patches
              the provided fields (YES/NO for the booleans) on row 2; returns the re-read config.
-  PARAMS:    - config — { adminEmail?, notifyOnFailure?, notifyRequestor? }.
-  RETURNS:   { success:true, data:updated, message } or { success:false, error }.
+  PARAMS:    - config: { adminEmail?, notifyOnFailure?, notifyRequestor? }.
+  RETURNS:   { ok: true, data:updated, message } or { ok:false, code, message }.
 */
 function adminSetNotificationConfig_(config) {
   try {
-    if (!config) return { ok: false, success: false, error: 'Missing config object' };
+    if (!config) return { ok: false, message: 'Missing config object' };
 
     var sheet = getDatabaseSheet_(DB_SHEET_NAMES.ADMIN_NOTIFICATION, true);
-    if (!sheet) return { ok: false, success: false, error: 'Admin_Notification_Config sheet not found' };
+    if (!sheet) return { ok: false, message: 'Admin_Notification_Config sheet not found' };
 
     // Ensure at least one data row exists
     if (sheet.getLastRow() < 2) {
@@ -8048,7 +8312,7 @@ function adminSetNotificationConfig_(config) {
 
     var updated = getAdminNotificationConfig_();
     Logger.log('📋 Admin notification config updated: ' + JSON.stringify(updated));
-    return { ok: true, success: true, data: updated, message: 'Notification configuration updated.' };
+    return { ok: true, data: updated, message: 'Notification configuration updated.' };
   } catch (e) {
     Logger.log('Error in adminSetNotificationConfig_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -8056,7 +8320,7 @@ function adminSetNotificationConfig_(config) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ADMIN API — Resend email to a specific workflow stage
+// ADMIN API: Resend email to a specific workflow stage
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
@@ -8067,21 +8331,21 @@ function adminSetNotificationConfig_(config) {
              derives a display name + PIA title, builds an action-bound HMAC link ('ISMReview' for ism,
              else 'Review'), queueEmail_'s a plain-text resend, and resets that row's EmailStatus/Error.
   PARAMS:    - sessionId, stageType ('approver'|'ism'|'divhead'), approverEmail.
-  RETURNS:   { success:true, queueId, message } or { success:false, error }.
+  RETURNS:   { ok:true, queueId, message } or { ok:false, code, message }.
 */
 function adminResendToStage_(sessionId, stageType, approverEmail) {
   try {
     if (!sessionId || !stageType || !approverEmail) {
-      return { ok: false, success: false, error: 'Missing sessionId, stageType, or approverEmail' };
+      return { ok: false, message: 'Missing sessionId, stageType, or approverEmail' };
     }
 
     var wfInfo = getWorkflowInfoForType_(stageType);
     if (!wfInfo) {
-      return { ok: false, success: false, error: 'Invalid stageType. Use: approver, ism, or divhead' };
+      return { ok: false, message: 'Invalid stageType. Use: approver, ism, or divhead' };
     }
 
     var wfSheet = getDatabaseSheet_(wfInfo.name, true);
-    if (!wfSheet) return { ok: false, success: false, error: 'Workflow sheet not found: ' + wfInfo.name };
+    if (!wfSheet) return { ok: false, message: 'Workflow sheet not found: ' + wfInfo.name };
 
     var data = readSheetValues_(wfSheet);
     var normEmail = String(getNormalizedEmail_(approverEmail) || '').toLowerCase();
@@ -8098,7 +8362,7 @@ function adminResendToStage_(sessionId, stageType, approverEmail) {
     }
 
     if (foundRow < 0) {
-      return { ok: false, success: false, error: 'No matching Pending row found for session ' + sessionId + ' / ' + approverEmail + ' / ' + stageType };
+      return { ok: false, message: 'No matching Pending row found for session ' + sessionId + ' / ' + approverEmail + ' / ' + stageType };
     }
 
     // Determine approver name based on stage type
@@ -8143,7 +8407,7 @@ function adminResendToStage_(sessionId, stageType, approverEmail) {
       'Thank you.\nPIA System (Admin Resend)';
 
     var queueId = queueEmail_(sessionId, approverEmail,
-      '[PIA Resend] Action Required — ' + sessionId,
+      '[PIA Resend] Action Required: ' + sessionId,
       emailBody, stageType, null);
 
     // Reset EmailStatus to Pending on the workflow row
@@ -8151,7 +8415,7 @@ function adminResendToStage_(sessionId, stageType, approverEmail) {
     wfSheet.getRange(foundRow, wfInfo.cols.EMAIL_ERROR).setValue('');
 
     Logger.log('🔄 Admin resend to ' + stageType + ' → ' + approverEmail + ' [' + queueId + ']');
-    return { ok: true, success: true, queueId: queueId, message: 'Email re-queued to ' + approverEmail + ' (' + stageType + ')' };
+    return { ok: true, queueId: queueId, message: 'Email re-queued to ' + approverEmail + ' (' + stageType + ')' };
   } catch (e) {
     Logger.log('Error in adminResendToStage_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -8159,23 +8423,23 @@ function adminResendToStage_(sessionId, stageType, approverEmail) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ADMIN API — Get full pipeline view for a session
+// ADMIN API: Get full pipeline view for a session
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /*
   Function: adminGetPipelineView_
   LAYMAN:    Admin "everything about one application" report: the app row plus all approval, ISM, and
-             division-head workflow rows, every email-queue entry, and the audit trail — for the admin
+             division-head workflow rows, every email-queue entry, and the audit trail, for the admin
              panel's drill-down.
   TECHNICAL: Builds a pipeline object by scanning Applications, Approval_Workflow, ISM_Approval_Workflow,
              DivisionHead_Approval_Workflow, Email_Queue, and Risk_Audit for the sessionId, projecting
              each to a compact shape. try/catch → error.
-  PARAMS:    - sessionId — application id.
-  RETURNS:   { success:true, data:{ application, approvalWorkflow[], ismWorkflow[], divHeadWorkflow[],
-             emailQueue[], auditTrail[] } } or { success:false, error }.
+  PARAMS:    - sessionId: application id.
+  RETURNS:   { ok: true, data:{ application, approvalWorkflow[], ismWorkflow[], divHeadWorkflow[],
+             emailQueue[], auditTrail[] } } or { ok:false, code, message }.
 */
 function adminGetPipelineView_(sessionId) {
-  // PERF: this is the heaviest read in the file — one full pull of every sheet (6), plus
+  // PERF: this is the heaviest read in the file, one full pull of every sheet (6), plus
   // getCurrentRound_ which reads the three workflow sheets again (3), so the workflow
   // sheets are fetched twice each. Read-only diagnostic view, nothing here writes, so the
   // whole body runs under one cache and the nine reads collapse to six.
@@ -8187,14 +8451,14 @@ function adminGetPipelineView_(sessionId) {
   LAYMAN:    The actual pipeline-snapshot builder. Split out only so its caller can wrap it
              in one sheet cache; the logic is unchanged.
   TECHNICAL: See adminGetPipelineView_ above for contract. Kept private and never called
-             directly — go through the wrapper so the cache is always applied.
-  PARAMS:    - sessionId — the PIA session to snapshot.
-  RETURNS:   {success:true, pipeline} or {success:false, error}.
+             directly, go through the wrapper so the cache is always applied.
+  PARAMS:    - sessionId: the PIA session to snapshot.
+  RETURNS:   {ok: true, pipeline} or {ok: false, message}.
 */
 function adminGetPipelineViewImpl_(sessionId) {
   const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
-    if (!sessionId) return { ok: false, success: false, error: 'Missing sessionId' };
+    if (!sessionId) return { ok: false, message: 'Missing sessionId' };
 
     var pipeline = {
       sessionId: sessionId,
@@ -8319,7 +8583,7 @@ function adminGetPipelineViewImpl_(sessionId) {
       }
     }
 
-    return { ok: true, success: true, data: pipeline };
+    return { ok: true, data: pipeline };
   } catch (e) {
     Logger.log('Error in adminGetPipelineView_: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -8332,10 +8596,10 @@ function adminGetPipelineViewImpl_(sessionId) {
   TECHNICAL: No-op if reminders disabled. Deletes existing sendDailyReminders triggers, then creates a
              daily time-based trigger atHour(config.hour) in config.timezone. Requires script.scriptapp.
   PARAMS:    (none)
-  RETURNS:   { success:true, message }.
+  RETURNS:   { ok:true, message }.
 */
 /*
-  Function: setupReminderTrigger  (PUBLIC EDITOR ENTRY POINT — thin guarded wrapper)
+  Function: setupReminderTrigger  (PUBLIC EDITOR ENTRY POINT, thin guarded wrapper)
 
   LAYMAN (Tropang Ex):
   Pinto lang ito para sa'yo kapag pinapatakbo mo mismo sa editor. Ang totoong trabaho nasa
@@ -8349,18 +8613,18 @@ function adminGetPipelineViewImpl_(sessionId) {
   not affect them.
 
   PARAMS:    (none)
-  RETURNS:   setupReminderTrigger_()'s result, or { success:false, error } when not authorized.
+  RETURNS:   setupReminderTrigger_()'s result, or { ok:false, code, message } when not authorized.
 */
 function setupReminderTrigger() {
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   return setupReminderTrigger_();
 }
 
 function setupReminderTrigger_() {
   var config = getReminderConfig_();
   if (!config.enabled) {
-    Logger.log('🔔 Reminder trigger NOT created — reminders are disabled.');
-    return { ok: true, success: true, message: 'Reminders are disabled. No trigger created.' };
+    Logger.log('🔔 Reminder trigger NOT created: reminders are disabled.');
+    return { ok: true, message: 'Reminders are disabled. No trigger created.' };
   }
 
   // Remove any existing reminder trigger to prevent duplicates
@@ -8379,11 +8643,11 @@ function setupReminderTrigger_() {
     .inTimezone(config.timezone || Session.getScriptTimeZone())
     .create();
 
-  Logger.log('🔔 Reminder trigger created — sendDailyReminders_() will run daily at ' +
+  Logger.log('🔔 Reminder trigger created: sendDailyReminders_() will run daily at ' +
     String(config.hour).padStart(2, '0') + ':00 (' + (config.timezone || 'script default') + ')');
 
   return {
-    ok: true, success: true,
+    ok: true,
     message: 'Reminder trigger created. sendDailyReminders_() will run daily at ' +
       String(config.hour).padStart(2, '0') + ':00.'
   };
@@ -8395,13 +8659,13 @@ function setupReminderTrigger_() {
 
 /*
   Function: validateApplicationData_
-  LAYMAN:    Server-side check that a PIA submission is complete and sane before it is saved — all five
+  LAYMAN:    Server-side check that a PIA submission is complete and sane before it is saved, all five
              sections present, required PIA 1 fields filled, valid emails, a future program date, the
              survey fully answered, and at least one approver available.
   TECHNICAL: Accumulates an errors[] across pia1..pia5 (required-object checks, pia4 flow fields, pia1
              department/program/date/drafter/email validity via isValidEmail_, pia5 every question is
              YES/NO/N/A, and an approver-exists check incl. the PRIVACY_OFFICER_EMAIL fallback).
-  PARAMS:    - appData — the submission object.
+  PARAMS:    - appData: the submission object.
   RETURNS:   { isValid: boolean, errors: string[] }.
 */
 function validateApplicationData_(appData) {
@@ -8509,11 +8773,11 @@ function validateApplicationData_(appData) {
 
 /*
   Function: validateComment_
-  LAYMAN:    Makes sure a decision comment is a real, meaningful justification — not blank, spammy, or
+  LAYMAN:    Makes sure a decision comment is a real, meaningful justification, not blank, spammy, or
              gibberish.
   TECHNICAL: Strips tags, then enforces min length (param), COMMENT_MAX_CHARS, no 6+ repeated chars,
              presence of word-like sequences, and >= 3 words.
-  PARAMS:    - comment — the raw comment; minLength — minimum chars (default 50).
+  PARAMS:    - comment: the raw comment; minLength, minimum chars (default 50).
   RETURNS:   { valid:true } or { valid:false, error }.
 */
 function validateComment_(comment, minLength = 50) {
@@ -8554,11 +8818,11 @@ function validateComment_(comment, minLength = 50) {
   Function: sanitizeInput_
   LAYMAN:    Recursively cleans incoming text/objects to strip dangerous HTML and control characters
              while keeping a small set of safe formatting tags for rich-text comments.
-  TECHNICAL: Recurses arrays/objects (depth-capped at 20, returns new objects — no input mutation). For
+  TECHNICAL: Recurses arrays/objects (depth-capped at 20, returns new objects, no input mutation). For
              strings: removes javascript:/data:/vbscript:/file: protocols, on* handlers, control chars,
              RTL override / zero-width / BOM, and strips all tags except <strong/b/em/i/u/ul/ol/li/br/p>;
              trims and clamps to maxLength.
-  PARAMS:    - data — value to clean; maxLength — per-string cap (10000); depth — internal recursion guard.
+  PARAMS:    - data: value to clean; maxLength, per-string cap (10000); depth, internal recursion guard.
   RETURNS:   Sanitized value of the same shape (string for scalars).
 */
 function sanitizeInput_(data, maxLength = 10000, depth = 0) {
@@ -8608,7 +8872,7 @@ function sanitizeInput_(data, maxLength = 10000, depth = 0) {
   Function: isAuthorizedForApplication_
   LAYMAN (Tropang Ex):
   Tanong nito: "pwede ba 'tong taong nakatingin makakita ng application na 'to?" Oo kung siya ang
-  nag-submit (applicant) O kasama siya sa approval chain — Immediate/Dept Head, ISM reviewer, o Division
+  nag-submit (applicant) O kasama siya sa approval chain: Immediate/Dept Head, ISM reviewer, o Division
   Head. Kung hindi, bawal.
 
   TECHNICAL:
@@ -8618,8 +8882,8 @@ function sanitizeInput_(data, maxLength = 10000, depth = 0) {
   a direct google.script.run call cannot read another application by sessionId.
 
   PARAMS:
-  - sessionId — application id (used to scan the ISM/DivHead workflow sheets).
-  - appData   — the object from getApplicationData_(sessionId) (provides applicant + Stage-A approvers).
+  - sessionId: application id (used to scan the ISM/DivHead workflow sheets).
+  - appData: the object from getApplicationData_(sessionId) (provides applicant + Stage-A approvers).
 
   RETURNS:
   Boolean. False on empty active user / missing appData / no match.
@@ -8638,7 +8902,7 @@ function isAuthorizedForApplication_(sessionId, appData) {
   //
   // Everything else stays visible, deliberately:
   //   - a row I already decided (any status other than Pending), on this request or any
-  //     other — that is settled history, not a live handoff;
+  //     other, that is settled history, not a live handoff;
   //   - an earlier round of THIS request that I decided before it was returned;
   //   - the whole request, if any of my rows on it survive the filter.
   // Blanket-hiding instead would mean a two-week leave silently blanks out months of the
@@ -8655,11 +8919,11 @@ function isAuthorizedForApplication_(sessionId, appData) {
     return !!myDelegate && String(status || '').trim() === 'Pending';
   };
 
-  // Stage-A heads (Immediate / Department) — already enumerated on appData.approvers
+  // Stage-A heads (Immediate / Department), already enumerated on appData.approvers
   if ((appData.approvers || []).some(function (a) {
         return getNormalizedEmail_(a.email) === me && !handedOff(a.status);
       })) return true;
-  // ISM members + Division Heads — scan their workflow sheets for this session
+  // ISM members + Division Heads, scan their workflow sheets for this session
   //
   // 🚩 APPEND-ONLY NOTE: these scans are deliberately NOT scoped to the current round. Authorization
   // asks "was this person ever party to this request?", not "are they the one due to act now."
@@ -8676,7 +8940,7 @@ function isAuthorizedForApplication_(sessionId, appData) {
       for (let i = 1; i < vals.length; i++) {
         if (String(vals[i][sessionCol - 1] || '').trim().toUpperCase() === searchId &&
             getNormalizedEmail_(vals[i][emailCol - 1]) === me) {
-          // `continue`, not `return false` — a handed-off Pending row must not end the scan.
+          // `continue`, not `return false`, a handed-off Pending row must not end the scan.
           // An earlier round of this same request may still be mine to see, and it is further
           // down the sheet.
           if (handedOff(vals[i][statusCol - 1])) continue;
@@ -8691,7 +8955,7 @@ function isAuthorizedForApplication_(sessionId, appData) {
   if (scanSheet(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL, DIV_HEAD_CONFIG_COLS.STATUS)) return true;
 
   // 🚩 DELEGATION (2026-08-11). A delegate has to be able to READ the request they are being
-  // asked to decide — the review screen calls this before it will render anything. Rather than
+  // asked to decide, the review screen calls this before it will render anything. Rather than
   // scan the sheets a second time under the delegate's identity, ask the cheaper question: is
   // there anyone who has delegated TO me, and would THEY have been authorized? One hop only,
   // matching resolveDelegate_.
@@ -8705,9 +8969,9 @@ function isAuthorizedForApplication_(sessionId, appData) {
       if (scanSheetFor_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, DIV_HEAD_CONFIG_COLS.SESSION_ID, DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL, searchId, orig)) return true;
     }
   } catch (e) {
-    // Fail CLOSED here — unlike resolveDelegate_, which fails open to "no delegate". This is an
+    // Fail CLOSED here: unlike resolveDelegate_, which fails open to "no delegate". This is an
     // authorization decision, so a broken delegation table must deny, never grant.
-    Logger.log('isAuthorizedForApplication_: delegation check failed, denying — ' + e);
+    Logger.log('isAuthorizedForApplication_: delegation check failed, denying: ' + e);
   }
   return false;
 }
@@ -8719,9 +8983,9 @@ function isAuthorizedForApplication_(sessionId, appData) {
   TECHNICAL: The parameterised form of isAuthorizedForApplication_'s inner scanSheet closure,
              extracted so the delegation branch can ask the same question about a DIFFERENT
              address than Session.getActiveUser(). Returns false on a missing sheet.
-  PARAMS:    - sheetName, sessionCol, emailCol — where to look.
-             - searchId — the UPPERCASED, trimmed session id.
-             - normalizedEmail — the address to match, already through getNormalizedEmail_.
+  PARAMS:    - sheetName, sessionCol, emailCol, where to look.
+             - searchId: the UPPERCASED, trimmed session id.
+             - normalizedEmail: the address to match, already through getNormalizedEmail_.
   RETURNS:   boolean.
 */
 function scanSheetFor_(sheetName, sessionCol, emailCol, searchId, normalizedEmail) {
@@ -8742,10 +9006,10 @@ function scanSheetFor_(sheetName, sessionCol, emailCol, searchId, normalizedEmai
 /*
   Function: delegatorsFor_
   LAYMAN:    "Sino ang mga taong ako ang kapalit ngayon?" Kabaliktaran ito ng resolveDelegate_.
-  TECHNICAL: Reverse lookup over the Delegations sheet — every currently-active From_Email whose
+  TECHNICAL: Reverse lookup over the Delegations sheet, every currently-active From_Email whose
              To_Email is this person. Used only by the authorization path; the notify path uses
              the forward direction. Returns [] on any error, which denies rather than grants.
-  PARAMS:    - normalizedEmail — the delegate's address, already normalized.
+  PARAMS:    - normalizedEmail: the delegate's address, already normalized.
   RETURNS:   Array of normalized From_Email addresses (possibly empty).
 */
 function delegatorsFor_(normalizedEmail) {
@@ -8781,23 +9045,23 @@ function delegatorsFor_(normalizedEmail) {
              who submitted it, purposes and retention.
   TECHNICAL: Loads getApplicationData_ and projects a flat summary (program/dept from pia1, PII via
              getPIIFieldsList_, purposes/retention from pia4). try/catch → error.
-  PARAMS:    - sessionId — application id.
-  RETURNS:   { success:true, data:{...} } or { success:false, error }.
+  PARAMS:    - sessionId: application id.
+  RETURNS:   { ok: true, data:{...} } or { ok:false, code, message }.
 */
 function apiPhase3_FetchPIAData(sessionId) {
   try {
     const appData = getApplicationData_(sessionId);
     if (!appData) {
-      return { ok: false, success: false, error: 'Application not found' };
+      return { ok: false, message: 'Application not found' };
     }
 
-    // SECURITY (F-05): authorize — only the applicant or someone on the approval chain may view this.
+    // SECURITY (F-05): authorize, only the applicant or someone on the approval chain may view this.
     if (!isAuthorizedForApplication_(sessionId, appData)) {
-      return { ok: false, success: false, error: 'Access denied: you are not authorized to view this application.' };
+      return { ok: false, message: 'Access denied: you are not authorized to view this application.' };
     }
 
     return {
-      ok: true, success: true,
+      ok: true,
       data: {
         sessionId: sessionId,
         program: appData.pia1?.program || 'Unknown Program',
@@ -8821,19 +9085,19 @@ function apiPhase3_FetchPIAData(sessionId) {
              agency metadata) for the application under review.
   TECHNICAL: Resolves linkedReqId, finds the Data_Collection row, parses METADATA_JSON (+ agency JSON),
              and projects a flat object with normalized field fallbacks. try/catch → error.
-  PARAMS:    - sessionId — application id.
-  RETURNS:   { success:true, data:{...DCS fields} } or { success:false, error }.
+  PARAMS:    - sessionId: application id.
+  RETURNS:   { ok: true, data:{...DCS fields} } or { ok:false, code, message }.
 */
 function apiPhase3_FetchDCSData(sessionId) {
   try {
     const appData = getApplicationData_(sessionId);
     if (!appData || !appData.linkedReqId) {
-      return { ok: false, success: false, error: 'No DCS request linked to this application' };
+      return { ok: false, message: 'No DCS request linked to this application' };
     }
 
-    // SECURITY (F-05): authorize — only the applicant or someone on the approval chain may view this.
+    // SECURITY (F-05): authorize, only the applicant or someone on the approval chain may view this.
     if (!isAuthorizedForApplication_(sessionId, appData)) {
-      return { ok: false, success: false, error: 'Access denied: you are not authorized to view this application.' };
+      return { ok: false, message: 'Access denied: you are not authorized to view this application.' };
     }
 
     const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
@@ -8844,7 +9108,7 @@ function apiPhase3_FetchDCSData(sessionId) {
         const metadata = JSON.parse(dcsData[i][DCS_COLS.METADATA_JSON - 1] || '{}');
         
         return {
-          ok: true, success: true,
+          ok: true,
           data: {
             requestId: appData.linkedReqId,
             status: dcsData[i][DCS_COLS.STATUS - 1],
@@ -8871,7 +9135,7 @@ function apiPhase3_FetchDCSData(sessionId) {
       }
     }
 
-    return { ok: false, success: false, error: 'DCS request data not found' };
+    return { ok: false, message: 'DCS request data not found' };
   } catch (e) {
     Logger.log('Error in apiPhase3_FetchDCSData: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -8883,8 +9147,8 @@ function apiPhase3_FetchDCSData(sessionId) {
   LAYMAN:    Looks up a Division Head by email to confirm they are recognized/active for escalations.
   TECHNICAL: Scans DivisionHead_Approval_Workflow for a matching email; returns its active flag, or a
              permissive default ({ isActive:true }) if not found. try/catch → error.
-  PARAMS:    - divisionHeadEmail — email to look up.
-  RETURNS:   { success:true, config:{ divHeadEmail, isActive } } or { success:false, error }.
+  PARAMS:    - divisionHeadEmail: email to look up.
+  RETURNS:   { ok:true, config:{ divHeadEmail, isActive } } or { ok:false, code, message }.
 */
 function apiPhase3_GetDivisionHeadConfig_(divisionHeadEmail) {
   try {
@@ -8895,7 +9159,7 @@ function apiPhase3_GetDivisionHeadConfig_(divisionHeadEmail) {
       if (String(data[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1] || '').toLowerCase() === 
           String(divisionHeadEmail || '').toLowerCase()) {
         return {
-          ok: true, success: true,
+          ok: true,
           config: {
             divHeadEmail: data[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1],
             isActive: data[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Active'
@@ -8906,7 +9170,7 @@ function apiPhase3_GetDivisionHeadConfig_(divisionHeadEmail) {
 
     // Return default config if not found
     return {
-      ok: true, success: true,
+      ok: true,
       config: {
         divHeadEmail: divisionHeadEmail,
         isActive: true
@@ -8926,8 +9190,8 @@ function apiPhase3_GetDivisionHeadConfig_(divisionHeadEmail) {
              re-reads. Collects active InfoSec members + dcops/techserve destination emails, then pads
              activeMembers to exactly 2 using fallbacks so the ISM chain always has two steps.
   PARAMS:    (none)
-  RETURNS:   { success:true, data:{ members:[{id,name,email,role}], destinationEmails:{dcops,techserve,both} } }
-             or { success:false, error }.
+  RETURNS:   { ok: true, data:{ members:[{id,name,email,role}], destinationEmails:{dcops,techserve,both} } }
+             or { ok:false, code, message }.
 */
 function apiPhase3_GetInfoSecMembers_() {
   try {
@@ -8968,7 +9232,7 @@ function apiPhase3_GetInfoSecMembers_() {
     const members = [];
     let dcopsEmail = '';
     let techserveEmail = '';
-    const techserveBySite = {};    // { 'AGT': ['a@x'], 'EASTGATE': ['b@x'], ... } — per-site TechServe (Batch 3)
+    const techserveBySite = {};    // { 'AGT': ['a@x'], 'EASTGATE': ['b@x'], ... }, per-site TechServe (Batch 3)
     const techserveFallback = [];  // TechServe rows with a blank Site (the catch-all default)
     const allTechserveEmails = []; // every active TechServe email, for a last-resort fallback
 
@@ -9036,7 +9300,7 @@ function apiPhase3_GetInfoSecMembers_() {
     });
 
     return {
-      ok: true, success: true,
+      ok: true,
       data: {
         members: activeMembers,
         destinationEmails: {
@@ -9064,8 +9328,8 @@ function apiPhase3_GetInfoSecMembers_() {
   TECHNICAL: Normalizes the request site (trim+uppercase) and looks it up in destEmails.techserveBySite.
   Falls back to techserveFallback (blank-Site rows); if none, returns [] so routing sends to DCOPS.
   PARAMS:
-  - destEmails — the destinationEmails object from apiPhase3_GetInfoSecMembers_.
-  - siteRaw — the request's Office/Site value (dcsData.locations).
+  - destEmails: the destinationEmails object from apiPhase3_GetInfoSecMembers_.
+  - siteRaw: the request's Office/Site value (dcsData.locations).
   RETURNS: Array of TechServe email strings (possibly empty if nothing configured).
 */
 function resolveTechserveForSite_(destEmails, siteRaw) {
@@ -9091,7 +9355,7 @@ function resolveTechserveForSite_(destEmails, siteRaw) {
              'YES'), including any custom "Others".
   TECHNICAL: Normalizes the pia2 shape, maps 'YES' indices to pii2Fields labels, appends customOthers
              whose value is 'YES'.
-  PARAMS:    - appData — application object with a pia2 section.
+  PARAMS:    - appData: application object with a pia2 section.
   RETURNS:   Array of field-name strings (possibly empty).
 */
 function getPIIFieldsList_(appData) {
@@ -9121,16 +9385,16 @@ function getPIIFieldsList_(appData) {
   TECHNICAL: Gets the ISM roster via apiPhase3_GetInfoSecMembers_ and appends a sequential
              ISM_Approval_Workflow row ('<sessionId>-ISM-<n>') for each, then flushes. Fails if no
              members are configured.
-  PARAMS:    - sessionId — application id.
-  RETURNS:   { success:true, message, members } or { success:false, error }.
+  PARAMS:    - sessionId: application id.
+  RETURNS:   { ok:true, message, members } or { ok:false, code, message }.
 */
 function apiPhase3_InitializeISMWorkflow_(sessionId) {
   try {
     const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
     const ismInfo = apiPhase3_GetInfoSecMembers_();
 
-    if (!ismInfo.success || !ismInfo.data.members.length) {
-      return { ok: false, success: false, error: 'No InfoSec members configured' };
+    if (!ismInfo.ok || !ismInfo.data.members.length) {
+      return { ok: false, message: 'No InfoSec members configured' };
     }
 
     // Append-only workflow: stamp the round so a later resubmission's ISM rows never collide
@@ -9167,7 +9431,7 @@ function apiPhase3_InitializeISMWorkflow_(sessionId) {
     SpreadsheetApp.flush();
 
     return {
-      ok: true, success: true,
+      ok: true,
       message: `ISM workflow initialized with ${ismInfo.data.members.length} members`,
       members: ismInfo.data.members
     };
@@ -9185,8 +9449,8 @@ function apiPhase3_InitializeISMWorkflow_(sessionId) {
   TECHNICAL: Validates the app exists and is in a retryable status, refuses if ISM rows already exist
              (anti-duplicate), then apiPhase3_InitializeISMWorkflow_, flips status to 'Approved', and
              notifies the first ISM member.
-  PARAMS:    - sessionId — application id.
-  RETURNS:   { success:true, message, members } or { success:false, error }.
+  PARAMS:    - sessionId: application id.
+  RETURNS:   { ok:true, message, members } or { ok:false, code, message }.
 */
 function apiPhase3_RetryISMWorkflow_(sessionId) {
   const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
@@ -9194,12 +9458,12 @@ function apiPhase3_RetryISMWorkflow_(sessionId) {
     // Validate that the application exists and is in the expected state
     const appData = getApplicationData_(sessionId);
     if (!appData) {
-      return { ok: false, success: false, error: 'Application not found: ' + sessionId };
+      return { ok: false, message: 'Application not found: ' + sessionId };
     }
     
     const currentStatus = String(appData.status || '');
     if (currentStatus !== 'Approved (ISM Pending)' && currentStatus !== 'Approved') {
-      return { ok: false, success: false, error: 'Application is not in a retryable state. Current status: ' + currentStatus };
+      return { ok: false, message: 'Application is not in a retryable state. Current status: ' + currentStatus };
     }
     
     // Check if ISM workflow records already exist for this session
@@ -9207,13 +9471,13 @@ function apiPhase3_RetryISMWorkflow_(sessionId) {
     const existingData = readSheetValues_(ismWorkflowSheet);
     for (let i = 1; i < existingData.length; i++) {
       if (rowMatches_(existingData[i], ISM_WORKFLOW_COLS, sessionId, __round)) {
-        return { ok: false, success: false, error: 'ISM workflow already exists for this session. Cannot re-initialize.' };
+        return { ok: false, message: 'ISM workflow already exists for this session. Cannot re-initialize.' };
       }
     }
     
     // Attempt initialization
     const result = apiPhase3_InitializeISMWorkflow_(sessionId);
-    if (!result.success) {
+    if (!result.ok) {
       return result; // Propagate the specific error
     }
     
@@ -9229,7 +9493,7 @@ function apiPhase3_RetryISMWorkflow_(sessionId) {
     notifyISMember_(sessionId, 1);
     
     return {
-      ok: true, success: true,
+      ok: true,
       message: 'ISM workflow initialized successfully for ' + sessionId,
       members: result.members
     };
@@ -9252,18 +9516,18 @@ function apiPhase3_RetryISMWorkflow_(sessionId) {
              Division Head a review link. Lock released in finally.
   PARAMS:    - sessionId, ismMemberEmail, decision('Approve'|'Deny'|'Return'|'EscalateToDivisionHead'),
                comments, routingDestination(''|'DCOPS'|'TECHSERVE'|'BOTH'), stepParam?, approverFlags.
-  RETURNS:   { success:true, message, nextAction } or { success:false, error }.
+  RETURNS:   { ok:true, message, nextAction } or { ok:false, code, message }.
 */
 function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comments, routingDestination = '', stepParam = null, approverFlags = '{}') {
   const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
-  // SECURITY (F-02): authorize the actual caller server-side — a direct google.script.run call must not
+  // SECURITY (F-02): authorize the actual caller server-side, a direct google.script.run call must not
   // be able to submit a decision as someone else. The legit email-link/inline-panel path already verified
   // activeUser == targetEmail in handleEmailAction_ before reaching here, so this always passes there.
-  // Widened for delegation (2026-08-11) — see the note on processApprovalDecision_.
+  // Widened for delegation (2026-08-11), see the note on processApprovalDecision_.
   const _me = getNormalizedEmail_(Session.getActiveUser().getEmail());
   const _act = canActAs_(_me, ismMemberEmail);
   if (!_act.allowed) {
-    return { ok: false, success: false, error: 'Access denied: you may only submit your own decision.' };
+    return { ok: false, message: 'Access denied: you may only submit your own decision.' };
   }
   const _actedBy = _act.onBehalfOf ? _me : '';
   try {
@@ -9271,7 +9535,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     const webAppUrl = getWebAppUrl_() || ScriptApp.getService().getUrl();
     const allowedDecisions = ['Approve', 'Deny', 'Return', 'EscalateToDivisionHead'];
     if (!allowedDecisions.includes(decision)) {
-      return { ok: false, success: false, error: 'Invalid decision value' };
+      return { ok: false, message: 'Invalid decision value' };
     }
 
     // CRITICAL FIX: Validate routingDestination against whitelist to prevent injection
@@ -9279,7 +9543,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     const normalizedDestination = String(routingDestination || '').toUpperCase();
     if (!allowedDestinations.includes(normalizedDestination)) {
       Logger.log('SECURITY ALERT: Invalid routing destination attempted: ' + routingDestination);
-      return { ok: false, success: false, error: 'Invalid routing destination' };
+      return { ok: false, message: 'Invalid routing destination' };
     }
 
     // CRITICAL FIX: Acquire lock to prevent race condition on concurrent ISM decisions
@@ -9292,7 +9556,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
         lockAcquired = true;
       } catch (lockErr) {
         Logger.log('ERROR: Could not acquire lock after 30s - concurrent modification risk');
-        return { ok: false, success: false, error: 'System busy, please try again' };
+        return { ok: false, message: 'System busy, please try again' };
       }
 
       const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
@@ -9325,7 +9589,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     }
 
     if (currentRow === -1) {
-      return { ok: false, success: false, error: 'ISM approval record not found' };
+      return { ok: false, message: 'ISM approval record not found' };
     }
 
     // Update ISM member decision
@@ -9337,7 +9601,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     writeActedBy_(ismWorkflowSheet, currentRow, ISM_WORKFLOW_COLS, _actedBy);
     ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.ROUTING_DESTINATION).setValue(normalizedDestination);
 
-    /* Approve branch — unanimous requirement: finalize + route only when every ISM row is Approved,
+    /* Approve branch: unanimous requirement: finalize + route only when every ISM row is Approved,
        otherwise notify the next ISM member in sequence. */
     if (decision === 'Approve') {
       ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.STATUS).setValue('Approved');
@@ -9380,8 +9644,8 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
               }
             }
             notifyApplicant_(sessionId, 'approved_ism_final', {
-              certBlob: (certResult && certResult.success) ? certResult.pdfBlob : null,
-              techserveEmails: (certResult && certResult.success) ? certResult.techserveEmails : ''
+              certBlob: (certResult && certResult.ok) ? certResult.pdfBlob : null,
+              techserveEmails: (certResult && certResult.ok) ? certResult.techserveEmails : ''
             });
             break;
           }
@@ -9442,7 +9706,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       
       // Notify applicant
       notifyApplicant_(sessionId, 'returned');
-    /* Escalate branch — hand off to the Division Head: flag the ISM row, create ONE pending DivHead
+    /* Escalate branch: hand off to the Division Head: flag the ISM row, create ONE pending DivHead
        row (dedup across multiple escalating members), and email the Division Head a review link. */
     } else if (decision === 'EscalateToDivisionHead') {
       ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.STATUS).setValue('EscalatedToDivisionHead');
@@ -9488,7 +9752,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
             existingDivData[di][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Pending') {
           hasPendingEscalation = true;
           divHeadRowNum = di + 1;
-          Logger.log(`[AUDIT] ${sessionId}: Pending DivHead escalation already exists for round ${escalationRound} — skipping duplicate creation`);
+          Logger.log(`[AUDIT] ${sessionId}: Pending DivHead escalation already exists for round ${escalationRound}, skipping duplicate creation`);
           break;
         }
       }
@@ -9510,7 +9774,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
         try {
           const ts = new Date().getTime().toString();
           // CRITICAL FIX: Normalize email before token generation to prevent authorization mismatch
-          // DELEGATION: see notifyApprover_ — recipient and token subject must match.
+          // DELEGATION: see notifyApprover_, recipient and token subject must match.
           const _routed = recipientFor_(divHeadEmail);
           const normalizedDivHeadEmail = getNormalizedEmail_(_routed.email);
           const token = generateAuthToken_(sessionId, normalizedDivHeadEmail, ts, 'Review');
@@ -9519,7 +9783,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
           
           const subject = `Action Required: Division Head Review for ${sessionId}`;
           const htmlBody = buildPiaEmailHtml_({
-            heading: 'Action Required — Division Head Review',
+            heading: 'Action Required: Division Head Review',
             contentHtml: `
               ${delegationNoticeHtml_(_routed.onBehalfOf, _routed.reason)}
               <p style="margin:0 0 14px;font-size:14px;">A Privacy Impact Assessment requires your review as Division Head following an InfoSec escalation.</p>
@@ -9552,7 +9816,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     }
 
       return {
-        ok: true, success: true,
+        ok: true,
         message: `ISM decision recorded: ${decision}`,
         nextAction: decision === 'Approve' && currentStep < 2 ? 'NOTIFY_NEXT_MEMBER' : 'PROCESS_COMPLETE'
       };
@@ -9575,7 +9839,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
   TECHNICAL: Flushes pending writes (so freshly-appended rows are visible), finds the Pending ISM row
              at stepNumber, builds an action-bound HMAC 'ISMReview' URL, renders via buildPiaEmailHtml_,
              and queueEmail_(type:'ism'). Missing member / errors are audited, never thrown.
-  PARAMS:    - sessionId — application id; stepNumber — 1-based ISM step.
+  PARAMS:    - sessionId: application id; stepNumber, 1-based ISM step.
   RETURNS:   undefined. No-op (audited) if no Pending member at that step.
 */
 function notifyISMember_(sessionId, stepNumber) {
@@ -9618,7 +9882,7 @@ function notifyISMember_(sessionId, stepNumber) {
 
     const ts = new Date().getTime().toString();
     // CRITICAL FIX: Normalize email before token generation to prevent authorization mismatch
-    // DELEGATION: see notifyApprover_ — recipient and token subject must be the same address.
+    // DELEGATION: see notifyApprover_, recipient and token subject must be the same address.
     const _routed = recipientFor_(ismMember.email);
     const normalizedIsmEmail = getNormalizedEmail_(_routed.email);
     const token = generateAuthToken_(sessionId, normalizedIsmEmail, ts, 'ISMReview');
@@ -9632,7 +9896,7 @@ function notifyISMember_(sessionId, stepNumber) {
       contentHtml: `
         ${delegationNoticeHtml_(_routed.onBehalfOf, _routed.reason)}
         <p style="margin:0 0 14px;font-size:14px;">An access request requires your InfoSec review.</p>
-        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">ISM InfoSec Approval — step ${stepNumber} of 2</div>
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">ISM InfoSec Approval, step ${stepNumber} of 2</div>
         <div style="background:#f4f7fb;color:#1a3a5c;border:1px solid #e5e7eb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">
           <strong>App ID:</strong> ${sessionId}<br>
           <strong>Program:</strong> ${appData?.pia1?.program || '—'}<br>
@@ -9669,13 +9933,13 @@ function notifyISMember_(sessionId, stepNumber) {
   Function: routeApprovedRequest_
   LAYMAN:    The finish line. Once an application is fully approved, this builds the Certificate of
              Approval (with the full approver roster), turns it into a PDF, and emails it to the chosen
-             implementation team(s) — DCOPS, TechServe, or both — then tells the applicant it is routed.
+             implementation team(s): DCOPS, TechServe, or both, then tells the applicant it is routed.
   TECHNICAL: Validates destination against the whitelist, resolves DCOPS/TechServe emails via
              apiPhase3_GetInfoSecMembers_, gathers approver/divhead/ISM rows + DCS context, renders a
              certificate HTML, generates a PDF blob (Utilities.newBlob → getAs PDF), and sends via
              sendEmailWithRetry_ with the PDF attached. Finally notifyApplicant_('routed_implementation').
-  PARAMS:    - sessionId — application id; destination — 'DCOPS' | 'TECHSERVE' | 'BOTH'.
-  RETURNS:   { success:true, message, sentTo } or { success:false, error }.
+  PARAMS:    - sessionId: application id; destination, 'DCOPS' | 'TECHSERVE' | 'BOTH'.
+  RETURNS:   { ok:true, message, sentTo } or { ok:false, code, message }.
 */
 function routeApprovedRequest_(sessionId, destination) {
   const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
@@ -9685,7 +9949,7 @@ function routeApprovedRequest_(sessionId, destination) {
     const validDestinations = ['DCOPS', 'TECHSERVE', 'BOTH'];
     
     if (!validDestinations.includes(normalizedDest)) {
-      return { ok: false, success: false, error: 'Invalid destination routing: ' + destination };
+      return { ok: false, message: 'Invalid destination routing: ' + destination };
     }
 
     // Human-friendly routing label for the certificate (BOTH → "DCOPS and TechServe").
@@ -9693,13 +9957,13 @@ function routeApprovedRequest_(sessionId, destination) {
       : (normalizedDest === 'TECHSERVE' ? 'TechServe' : 'DCOPS');
 
     const ismInfo = apiPhase3_GetInfoSecMembers_();
-    if (!ismInfo.success) {
-      return { ok: false, success: false, error: 'Could not retrieve destination email configuration' };
+    if (!ismInfo.ok) {
+      return { ok: false, message: 'Could not retrieve destination email configuration' };
     }
 
     const appData = getApplicationData_(sessionId);
     if (!appData) {
-      return { ok: false, success: false, error: 'Application not found' };
+      return { ok: false, message: 'Application not found' };
     }
 
     // SECURITY (F-02): a certificate may only be built for a fully-approved request. Both legitimate
@@ -9710,12 +9974,12 @@ function routeApprovedRequest_(sessionId, destination) {
     if (String(appData.status || '').trim() !== 'Approved by ISM') {
       Logger.log('SECURITY ALERT: routeApprovedRequest_ called for ' + sessionId +
                  ' with status "' + appData.status + '" (expected "Approved by ISM")');
-      return { ok: false, success: false, error: 'This request is not fully approved.' };
+      return { ok: false, message: 'This request is not fully approved.' };
     }
 
     // Fetch DCS Data for extended fields
     const dcsResult = apiPhase3_FetchDCSData(sessionId);
-    const dcsData = dcsResult.success ? dcsResult.data : {};
+    const dcsData = dcsResult.ok ? dcsResult.data : {};
 
     // Resolve the site-specific TechServe email(s) for this request (Batch 3). Always computed so the
     // applicant/cert "contact TechServe" message shows the right site's team even for DCOPS-only routing.
@@ -9735,7 +9999,7 @@ function routeApprovedRequest_(sessionId, destination) {
       if (siteTechserve.length) {
         siteTechserve.forEach(function(t) { destinationEmails.push(t.email); });
       } else {
-        // L2: this site has no TechServe configured — route to DCOPS instead of every team's inbox.
+        // L2: this site has no TechServe configured, route to DCOPS instead of every team's inbox.
         Logger.log('WARN: No TechServe email for site "' + dcsData.locations + '" on ' + sessionId + '; routing to DCOPS instead.');
         const dcopsEmail = ismInfo.data.destinationEmails.dcops;
         if (dcopsEmail && destinationEmails.indexOf(dcopsEmail) === -1) {
@@ -9746,7 +10010,7 @@ function routeApprovedRequest_(sessionId, destination) {
 
     const validEmails = destinationEmails.filter(e => e).join(',');
     if (!validEmails) {
-      return { ok: false, success: false, error: 'No destination email configured for ' + destination };
+      return { ok: false, message: 'No destination email configured for ' + destination };
     }
 
     // Prepare Accountable Persons HTML
@@ -9906,7 +10170,7 @@ function routeApprovedRequest_(sessionId, destination) {
           </div>`;
       }
 
-      // Commit 4: superseded (replaced) documents — kept viewable via the Archive folder, not trashed
+      // Commit 4: superseded (replaced) documents, kept viewable via the Archive folder, not trashed
       const supersededDocs = getDCSSupersededFiles_(appData.linkedReqId);
       if (supersededDocs && supersededDocs.length > 0) {
         const supRows = supersededDocs.map(function (f) {
@@ -10138,7 +10402,7 @@ function routeApprovedRequest_(sessionId, destination) {
     // requester their request is fully approved; sending 'routed_implementation' too caused a duplicate.
 
     return {
-      ok: true, success: true,
+      ok: true,
       message: `Request successfully routed to ${destination}`,
       sentTo: validEmails,
       pdfBlob: pdfBlob,
@@ -10160,8 +10424,8 @@ function routeApprovedRequest_(sessionId, destination) {
              then saves it.
   TECHNICAL: sanitizeInput_ → validateApplicationData_ (returns errors early if invalid) → submitApplication_.
              The defense-in-depth gate before any DB write.
-  PARAMS:    - appData — the raw submission from the client.
-  RETURNS:   submitApplication_'s result, or { success:false, errors:[...] } on validation failure.
+  PARAMS:    - appData: the raw submission from the client.
+  RETURNS:   submitApplication_'s result, or { ok:false, errors:[...] } on validation failure.
 */
 // Endpoints called from frontend via google.script.run
 function apiSubmitApplication(appData) {
@@ -10169,7 +10433,7 @@ function apiSubmitApplication(appData) {
   const validation = validateApplicationData_(cleanData);
   if (!validation.isValid) {
     return {
-      ok: false, success: false,
+      ok: false,
       errors: validation.errors
     };
   }
@@ -10186,28 +10450,28 @@ function apiSubmitApplication(appData) {
              looks up the latest Applications row linked to this parentID (highest -V#). For
              Returned/Rejected it harvests the last decision comment across Approval/ISM/DivHead sheets,
              and otherwise looks for a resumable PIA draft.
-  PARAMS:    - parentID — the DCS Request ID from the URL.
-  RETURNS:   { success:true, context, existingSubmissionId, existingSubmissionStatus,
-             existingDraftSessionId, approverComments, approverFlags } or { success:false, error }.
+  PARAMS:    - parentID: the DCS Request ID from the URL.
+  RETURNS:   { ok:true, context, existingSubmissionId, existingSubmissionStatus,
+             existingDraftSessionId, approverComments, approverFlags } or { ok:false, code, message }.
 */
 function apiGetDCSContext(parentID) {
   try {
     // Defensive check to prevent createTextFinder from failing on null input.
     if (!parentID) {
-      return { ok: false, success: false, error: 'The parentID parameter was not provided or is empty.' };
+      return { ok: false, message: 'The parentID parameter was not provided or is empty.' };
     }
 
     const userEmail = Session.getActiveUser().getEmail().toLowerCase();
     const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
     const lastRow = dcsSheet.getLastRow();
     if (lastRow < 2) {
-      return { ok: false, success: false, error: 'Data Collection sheet is empty.' };
+      return { ok: false, message: 'Data Collection sheet is empty.' };
     }
 
     // Normalize parentID: trim whitespace and ensure proper formatting
     const normalizedParentID = String(parentID).trim();
     if (!normalizedParentID) {
-      return { ok: false, success: false, error: 'The parentID parameter is empty after trimming.' };
+      return { ok: false, message: 'The parentID parameter is empty after trimming.' };
     }
 
     // Use TextFinder for performance - skip header row (row 1) and search data only
@@ -10221,7 +10485,7 @@ function apiGetDCSContext(parentID) {
     if (!foundCell) {
       // Enhanced logging for debugging
       Logger.log(`DEBUG: Parent ID '${normalizedParentID}' not found in DCS sheet (lastRow=${lastRow})`);
-      return { ok: false, success: false, error: 'Parent ID not found in Data Collection sheet. Please verify the DCS link.' };
+      return { ok: false, message: 'Parent ID not found in Data Collection sheet. Please verify the DCS link.' };
     }
 
     const rowNum = foundCell.getRow();
@@ -10233,7 +10497,7 @@ function apiGetDCSContext(parentID) {
     
     if (ownerEmail !== normalizedUserEmail) {
       Logger.log(`SECURITY ALERT: Unauthorized access attempt to DCS context for ${normalizedParentID} by ${normalizedUserEmail}. Owner is ${ownerEmail}.`);
-      return { ok: false, success: false, error: 'You are not authorized to access this context.' };
+      return { ok: false, message: 'You are not authorized to access this context.' };
     }
 
     const status = String(rowData[DCS_COLS.STATUS - 1] || '');
@@ -10255,7 +10519,7 @@ function apiGetDCSContext(parentID) {
       }
     }
 
-    // Pre-populate PIA fields from DCS metadata — try all known key variations
+    // Pre-populate PIA fields from DCS metadata, try all known key variations
     const context = {
       department: metadata.dept || metadata.department || metadata.Department || metadata.deptName || '',
       program: metadata.program || metadata.programName || metadata.Program || metadata['Program/Process'] || metadata['Program'] || metadata.projectName || metadata.project || metadata.piaProgram || '',
@@ -10408,7 +10672,7 @@ function apiGetDCSContext(parentID) {
     }
 
     return { 
-      ok: true, success: true, 
+      ok: true, 
       context: context,
       existingSubmissionId: existingSubmissionId,
       existingSubmissionStatus: existingSubmissionStatus,
@@ -10428,7 +10692,7 @@ function apiGetDCSContext(parentID) {
   LAYMAN:    Lists the current user's DCS requests (id + status) so the PIA app can offer them.
   TECHNICAL: Filters Data_Collection by the active user's email. try/catch → error.
   PARAMS:    (none)
-  RETURNS:   { success:true, requests:[{reqId, status}] } or { success:false, error }.
+  RETURNS:   { ok:true, requests:[{reqId, status}] } or { ok:false, code, message }.
 */
 function apiGetUserDCSRequests() {
   try {
@@ -10436,7 +10700,7 @@ function apiGetUserDCSRequests() {
     const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, true);
     const lastRow = dcsSheet.getLastRow();
     if (lastRow < 2) return {
-      ok: true, success: true,
+      ok: true,
       requests: []
     };
 
@@ -10449,7 +10713,7 @@ function apiGetUserDCSRequests() {
       }));
 
     return {
-      ok: true, success: true,
+      ok: true,
       requests: requests
     };
   } catch (e) {
@@ -10463,20 +10727,20 @@ function apiGetUserDCSRequests() {
   LAYMAN:    Tells the frontend who is signed in and whether they are allowed to use the app.
   TECHNICAL: Returns the active user email + isAuthorizedDomain_ flag.
   PARAMS:    (none)
-  RETURNS:   { success:true, email, isAuthorized } or { success:false, email:'' }.
+  RETURNS:   { ok:true, email, isAuthorized } or { ok:false, email:'' }.
 */
 function apiGetUserEmail() {
   try {
     const email = Session.getActiveUser().getEmail();
     return {
-      ok: true, success: true,
+      ok: true,
       email: email,
       isAuthorized: isAuthorizedDomain_(email)
     };
   } catch (error) {
     Logger.log('ERROR in apiGetUserEmail: ' + error.toString());
     return {
-      ok: false, success: false,
+      ok: false,
       email: ''
     };
   }
@@ -10506,7 +10770,7 @@ function apiGetUserSubmissions() {
              saved before final submit.
   TECHNICAL: Wraps nextBaseSessionId_() (lock-guarded allocation).
   PARAMS:    (none)
-  RETURNS:   { success:true, sessionId, message } or { success:false, error }.
+  RETURNS:   { ok:true, sessionId, message } or { ok:false, code, message }.
 */
 function apiGenerateNewSessionId() {
   try {
@@ -10514,7 +10778,7 @@ function apiGenerateNewSessionId() {
     const newSessionId = nextBaseSessionId_();
     Logger.log('  New sessionId generated: ' + newSessionId);
     return {
-      ok: true, success: true,
+      ok: true,
       sessionId: newSessionId,
       message: 'Application session started'
     };
@@ -10538,13 +10802,13 @@ function apiProcessApprovalDecision(sessionId, approverEmail, decision, comments
 /*
   Function: apiSaveDraft
   LAYMAN:    Auto-saves the user's in-progress PIA form so they can come back later. Keeps at most 5
-             drafts per user (oldest dropped) and they expire after 7 days. Files are never saved here —
+             drafts per user (oldest dropped) and they expire after 7 days. Files are never saved here,
              text state only.
   TECHNICAL: Writes to the shared Drafts sheet (Type 'PIA'). Updates the existing row for this
              (user, sessionId) or inserts a new one; enforces MAX_USER_DRAFTS by deleting the oldest by
              epoch timestamp. Stores epoch ms for SavedAt/ExpiresAt (+DRAFT_EXPIRY_DAYS). try/catch.
-  PARAMS:    - sessionId — the application/session id; stateData — form state object.
-  RETURNS:   { success:true, draftId, message } or { success:false, error }.
+  PARAMS:    - sessionId: the application/session id; stateData, form state object.
+  RETURNS:   { ok:true, draftId, message } or { ok:false, code, message }.
 */
 function apiSaveDraft(sessionId, stateData) {
   try {
@@ -10625,7 +10889,7 @@ function apiSaveDraft(sessionId, stateData) {
     }
     
     Logger.log('  Draft saved successfully');
-    return { ok: true, success: true, draftId: foundRow > 0 ? existingDraftId : draftId, message: 'Draft saved successfully' };
+    return { ok: true, draftId: foundRow > 0 ? existingDraftId : draftId, message: 'Draft saved successfully' };
   } catch (e) {
     Logger.log('  ERROR in apiSaveDraft: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -10638,8 +10902,8 @@ function apiSaveDraft(sessionId, stateData) {
              only if it hasn't expired).
   TECHNICAL: Scans Drafts for (user, sessionId, 'PIA'). Deletes + skips expired rows (epoch or legacy
              string). Parses and returns the state JSON. try/catch.
-  PARAMS:    - sessionId — the session id.
-  RETURNS:   { success:true, state } ; { success:false, state:null } if none; { success:false, error }.
+  PARAMS:    - sessionId: the session id.
+  RETURNS:   { ok:true, state } ; { ok:false, state:null } if none; { ok:false, code, message }.
 */
 function apiRestoreDraft(sessionId) {
   try {
@@ -10679,16 +10943,16 @@ function apiRestoreDraft(sessionId) {
         try {
           const stateData = JSON.parse(stateJSON);
           Logger.log('✓ Draft parsed successfully, state keys: ' + Object.keys(stateData).join(', '));
-          return { ok: true, success: true, state: stateData };
+          return { ok: true, state: stateData };
         } catch (e) {
           Logger.log('  ERROR parsing draft state: ' + e.toString());
-          return { ok: false, success: false, error: 'Corrupted draft data' };
+          return { ok: false, message: 'Corrupted draft data' };
         }
       }
     }
     
     Logger.log('   No draft found for this session (first load)');
-    return { ok: false, success: false, state: null }; // No draft found (not an error)
+    return { ok: false, state: null }; // No draft found (not an error)
   } catch (e) {
     Logger.log('  ERROR in apiRestoreDraft: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -10701,7 +10965,7 @@ function apiRestoreDraft(sessionId) {
   TECHNICAL: Scans Drafts for (user, 'PIA') rows whose ExpiresAt is in the future, projecting
              {draftId, sessionId, savedAt, expiresAt, status}. try/catch.
   PARAMS:    (none)
-  RETURNS:   { success:true, drafts:[...] } or { success:false, error }.
+  RETURNS:   { ok:true, drafts:[...] } or { ok:false, code, message }.
 */
 function apiListUserDrafts() {
   try {
@@ -10754,7 +11018,7 @@ function apiListUserDrafts() {
     }
     
     Logger.log('  Found ' + userDrafts.length + ' incomplete drafts');
-    return { ok: true, success: true, drafts: userDrafts };
+    return { ok: true, drafts: userDrafts };
   } catch (e) {
     Logger.log('  ERROR in apiListUserDrafts: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -10766,8 +11030,8 @@ function apiListUserDrafts() {
   LAYMAN:    Opens a specific saved draft by its id (only the owner can) and marks it as being edited.
   TECHNICAL: Finds the (user, draftId, 'PIA') row, parses state, and tags it with draftId/draftStatus/
              isLoadingExistingDraft for the frontend lock. try/catch.
-  PARAMS:    - draftId — the draft UUID.
-  RETURNS:   { success:true, state } or { success:false, error }.
+  PARAMS:    - draftId: the draft UUID.
+  RETURNS:   { ok:true, state } or { ok:false, code, message }.
 */
 function apiLoadDraft(draftId) {
   try {
@@ -10793,16 +11057,16 @@ function apiLoadDraft(draftId) {
           stateData.draftStatus = 'editing';  // Mark as editing
           stateData.isLoadingExistingDraft = true;  // Lock this draft
           Logger.log('✓ Draft loaded and locked for editing');
-          return { ok: true, success: true, state: stateData };
+          return { ok: true, state: stateData };
         } catch (e) {
           Logger.log('  ERROR parsing draft: ' + e.toString());
-          return { ok: false, success: false, error: 'Corrupted draft data' };
+          return { ok: false, message: 'Corrupted draft data' };
         }
       }
     }
     
     Logger.log('  Draft not found or not owned by user');
-    return { ok: false, success: false, error: 'Draft not found' };
+    return { ok: false, message: 'Draft not found' };
   } catch (e) {
     Logger.log('  ERROR in apiLoadDraft: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -10813,8 +11077,8 @@ function apiLoadDraft(draftId) {
   Function: apiDeleteDraft
   LAYMAN:    Lets a user discard one of their incomplete drafts.
   TECHNICAL: Deletes the (user, draftId, 'PIA') Drafts row. try/catch.
-  PARAMS:    - draftId — the draft UUID.
-  RETURNS:   { success:true, message } or { success:false, error }.
+  PARAMS:    - draftId: the draft UUID.
+  RETURNS:   { ok:true, message } or { ok:false, code, message }.
 */
 function apiDeleteDraft(draftId) {
   try {
@@ -10833,12 +11097,12 @@ function apiDeleteDraft(draftId) {
       if (rowEmail === userEmail.toLowerCase() && rowDraftId === draftId && rowType === 'PIA') {
         draftsSheet.deleteRow(i + 1);
         Logger.log('✓ Draft deleted at row ' + (i+1));
-        return { ok: true, success: true, message: 'Draft deleted' };
+        return { ok: true, message: 'Draft deleted' };
       }
     }
     
     Logger.log('  Draft not found or not owned by user');
-    return { ok: false, success: false, error: 'Draft not found' };
+    return { ok: false, message: 'Draft not found' };
   } catch (e) {
     Logger.log('  ERROR in apiDeleteDraft: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -10852,7 +11116,7 @@ function apiDeleteDraft(draftId) {
   TECHNICAL: Deletes the user's 'PIA' Drafts row matching draftId OR sessionId (fallback ensures
              cleanup even if the id drifted). try/catch.
   PARAMS:    - draftId, sessionId.
-  RETURNS:   { success:true, message } or { success:false, error }.
+  RETURNS:   { ok:true, message } or { ok:false, code, message }.
 */
 function apiMarkDraftComplete(draftId, sessionId) {
   try {
@@ -10872,12 +11136,12 @@ function apiMarkDraftComplete(draftId, sessionId) {
       if (rowEmail === userEmail.toLowerCase() && rowType === 'PIA' && (rowDraftId === draftId || rowSessionId === sessionId)) {
         draftsSheet.deleteRow(i + 1);
         Logger.log('✓ Draft removed successfully (converted to submission) at row ' + (i+1));
-        return { ok: true, success: true, message: 'Draft removed' };
+        return { ok: true, message: 'Draft removed' };
       }
     }
     
     Logger.log('   Draft not found for cleanup');
-    return { ok: false, success: false, error: 'Draft not found' };
+    return { ok: false, message: 'Draft not found' };
   } catch (e) {
     Logger.log('  ERROR in apiMarkDraftComplete: ' + e.toString());
     return safeError_(e, ERR.INTERNAL);
@@ -10896,7 +11160,7 @@ function cleanupExpiredDrafts() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   try {
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
     const data = readSheetValues_(draftsSheet);
@@ -10936,13 +11200,13 @@ function cleanupExpiredDrafts() {
 /*
   Function: apiGenerateRevisionSessionId
   LAYMAN:    When a user wants to fix and resubmit a returned/rejected application, this safely issues
-             the next revision id — but only for their own app, only if it really was returned/rejected,
+             the next revision id, but only for their own app, only if it really was returned/rejected,
              and not while the linked DCS is still 'Returned'.
   TECHNICAL: Validates base id format, finds the latest revision row for that base, enforces owner ==
              active user and status in (rejected|returned), and blocks if DCS-flagged and the DCS is
              still 'Returned'. Then returns getNextRevisionSessionId_(baseId). Throws on any gate failure.
-  PARAMS:    - baseSessionId — the original/any-version application id.
-  RETURNS:   { success:true, sessionId } ; throws Error on invalid/unauthorized/not-revisable.
+  PARAMS:    - baseSessionId: the original/any-version application id.
+  RETURNS:   { ok:true, sessionId } ; throws Error on invalid/unauthorized/not-revisable.
 */
 function apiGenerateRevisionSessionId(baseSessionId) {
   const baseId = String(baseSessionId || '').trim().replace(/-V\d+$/, '');
@@ -11008,7 +11272,7 @@ function apiGenerateRevisionSessionId(baseSessionId) {
     }
   }
 
-  return { ok: true, success: true, sessionId: getNextRevisionSessionId_(baseId) };
+  return { ok: true, sessionId: getNextRevisionSessionId_(baseId) };
 }
 
 /*
@@ -11018,12 +11282,12 @@ function apiGenerateRevisionSessionId(baseSessionId) {
   TECHNICAL: getApplicationData_ then authorizes active user as owner or an approver email; otherwise
              logs a security alert and throws. Stringifies approver decisionDate Date objects to keep the
              google.script.run serialization safe.
-  PARAMS:    - sessionId — application id.
+  PARAMS:    - sessionId: application id.
   RETURNS:   The (serialization-safe) app object; null if not found; throws on unauthorized access.
 */
 function apiGetApplicationData(sessionId) {
   // PERF: getApplicationData_ reads Applications + Approval_Workflow, and the
-  // getCurrentRound_ inside it reads all three workflow sheets — so Approval_Workflow
+  // getCurrentRound_ inside it reads all three workflow sheets, so Approval_Workflow
   // gets pulled twice on every call. This is a pure read path, so the sheet-value cache
   // is safe to switch on for the gather; it is torn down before anything else runs.
   const appData = withSheetCache_(function () { return getApplicationData_(sessionId); });
@@ -11070,7 +11334,7 @@ function apiGetApplicationData(sessionId) {
   Function: getProp_
   LAYMAN:    Reads a required Script Property and complains loudly (throws) if it is missing.
   TECHNICAL: PropertiesService getter that throws a descriptive Error when the key is unset.
-  PARAMS:    - key — the Script Property name.
+  PARAMS:    - key: the Script Property name.
   RETURNS:   The property value string. Throws if not set.
 */
 function getProp_(key) {
@@ -11093,13 +11357,13 @@ function getProp_(key) {
   TECHNICAL: For each target sheet, appends any missing header from def.headers (idempotent check) and
              styles it. Does not touch data rows.
   PARAMS:    (none)
-  RETURNS:   { success:true, message }.
+  RETURNS:   { ok:true, message }.
 */
 function migrateAddReminderColumns() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   var sheets = [
     { name: DB_SHEET_NAMES.APPROVAL_WORKFLOW, headers: ['ReminderDate', 'EmailStatus', 'EmailError'] },
     { name: DB_SHEET_NAMES.ISM_WORKFLOW, headers: ['ReminderDate', 'EmailStatus', 'EmailError'] },
@@ -11137,7 +11401,7 @@ function migrateAddReminderColumns() {
   });
 
   Logger.log('Migration complete. Run setupReminderTrigger_() to enable daily reminders.');
-  return { ok: true, success: true, message: 'Reminder and failsafe columns migrated. Run setupReminderTrigger_() next.' };
+  return { ok: true, message: 'Reminder and failsafe columns migrated. Run setupReminderTrigger_() next.' };
 }
 
 /*
@@ -11155,9 +11419,9 @@ function testReminderEngine() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   Logger.log('╔════════════════════════════════════════════════════════════╗');
-  Logger.log('║  REMINDER ENGINE — COMPREHENSIVE TEST                      ║');
+  Logger.log('║  REMINDER ENGINE: COMPREHENSIVE TEST                      ║');
   Logger.log('╚════════════════════════════════════════════════════════════╝');
 
   var TEST_PREFIX = 'TEST-RM-' + new Date().getTime().toString(36).toUpperCase();
@@ -11184,14 +11448,14 @@ function testReminderEngine() {
     var divHeadSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
 
     var scenarios = [
-      { id: TEST_PREFIX + '-PEND',  status: 'Pending',                  label: 'Pending — SHOULD remind',                    expectReminder: true,  sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-      { id: TEST_PREFIX + '-APPROV',status: 'Approved',                 label: 'Approved (ISM active) — SHOULD remind',      expectReminder: true,  sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-      { id: TEST_PREFIX + '-DRAFT', status: 'Draft',                    label: 'Draft — should NOT remind',                  expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-      { id: TEST_PREFIX + '-DENIED',status: 'Denied',                   label: 'Denied — should NOT remind',                 expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-      { id: TEST_PREFIX + '-RETRN', status: 'Returned',                 label: 'Returned — should NOT remind',               expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
-      { id: TEST_PREFIX + '-PHNTM', status: null,                       label: 'Phantom (no app row) — should NOT remind',    expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, phantom: true },
-      { id: TEST_PREFIX + '-ISM',   status: 'Approved',                 label: 'ISM Pending — SHOULD remind',                expectReminder: true,  sheet: DB_SHEET_NAMES.ISM_WORKFLOW },
-      { id: TEST_PREFIX + '-ALRDY', status: 'Pending',                  label: 'Already reminded today — should NOT remind',  expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, alreadyReminded: true }
+      { id: TEST_PREFIX + '-PEND',  status: 'Pending',                  label: 'Pending: SHOULD remind',                    expectReminder: true,  sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-APPROV',status: 'Approved',                 label: 'Approved (ISM active): SHOULD remind',      expectReminder: true,  sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-DRAFT', status: 'Draft',                    label: 'Draft, should NOT remind',                  expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-DENIED',status: 'Denied',                   label: 'Denied, should NOT remind',                 expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-RETRN', status: 'Returned',                 label: 'Returned, should NOT remind',               expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW },
+      { id: TEST_PREFIX + '-PHNTM', status: null,                       label: 'Phantom (no app row), should NOT remind',    expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, phantom: true },
+      { id: TEST_PREFIX + '-ISM',   status: 'Approved',                 label: 'ISM Pending: SHOULD remind',                expectReminder: true,  sheet: DB_SHEET_NAMES.ISM_WORKFLOW },
+      { id: TEST_PREFIX + '-ALRDY', status: 'Pending',                  label: 'Already reminded today, should NOT remind',  expectReminder: false, sheet: DB_SHEET_NAMES.APPROVAL_WORKFLOW, alreadyReminded: true }
     ];
 
     var todayStr = new Date().getFullYear() + '-' +
@@ -11321,11 +11585,11 @@ function testReminderEngine() {
     // Check sequence enforcement: PIA-TEST-RM-SEQ-SEQ should remind Step 1, NOT Step 2
     var seqFound = remindedIds[seqId];
     if (seqFound) {
-      Logger.log('  ✅ PASS: Sequence test — first pending step was reminded (Step 1)');
+      Logger.log('  ✅ PASS: Sequence test, first pending step was reminded (Step 1)');
       results.passed++;
       results.scenarios.push({ name: 'Sequence enforcement', status: 'PASS', reminded: true });
     } else {
-      Logger.log('  ⚠ Sequence test — no reminder (may be legitimate if quota/other issue)');
+      Logger.log('  ⚠ Sequence test: no reminder (may be legitimate if quota/other issue)');
       results.scenarios.push({ name: 'Sequence enforcement', status: 'WARN', reminded: false });
     }
 
@@ -11337,9 +11601,9 @@ function testReminderEngine() {
     Logger.log('  Total scenarios: ' + (results.passed + results.failed));
 
     if (results.failed === 0) {
-      Logger.log('\n  ✅ ALL TESTS PASSED — Reminder engine is working correctly.');
+      Logger.log('\n  ✅ ALL TESTS PASSED: Reminder engine is working correctly.');
     } else {
-      Logger.log('\n  ❌ ' + results.failed + ' TEST(S) FAILED — Check logs above for details.');
+      Logger.log('\n  ❌ ' + results.failed + ' TEST(S) FAILED: Check logs above for details.');
     }
 
   } catch (e) {
@@ -11388,8 +11652,8 @@ function testReminderEngine() {
 
 /*
   Function: testFullSystemFlow
-  LAYMAN:    A big manual end-to-end test of the whole PIA lifecycle — submit, approve, return, deny,
-             resubmit, the ISM/Division-Head path, email queue, and admin APIs — plus a small scalability
+  LAYMAN:    A big manual end-to-end test of the whole PIA lifecycle, submit, approve, return, deny,
+             resubmit, the ISM/Division-Head path, email queue, and admin APIs, plus a small scalability
              batch. For developer verification in the Apps Script editor.
   TECHNICAL: Diagnostics only (not used at runtime). Drives the real functions against TEST-prefixed
              records, asserts sequence enforcement and duplicate-prevention, then reports pass/fail.
@@ -11400,9 +11664,9 @@ function testFullSystemFlow() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   Logger.log('╔══════════════════════════════════════════════════════════════╗');
-  Logger.log('║  ULTIMATE SYSTEM FLOW — COMPREHENSIVE END-TO-END TEST       ║');
+  Logger.log('║  ULTIMATE SYSTEM FLOW: COMPREHENSIVE END-TO-END TEST       ║');
   Logger.log('╚══════════════════════════════════════════════════════════════╝');
 
   var T = 'TST-' + new Date().getTime().toString(36).toUpperCase();
@@ -11492,7 +11756,7 @@ function testFullSystemFlow() {
 
     // Step 1 Approve
     var r1 = processApprovalDecision_(aId, E, 'Approve', 'Looks good, approved.', null, '{}');
-    check('Step 1 Approve succeeds', r1.success, r1.error);
+    check('Step 1 Approve succeeds', r1.ok, r1.message);
     SpreadsheetApp.flush();
 
     // Verify Step 1 is Approved
@@ -11507,7 +11771,7 @@ function testFullSystemFlow() {
 
     // Step 2 Approve
     var r2 = processApprovalDecision_(aId, E, 'Approve', 'Also approved.', null, '{}');
-    check('Step 2 Approve succeeds', r2.success, r2.error);
+    check('Step 2 Approve succeeds', r2.ok, r2.message);
     SpreadsheetApp.flush();
 
     // Check app is Approved (Phase 3 init)
@@ -11540,7 +11804,7 @@ function testFullSystemFlow() {
     apprSheet.appendRow([bId+'-B1', bId, 1, 'Approver B1', E, '','', '','Pending','','Pending','']);
 
     var r3 = processApprovalDecision_(bId, E, 'Return', 'Please fix the scope section. This is a detailed comment explaining what needs to be changed. It needs to be at least 100 characters so adding more text here to meet the limit.', null, '{"PIA 1 - Scope":"Scope section is too vague"}');
-    check('Return succeeds', r3.success, r3.error);
+    check('Return succeeds', r3.ok, r3.message);
 
     var appsB = readSheetValues_(appSheet);
     var retRow = null, retStatus = '';
@@ -11555,7 +11819,7 @@ function testFullSystemFlow() {
     apprSheet.appendRow([cId+'-C1', cId, 1, 'Approver C1', E, '','', '','Pending','','Pending','']);
 
     var r4 = processApprovalDecision_(cId, E, 'Deny', 'This project does not meet compliance requirements. The policy framework is not fully established and data handling procedures are undefined. Additional work is needed before resubmission.', null, '{}');
-    check('Deny succeeds', r4.success, r4.error);
+    check('Deny succeeds', r4.ok, r4.message);
 
     var appsC = readSheetValues_(appSheet);
     var denyStatus = '';
@@ -11571,9 +11835,9 @@ function testFullSystemFlow() {
     // ── TEST D: Duplicate/re-process prevention ──
     Logger.log('\n📌 D. Re-process prevention');
     var r5 = processApprovalDecision_(bId, E, 'Approve', 'Trying to approve a returned app', null, '{}');
-    check('Re-processing returned app returns error', !r5.success, 'should fail');
+    check('Re-processing returned app returns error', !r5.ok, 'should fail');
     var r6 = processApprovalDecision_(cId, E, 'Approve', 'Trying to approve a denied app', null, '{}');
-    check('Re-processing denied app returns error', !r6.success, 'should fail');
+    check('Re-processing denied app returns error', !r6.ok, 'should fail');
 
     // ─────────────────────────────────────────────────────────────
     // ═══════════════ PHASE 3: ISM WORKFLOW ═══════════════════════
@@ -11586,7 +11850,7 @@ function testFullSystemFlow() {
     apprSheet.appendRow([dId+'-D1', dId, 1, 'Approver D1', E, 'Approved','ok','today','Approved','','Sent','']);
     // Initialize ISM workflow
     var initResult = apiPhase3_InitializeISMWorkflow_(dId);
-    check('ISM init for P3 test succeeds', initResult.success, initResult.error);
+    check('ISM init for P3 test succeeds', initResult.ok, initResult.message);
 
     // ── TEST E: ISM Person 1 Approves → Person 2 notified ──
     Logger.log('\n📌 E. ISM Person 1 Approve (triggers routing)');
@@ -11601,7 +11865,7 @@ function testFullSystemFlow() {
     check('ISM Person 2 has email', !!p2Email, p2Email);
 
     var r7 = apiPhase3_ProcessISMDecision(dId, p1Email, 'Approve', 'ISM P1 approves with BOTH routing.', 'BOTH', 1, '{}');
-    check('ISM Person 1 Approve succeeds', r7.success, r7.error);
+    check('ISM Person 1 Approve succeeds', r7.ok, r7.message);
     SpreadsheetApp.flush();
 
     // Check Person 2 is still Pending
@@ -11618,7 +11882,7 @@ function testFullSystemFlow() {
     // ── TEST F: ISM Person 2 Approves → Full approval → Routing ──
     Logger.log('\n📌 F. ISM Person 2 Approve (triggers full approval & routing)');
     var r8 = apiPhase3_ProcessISMDecision(dId, p2Email, 'Approve', 'ISM P2 approves.', '', 2, '{}');
-    check('ISM Person 2 Approve succeeds', r8.success, r8.error);
+    check('ISM Person 2 Approve succeeds', r8.ok, r8.message);
     SpreadsheetApp.flush();
 
     // Check app status becomes Approved by ISM
@@ -11639,7 +11903,7 @@ function testFullSystemFlow() {
     for (var i = 1; i < ismG.length; i++) { if (ismG[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === gId && ismG[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1G = ismG[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
     var r9 = apiPhase3_ProcessISMDecision(gId, p1G, 'Deny', 'This application has security risks that cannot be mitigated. Comprehensive review indicates multiple compliance gaps in data handling procedures. This decision is final.', '', 1, '{}');
-    check('ISM Deny succeeds', r9.success, r9.error);
+    check('ISM Deny succeeds', r9.ok, r9.message);
 
     var appG = readSheetValues_(appSheet);
     var ismDenyStatus = '';
@@ -11657,7 +11921,7 @@ function testFullSystemFlow() {
     for (var i = 1; i < ismH.length; i++) { if (ismH[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === hId && ismH[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1H = ismH[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
     var r10 = apiPhase3_ProcessISMDecision(hId, p1H, 'Return', 'Please update the scope section and add more detail about data retention policies. The current description is too brief. Also ensure the DCS fields are updated accordingly. This requires at least fifty characters.', '', 1, '{}');
-    check('ISM Return succeeds', r10.success, r10.error);
+    check('ISM Return succeeds', r10.ok, r10.message);
 
     var appH = readSheetValues_(appSheet);
     var ismRetStatus = '';
@@ -11678,7 +11942,7 @@ function testFullSystemFlow() {
     for (var i = 1; i < ismI.length; i++) { if (ismI[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === iId && ismI[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1I = ismI[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
     var r11 = apiPhase3_ProcessISMDecision(iId, p1I, 'EscalateToDivisionHead', 'This requires executive review due to cross-departmental data sharing concerns. The application involves sensitive PII that needs Division Head sign-off.', 'BOTH', 1, '{}');
-    check('ISM Escalate succeeds', r11.success, r11.error);
+    check('ISM Escalate succeeds', r11.ok, r11.message);
     SpreadsheetApp.flush();
 
     // Check Div Head record was created
@@ -11689,7 +11953,7 @@ function testFullSystemFlow() {
 
     // Div Head approves (resolves Person 1's escalation, notifies Person 2)
     var r12 = processDivHeadDecision_(iId, E, 'Approve', 'Division Head approves after review. This is a detailed comment explaining the approval rationale for the escalated application. It must be long enough to pass validation.', '{}');
-    check('DivHead Approve succeeds', r12.success, r12.error);
+    check('DivHead Approve succeeds', r12.ok, r12.message);
     SpreadsheetApp.flush();
 
     // App stays "Escalated to Division Head" until Person 2 also approves
@@ -11703,7 +11967,7 @@ function testFullSystemFlow() {
     var p2I = '';
     for (var i = 1; i < ismI2.length; i++) { if (ismI2[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === iId && ismI2[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 2) { p2I = ismI2[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
     var r13 = apiPhase3_ProcessISMDecision(iId, p2I, 'Approve', 'Person 2 approves after DivHead resolution.', 'BOTH', 2, '{}');
-    check('ISM Person 2 Approve after Escalation succeeds', r13.success, r13.error);
+    check('ISM Person 2 Approve after Escalation succeeds', r13.ok, r13.message);
     SpreadsheetApp.flush();
 
     var appI2 = readSheetValues_(appSheet);
@@ -11717,7 +11981,7 @@ function testFullSystemFlow() {
     Logger.log('\n═══════════════ ADMIN API TESTS ═══════════════════════════════');
 
     var qSum = adminGetQueueSummary_();
-    check('adminGetQueueSummary_ returns data', qSum.success, qSum.error);
+    check('adminGetQueueSummary_ returns data', qSum.ok, qSum.message);
     check('Queue summary has total > 0', qSum.data.total > 0, 'total=' + qSum.data.total);
 
     var qLog = adminGetEmailLog_(aId);
@@ -11727,7 +11991,7 @@ function testFullSystemFlow() {
     check('adminGetFailedEmails_ returns array', Array.isArray(failed), typeof failed);
 
     var remConfig = adminGetReminderConfig_();
-    check('adminGetReminderConfig_ returns data', remConfig.success, remConfig.error);
+    check('adminGetReminderConfig_ returns data', remConfig.ok, remConfig.message);
 
     // ─────────────────────────────────────────────────────────────
     // ═══════════════ SCALABILITY TEST ════════════════════════════
@@ -11746,7 +12010,7 @@ function testFullSystemFlow() {
 
     // Run reminder engine on these
     var remResult = sendDailyReminders_();
-    check('sendDailyReminders processes scalability batch', remResult.success, remResult.error);
+    check('sendDailyReminders processes scalability batch', remResult.ok, remResult.message);
     check('Reminder engine scanned scalability batch', remResult.processed >= S, 'processed ' + remResult.processed);
 
     // Verify pre-filter caught correct count
@@ -11767,7 +12031,7 @@ function testFullSystemFlow() {
     // First pass: Step 2 was appended first (lower row), but Step 1 has lower step number
     // The collection pass should pick Step 1 (lowest step)
     var rem2 = sendDailyReminders_();
-    check('Reminder ran for sequence test', rem2.success, rem2.error);
+    check('Reminder ran for sequence test', rem2.ok, rem2.message);
 
     // Check Email_Queue: should have exactly 1 reminder entry for seqId (Step 1 only)
     var eqD = readSheetValues_(queueSheet);
@@ -11788,7 +12052,7 @@ function testFullSystemFlow() {
     Logger.log('  📊 Total:  ' + results.total);
     Logger.log('  📈 Score:  ' + (results.total > 0 ? Math.round(results.passed / results.total * 100) : 0) + '%');
     if (results.failed === 0) {
-      Logger.log('\n  🎉 ALL TESTS PASSED — System is working correctly!');
+      Logger.log('\n  🎉 ALL TESTS PASSED: System is working correctly!');
     } else {
       Logger.log('\n  ⚠️  ' + results.failed + ' test(s) failed. Review details above.');
     }
@@ -11807,7 +12071,7 @@ function testFullSystemFlow() {
 
 /*
   Function: testUltimateSystem
-  LAYMAN:    The most thorough manual mega-test — runs every Phase 2 & 3 path (approvals, return, deny,
+  LAYMAN:    The most thorough manual mega-test, runs every Phase 2 & 3 path (approvals, return, deny,
              ISM full/deny/return/escalate, Division Head, routing), the email failsafe, all admin APIs,
              the reminder engine, and a 20-user concurrency batch. Developer use only; expects >=2
              InfoSec members configured.
@@ -11841,9 +12105,9 @@ function testUltimateSystem() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   Logger.log('╔══════════════════════════════════════════════════════════════════╗');
-  Logger.log('║  🔥 ULTIMATE MEGA-TEST — ALL PATHS, 20 CONCURRENT USERS          ║');
+  Logger.log('║  🔥 ULTIMATE MEGA-TEST: ALL PATHS, 20 CONCURRENT USERS          ║');
   Logger.log('╚══════════════════════════════════════════════════════════════════╝');
 
   var T = 'MEGA-' + new Date().getTime().toString(36).toUpperCase();
@@ -11913,8 +12177,8 @@ function testUltimateSystem() {
     apprSheet.appendRow([aId + '-A1', aId, 1, 'Approver A1', E, '', '', '', 'Pending', '', 'Pending', '']);
     apprSheet.appendRow([aId + '-A2', aId, 2, 'Approver A2', E, '', '', '', 'Pending', '', 'Pending', '']);
 
-    var r1 = processApprovalDecision_(aId, E, 'Approve', 'Step 1 approved — looks good. This is a detailed comment meeting the minimum length requirement for validation purposes.', null, '{}');
-    check('S1: Step 1 Approve succeeds', r1.success, r1.error);
+    var r1 = processApprovalDecision_(aId, E, 'Approve', 'Step 1 approved, looks good. This is a detailed comment meeting the minimum length requirement for validation purposes.', null, '{}');
+    check('S1: Step 1 Approve succeeds', r1.ok, r1.message);
     SpreadsheetApp.flush();
 
     // Verify EmailStatus was stamped on Step 1 row
@@ -11928,8 +12192,8 @@ function testUltimateSystem() {
     }
     check('S1: EmailStatus stamped Pending on Step 1', step1EmailStamped, '');
 
-    var r2 = processApprovalDecision_(aId, E, 'Approve', 'Step 2 approved — proceeding to ISM. This comment is sufficiently long to pass all validation checks and requirements.', null, '{}');
-    check('S1: Step 2 Approve succeeds', r2.success, r2.error);
+    var r2 = processApprovalDecision_(aId, E, 'Approve', 'Step 2 approved, proceeding to ISM. This comment is sufficiently long to pass all validation checks and requirements.', null, '{}');
+    check('S1: Step 2 Approve succeeds', r2.ok, r2.message);
     SpreadsheetApp.flush();
 
     // Verify app status becomes Approved
@@ -11959,7 +12223,7 @@ function testUltimateSystem() {
     apprSheet.appendRow([bId + '-B1', bId, 1, 'Approver B1', E, '', '', '', 'Pending', '', 'Pending', '']);
 
     var r3 = processApprovalDecision_(bId, E, 'Return', 'Please fix the scope section. This is a detailed comment explaining what needs to be changed. It must be at least one hundred characters to pass the validation check. Adding more text here to meet the requirement.', null, '{"PIA 1 - Scope":"Scope section is too vague"}');
-    check('S2: Return succeeds', r3.success, r3.error);
+    check('S2: Return succeeds', r3.ok, r3.message);
 
     var appsB = readSheetValues_(appSheet);
     var retStatus = '', retFlags = '';
@@ -11983,7 +12247,7 @@ function testUltimateSystem() {
     apprSheet.appendRow([cId + '-C1', cId, 1, 'Approver C1', E, '', '', '', 'Pending', '', 'Pending', '']);
 
     var r4 = processApprovalDecision_(cId, E, 'Deny', 'This project does not meet compliance requirements. The policy framework is not fully established and data handling procedures are completely undefined. Additional work is needed.', null, '{}');
-    check('S3: Deny succeeds', r4.success, r4.error);
+    check('S3: Deny succeeds', r4.ok, r4.message);
 
     var appsC = readSheetValues_(appSheet);
     var denyOk = false;
@@ -11996,10 +12260,10 @@ function testUltimateSystem() {
     Logger.log('\n════════ SECTION 4: DUPLICATE PREVENTION ════════');
 
     var r5 = processApprovalDecision_(bId, E, 'Approve', 'Trying to approve a returned app should fail. This comment is long enough.', null, '{}');
-    check('S4: Cannot approve returned app', !r5.success, 'expected failure');
+    check('S4: Cannot approve returned app', !r5.ok, 'expected failure');
 
     var r6 = processApprovalDecision_(cId, E, 'Approve', 'Trying to approve a denied app should fail also. This comment is sufficiently long.', null, '{}');
-    check('S4: Cannot approve denied app', !r6.success, 'expected failure');
+    check('S4: Cannot approve denied app', !r6.ok, 'expected failure');
 
     // ═══════════════════════════════════════════════════════════════
     // SECTION 5: ISM FULL APPROVAL (P1 → P2 → Approved by ISM)
@@ -12010,7 +12274,7 @@ function testUltimateSystem() {
     appSheet.appendRow([dId, E, 'Approved', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
     apprSheet.appendRow([dId + '-D1', dId, 1, 'Approver D1', E, 'Approved', 'ok', 'today', 'Approved', '', 'Sent', '']);
     var initR = apiPhase3_InitializeISMWorkflow_(dId);
-    check('S5: ISM init succeeds', initR.success, initR.error);
+    check('S5: ISM init succeeds', initR.ok, initR.message);
 
     // Verify ISM rows have EmailStatus='Pending'
     var ismD5 = readSheetValues_(ismSheet);
@@ -12031,12 +12295,12 @@ function testUltimateSystem() {
     check('S5: P1 email found', !!p1E, p1E);
     check('S5: P2 email found', !!p2E, p2E);
 
-    var r7 = apiPhase3_ProcessISMDecision(dId, p1E, 'Approve', 'ISM P1 approves — BOTH routing selected. This comment meets the minimum validation length requirement for ISM decisions.', 'BOTH', 1, '{}');
-    check('S5: ISM P1 Approve succeeds', r7.success, r7.error);
+    var r7 = apiPhase3_ProcessISMDecision(dId, p1E, 'Approve', 'ISM P1 approves: BOTH routing selected. This comment meets the minimum validation length requirement for ISM decisions.', 'BOTH', 1, '{}');
+    check('S5: ISM P1 Approve succeeds', r7.ok, r7.message);
     SpreadsheetApp.flush();
 
-    var r8 = apiPhase3_ProcessISMDecision(dId, p2E, 'Approve', 'ISM P2 approves — completing final ISM approval. All checks passed and the application is ready for routing to implementation teams.', '', 2, '{}');
-    check('S5: ISM P2 Approve succeeds', r8.success, r8.error);
+    var r8 = apiPhase3_ProcessISMDecision(dId, p2E, 'Approve', 'ISM P2 approves, completing final ISM approval. All checks passed and the application is ready for routing to implementation teams.', '', 2, '{}');
+    check('S5: ISM P2 Approve succeeds', r8.ok, r8.message);
     SpreadsheetApp.flush();
 
     var appsD = readSheetValues_(appSheet);
@@ -12072,7 +12336,7 @@ function testUltimateSystem() {
     for (var i = 1; i < ismE.length; i++) { if (ismE[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === eId && ismE[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1E2 = ismE[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
     var r9 = apiPhase3_ProcessISMDecision(eId, p1E2, 'Deny', 'This application has critical security risks that cannot be mitigated. Comprehensive review indicates multiple compliance gaps in data handling procedures. This decision is final and binding.', '', 1, '{}');
-    check('S6: ISM Deny succeeds', r9.success, r9.error);
+    check('S6: ISM Deny succeeds', r9.ok, r9.message);
 
     var appsE = readSheetValues_(appSheet);
     var ismDenyOk = false;
@@ -12092,7 +12356,7 @@ function testUltimateSystem() {
     for (var i = 1; i < ismF.length; i++) { if (ismF[i][ISM_WORKFLOW_COLS.SESSION_ID - 1] === fId && ismF[i][ISM_WORKFLOW_COLS.CURRENT_STEP - 1] == 1) { p1F = ismF[i][ISM_WORKFLOW_COLS.ISM_MEMBER_EMAIL - 1]; break; } }
 
     var r10 = apiPhase3_ProcessISMDecision(fId, p1F, 'Return', 'Please update the scope section and add more detail about data retention policies. The current description is too brief. Also ensure DCS fields are updated accordingly.', '', 1, '{}');
-    check('S7: ISM Return succeeds', r10.success, r10.error);
+    check('S7: ISM Return succeeds', r10.ok, r10.message);
 
     var appsF = readSheetValues_(appSheet);
     var ismRetOk = false;
@@ -12118,7 +12382,7 @@ function testUltimateSystem() {
     }
 
     var r11 = apiPhase3_ProcessISMDecision(gId, p1G, 'EscalateToDivisionHead', 'This requires executive review due to cross-departmental data sharing concerns. The application involves sensitive PII that needs Division Head sign-off for proper authorization.', 'BOTH', 1, '{}');
-    check('S8: ISM Escalate succeeds', r11.success, r11.error);
+    check('S8: ISM Escalate succeeds', r11.ok, r11.message);
     SpreadsheetApp.flush();
 
     // Check DivHead record created
@@ -12139,7 +12403,7 @@ function testUltimateSystem() {
 
     // DivHead approves
     var r12 = processDivHeadDecision_(gId, E, 'Approve', 'Division Head approves after thorough review of the escalated application. All concerns regarding cross-departmental data sharing have been addressed and the application meets compliance standards.', '{}');
-    check('S8: DivHead Approve succeeds', r12.success, r12.error);
+    check('S8: DivHead Approve succeeds', r12.ok, r12.message);
     SpreadsheetApp.flush();
 
     // App should still be Escalated (waiting for Person 2)
@@ -12150,7 +12414,7 @@ function testUltimateSystem() {
 
     // Person 2 approves → full chain complete
     var r13 = apiPhase3_ProcessISMDecision(gId, p2G, 'Approve', 'Person 2 approves after DivHead resolution. All escalation concerns have been properly addressed and the application is now ready for final routing.', 'BOTH', 2, '{}');
-    check('S8: ISM P2 Approve after escalation succeeds', r13.success, r13.error);
+    check('S8: ISM P2 Approve after escalation succeeds', r13.ok, r13.message);
     SpreadsheetApp.flush();
 
     var appsG2 = readSheetValues_(appSheet);
@@ -12159,17 +12423,17 @@ function testUltimateSystem() {
     check('S8: App reaches Approved by ISM after full escalation chain', escFinalOk, '');
 
     // ═══════════════════════════════════════════════════════════════
-    // SECTION 9: EMAIL FAILSAFE — NOTIFICATION CONFIG
+    // SECTION 9: EMAIL FAILSAFE: NOTIFICATION CONFIG
     // ═══════════════════════════════════════════════════════════════
     Logger.log('\n════════ SECTION 9: EMAIL FAILSAFE & NOTIFICATION CONFIG ════════');
 
     var notifCfg = adminGetNotificationConfig_();
-    check('S9: getNotificationConfig returns success', notifCfg.success, notifCfg.error);
+    check('S9: getNotificationConfig returns success', notifCfg.ok, notifCfg.message);
     check('S9: NotifyOnFailure defaults to YES', notifCfg.data && notifCfg.data.notifyOnFailure === 'YES', notifCfg.data ? notifCfg.data.notifyOnFailure : 'no data');
     check('S9: Admin email is configured', notifCfg.data && !!notifCfg.data.adminEmail, notifCfg.data ? notifCfg.data.adminEmail : 'none');
 
     var setCfg = adminSetNotificationConfig_({ notifyOnFailure: 'YES', notifyRequestor: 'YES' });
-    check('S9: setNotificationConfig succeeds', setCfg.success, setCfg.error);
+    check('S9: setNotificationConfig succeeds', setCfg.ok, setCfg.message);
     check('S9: Config persists after set', setCfg.data && setCfg.data.notifyOnFailure === 'YES', '');
 
     // ═══════════════════════════════════════════════════════════════
@@ -12178,7 +12442,7 @@ function testUltimateSystem() {
     Logger.log('\n════════ SECTION 10: PIPELINE VIEW ════════');
 
     var pipeline = adminGetPipelineView_(dId);
-    check('S10: getPipelineView returns success', pipeline.success, pipeline.error);
+    check('S10: getPipelineView returns success', pipeline.ok, pipeline.message);
     check('S10: Pipeline has application', pipeline.data && !!pipeline.data.application, '');
     check('S10: Pipeline has approvalWorkflow', pipeline.data && Array.isArray(pipeline.data.approvalWorkflow) && pipeline.data.approvalWorkflow.length > 0, '');
     check('S10: Pipeline has ismWorkflow', pipeline.data && Array.isArray(pipeline.data.ismWorkflow) && pipeline.data.ismWorkflow.length > 0, '');
@@ -12190,13 +12454,13 @@ function testUltimateSystem() {
     // ═══════════════════════════════════════════════════════════════
     Logger.log('\n════════ SECTION 11: RESEND TO STAGE ════════');
 
-    // Create a fresh Pending entry — resend only works on rows with Status='Pending'
+    // Create a fresh Pending entry, resend only works on rows with Status='Pending'
     var resendId = genId('RSND');
     appSheet.appendRow([resendId, E, 'Pending', pia1, '{}', '{}', '{}', pia5, '', new Date().toLocaleString('en-PH'), 'NO', '', '', '{}']);
     apprSheet.appendRow([resendId + '-R1', resendId, 1, 'Resend Approver', E, '', '', '', 'Pending', '', '', '']);
 
     var resendR = adminResendToStage_(resendId, 'approver', E);
-    check('S11: Resend to stage succeeds', resendR.success, resendR.error);
+    check('S11: Resend to stage succeeds', resendR.ok, resendR.message);
     check('S11: Resend returns queueId', !!resendR.queueId, '');
 
     // Verify EmailStatus was reset to Pending
@@ -12220,7 +12484,7 @@ function testUltimateSystem() {
     apprSheet.appendRow([remId + '-R1', remId, 1, 'Reminder Approver', E, '', '', '', 'Pending', '', 'Pending', '']);
 
     var remResult = sendDailyReminders_();
-    check('S12: sendDailyReminders succeeds', remResult.success, remResult.error);
+    check('S12: sendDailyReminders succeeds', remResult.ok, remResult.message);
 
     // Check if a reminder was queued for our test entry
     var qD = readSheetValues_(queueSheet);
@@ -12239,7 +12503,7 @@ function testUltimateSystem() {
     for (var i = 1; i < adR.length; i++) {
       if (adR[i][APPROVAL_COLS.SESSION_ID - 1] === remId) {
         var rdVal = String(adR[i][APPROVAL_COLS.REMINDER_DATE - 1] || '');
-        // Date may be stored as Date object or string — normalize
+        // Date may be stored as Date object or string, normalize
         if (adR[i][APPROVAL_COLS.REMINDER_DATE - 1] instanceof Date) {
           var d = adR[i][APPROVAL_COLS.REMINDER_DATE - 1];
           rdVal = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -12251,7 +12515,7 @@ function testUltimateSystem() {
     check('S12: ReminderDate stamped on workflow row', stamped, '');
 
     // ═══════════════════════════════════════════════════════════════
-    // SECTION 13: 20 CONCURRENT USERS — BATCH SUBMIT & APPROVE
+    // SECTION 13: 20 CONCURRENT USERS: BATCH SUBMIT & APPROVE
     // ═══════════════════════════════════════════════════════════════
     Logger.log('\n════════ SECTION 13: 20 CONCURRENT USERS ════════');
 
@@ -12293,7 +12557,7 @@ function testUltimateSystem() {
     var approveSuccess = 0;
     for (var u = 0; u < batchIds.length; u++) {
       var r = processApprovalDecision_(batchIds[u], E, 'Approve', 'Concurrent batch approval #' + (u + 1) + '. This comment is sufficiently long to meet the minimum validation length requirement for approval decisions.', null, '{}');
-      if (r.success) approveSuccess++;
+      if (r.ok) approveSuccess++;
     }
     SpreadsheetApp.flush();
     var batchApproveMs = new Date().getTime() - batchApproveStart;
@@ -12314,12 +12578,12 @@ function testUltimateSystem() {
     check('S13: All 20 apps have Approved status', approvedCount === CONCURRENT, 'approved=' + approvedCount);
 
     // ═══════════════════════════════════════════════════════════════
-    // SECTION 14: ADMIN API — QUEUE SUMMARY & EMAIL LOG
+    // SECTION 14: ADMIN API: QUEUE SUMMARY & EMAIL LOG
     // ═══════════════════════════════════════════════════════════════
     Logger.log('\n════════ SECTION 14: ADMIN APIs ════════');
 
     var qSum = adminGetQueueSummary_();
-    check('S14: getQueueSummary returns data', qSum.success, qSum.error);
+    check('S14: getQueueSummary returns data', qSum.ok, qSum.message);
     check('S14: Queue summary has total > 0', qSum.data && qSum.data.total > 0, qSum.data ? 'total=' + qSum.data.total : 'no data');
 
     var qLog = adminGetEmailLog_(aId);
@@ -12334,7 +12598,7 @@ function testUltimateSystem() {
     Logger.log('\n════════ SECTION 15: REMINDER CONFIG ════════');
 
     var remCfg = adminGetReminderConfig_();
-    check('S15: getReminderConfig_ returns data', remCfg.success, remCfg.error);
+    check('S15: getReminderConfig_ returns data', remCfg.ok, remCfg.message);
     check('S15: Reminder config has triggerActive field', remCfg.data && remCfg.data.hasOwnProperty('triggerActive'), '');
 
     // ═══════════════════════════════════════════════════════════════
@@ -12349,7 +12613,7 @@ function testUltimateSystem() {
     Logger.log('  📈 Score:  ' + (results.total > 0 ? Math.round(results.passed / results.total * 100) : 0) + '%');
 
     if (results.failed === 0) {
-      Logger.log('\n  🎉 ALL ' + results.total + ' TESTS PASSED — System is battle-ready!');
+      Logger.log('\n  🎉 ALL ' + results.total + ' TESTS PASSED: System is battle-ready!');
       Logger.log('  ✅ Head Approval Chain       ✅ Return to Requestor');
       Logger.log('  ✅ Deny                       ✅ Duplicate Prevention');
       Logger.log('  ✅ ISM Full Approval          ✅ ISM Deny');
@@ -12362,7 +12626,7 @@ function testUltimateSystem() {
       Logger.log('\n  ⚠️  ' + results.failed + ' test(s) FAILED. Review details above.');
       Logger.log('\n  Failing tests:');
       results.details.filter(function(d) { return !d.pass; }).forEach(function(d) {
-        Logger.log('    ❌ ' + d.label + (d.detail ? ' — ' + d.detail : ''));
+        Logger.log('    ❌ ' + d.label + (d.detail ? ': ' + d.detail : ''));
       });
     }
 
@@ -12380,13 +12644,154 @@ function testUltimateSystem() {
 }
 
 /*
+  Function: testHeaderSchema
+
+  LAYMAN (Tropang Ex):
+  Ito yung test na dapat nag-exist noon pa. Tinitingnan niya, kada sheet, kung yung
+  totoong header sa spreadsheet ay tugma sa listahan sa code. Kung ito ay tumatakbo noong
+  nagdagdag ako ng ActedBy, agad sana akong nabigyan ng error, sa halip na tahimik na
+  nasira nang ilang araw.
+
+  Sinusubukan din niya nang sadya na sirain: pinapalitan niya ang pangalan ng isang column,
+  tinitingnan kung talagang sumasabog, tapos ibinabalik. Kasi ang test na "gumagana kapag
+  tama" ay hindi test, kailangang patunayan na SUMASABOG kapag mali.
+
+  TECHNICAL:
+  Regression test for the header-driven schema. Asserts:
+    (a) every PIA_SCHEMA sheet's live header row matches, column for column;
+    (b) every derived *_COLS map resolves to the index its header sits at, which is the
+        property that made hand-numbering unnecessary;
+    (c) colsOf_ THROWS on an alias naming a column that is not in the schema;
+    (d) assertSheetSchema_ THROWS on a genuinely renamed column, proven by renaming one for
+        real and restoring it in a finally block;
+    (e) assertSheetSchema_ TOLERATES an extra trailing column, since a hand-added annotation
+        column must not take the app down.
+
+  🚩 (d) mutates the live spreadsheet for a moment. It restores in `finally`, and it only ever
+  touches the header CELL of the last schema column on Risk_Audit, the lowest-stakes sheet
+  under schema control. If this test is ever interrupted mid-run, check Risk_Audit's header.
+
+  Editor-run only.
+
+  PARAMS:    (none)
+  RETURNS:   { ok, success, passed, failed, total, details }
+*/
+function testHeaderSchema() {
+  if (!isOwnerContext_()) return fail_(ERR.FORBIDDEN, 'Not authorized.');
+
+  const details = [];
+  let passed = 0, failed = 0;
+  function check(name, cond, extra) {
+    if (cond) { passed++; details.push('PASS  ' + name); }
+    else { failed++; details.push('FAIL  ' + name + (extra ? ': ' + extra : '')); }
+  }
+
+  // (a) live header row matches the schema, per sheet
+  Object.keys(PIA_SCHEMA).forEach(function (sheetName) {
+    const expected = PIA_SCHEMA[sheetName];
+    let sh = null;
+    try { sh = getDatabaseSheet_(sheetName, false); } catch (e) { /* drift throws, caught below */ }
+    if (!sh || sh.getLastRow() === 0) { details.push('SKIP  ' + sheetName + ' (absent or empty)'); return; }
+    const actual = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), expected.length)).getValues()[0];
+    const bad = [];
+    for (let i = 0; i < expected.length; i++) {
+      const found = String(actual[i] || '').trim();
+      if (found !== expected[i]) bad.push('col ' + (i + 1) + ' expected "' + expected[i] + '" got "' + found + '"');
+    }
+    check('schema matches live header: ' + sheetName, bad.length === 0, bad.join('; '));
+  });
+
+  // (b) every derived map points at the column its header actually occupies
+  const MAPS = [
+    ['APPROVAL_COLS', 'Approval_Workflow', APPROVAL_COLS],
+    ['ISM_WORKFLOW_COLS', 'ISM_Approval_Workflow', ISM_WORKFLOW_COLS],
+    ['DIV_HEAD_CONFIG_COLS', 'DivisionHead_Approval_Workflow', DIV_HEAD_CONFIG_COLS],
+    ['APPLICATIONS_COLS', 'Applications', APPLICATIONS_COLS],
+    ['APPLICATION_SNAPSHOT_COLS', 'Application_Snapshots', APPLICATION_SNAPSHOT_COLS],
+    ['DELEGATION_COLS', 'Delegations', DELEGATION_COLS],
+    ['EMAIL_QUEUE_COLS', 'Email_Queue', EMAIL_QUEUE_COLS],
+    ['AUDIT_COLS', 'Risk_Audit', AUDIT_COLS],
+    ['DCS_COLS', 'Data_Collection', DCS_COLS],
+    ['INFOSEC_CONFIG_COLS', 'InfoSec_Email_Config', INFOSEC_CONFIG_COLS],
+    ['ADMIN_NOTIFICATION_COLS', 'Admin_Notification_Config', ADMIN_NOTIFICATION_COLS]
+  ];
+  MAPS.forEach(function (entry) {
+    const mapName = entry[0], sheetName = entry[1], map = entry[2];
+    const headers = PIA_SCHEMA[sheetName];
+    const bad = [];
+    Object.keys(map).forEach(function (k) {
+      const idx = map[k];
+      if (idx < 1 || idx > headers.length) { bad.push(k + ' index ' + idx + ' out of range'); return; }
+      if (!headers[idx - 1]) bad.push(k + ' points at an empty header slot');
+    });
+    check(mapName + ' indices are all in range', bad.length === 0, bad.join('; '));
+  });
+
+  // (c) colsOf_ rejects an alias that names a column the schema does not have
+  let threw = false;
+  try { colsOf_('Approval_Workflow', { NOPE: 'ThisColumnDoesNotExist' }); }
+  catch (e) { threw = true; }
+  check('colsOf_ throws on an unknown column name', threw);
+
+  // (d)+(e) assertSheetSchema_ actually detects a rename, and tolerates an extra column
+  const PROBE_SHEET = 'Risk_Audit';
+  const probeHeaders = PIA_SCHEMA[PROBE_SHEET];
+  const probeCol = probeHeaders.length;              // last schema column
+  const original = probeHeaders[probeCol - 1];
+  let sh = null;
+  try { sh = getDatabaseSheet_(PROBE_SHEET, false); } catch (e) { /* handled below */ }
+
+  if (!sh || sh.getLastRow() === 0) {
+    details.push('SKIP  drift-detection probe (Risk_Audit absent or empty)');
+  } else {
+    try {
+      // (e) an extra trailing column must NOT trip the check
+      const extraCol = Math.max(sh.getLastColumn(), probeHeaders.length) + 1;
+      sh.getRange(1, extraCol).setValue('ZZ_TEMP_ANNOTATION');
+      delete __SCHEMA_CHECKED[PROBE_SHEET];
+      let tolerated = true;
+      try { assertSheetSchema_(PROBE_SHEET); } catch (e) { tolerated = false; }
+      check('extra trailing column is tolerated', tolerated);
+      sh.getRange(1, extraCol).clearContent();
+
+      // (d) a renamed column MUST throw
+      sh.getRange(1, probeCol).setValue('ZZ_RENAMED_FOR_TEST');
+      SpreadsheetApp.flush();
+      delete __SCHEMA_CHECKED[PROBE_SHEET];
+      let detected = false;
+      try { assertSheetSchema_(PROBE_SHEET); }
+      catch (e) { detected = String(e).indexOf('Schema drift') !== -1; }
+      check('renamed column IS detected (the whole point)', detected);
+    } catch (probeErr) {
+      failed++;
+      details.push('FAIL  drift probe raised unexpectedly: ' + probeErr);
+    } finally {
+      // Always put the header back, whatever happened above.
+      try {
+        sh.getRange(1, probeCol).setValue(original);
+        SpreadsheetApp.flush();
+        delete __SCHEMA_CHECKED[PROBE_SHEET];
+      } catch (restoreErr) {
+        details.push('WARN  COULD NOT RESTORE ' + PROBE_SHEET + ' col ' + probeCol +
+                     ' to "' + original + '": FIX BY HAND. ' + restoreErr);
+      }
+    }
+  }
+
+  details.forEach(function (d) { Logger.log(d); });
+  Logger.log('testHeaderSchema: ' + passed + ' passed, ' + failed + ' failed');
+  return { ok: failed === 0, passed: passed, failed: failed,
+           total: passed + failed, details: details };
+}
+
+/*
   Function: testDelegationResolution
 
   LAYMAN (Tropang Ex):
   Test para sa delegation. Ang pinakaimportanteng sinisigurado niya ay yung NEGATIBO: kapag
-  WALANG delegation, dapat WALANG nagbago — parehong-pareho sa dati. Tapos: gumagana ba yung
+  WALANG delegation, dapat WALANG nagbago: parehong-pareho sa dati. Tapos: gumagana ba yung
   petsa (hindi pa nagsisimula = hindi pa; tapos na = hindi na), gumagana ba yung pag-pause,
-  at hindi ba nagcha-chain (kung si A kay B, at si B kay C, si A ay kay B pa rin — HINDI kay C).
+  at hindi ba nagcha-chain (kung si A kay B, at si B kay C, si A ay kay B pa rin: HINDI kay C).
 
   TECHNICAL:
   Regression test for resolveDelegate_ / canActAs_ / delegatorsFor_. Asserts:
@@ -12394,36 +12799,36 @@ function testUltimateSystem() {
     (b) an active delegation resolves, and canActAs_ reports onBehalfOf = the ORIGINAL;
     (c) a future-dated delegation does not apply yet, a past-dated one no longer applies;
     (d) Is_Active = NO overrides an otherwise-valid window;
-    (e) delegation does NOT chain — A→B and B→C means A resolves to B, never to C;
+    (e) delegation does NOT chain: A→B and B→C means A resolves to B, never to C;
     (f) a third party is still refused (the guard did not simply become permissive);
     (g) delegatorsFor_ is the exact inverse of resolveDelegate_.
 
   Editor-run only. Writes namespaced rows to Delegations and removes them afterwards.
 
   PARAMS:    (none)
-  RETURNS:   { success, passed, failed, total, details }
+  RETURNS:   { ok, passed, failed, total, details }
 */
 function testDelegationResolution() {
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
 
   const details = [];
   let passed = 0, failed = 0;
   function check(name, cond, extra) {
     if (cond) { passed++; details.push('PASS  ' + name); }
-    else { failed++; details.push('FAIL  ' + name + (extra ? ' — ' + extra : '')); }
+    else { failed++; details.push('FAIL  ' + name + (extra ? ': ' + extra : '')); }
   }
 
   const dom = getAllowedDomain_() || 'example.com';
   const A = 'deltest-a@' + dom, B = 'deltest-b@' + dom, C = 'deltest-c@' + dom, X = 'deltest-x@' + dom;
   const TAG = 'DELTEST-' + Date.now();
   const sheet = getDelegationsSheet_();
-  if (!sheet) return { ok: false, success: false, error: 'Delegations sheet unavailable.' };
+  if (!sheet) return { ok: false, message: 'Delegations sheet unavailable.' };
 
   const fmt = (d) => Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
   const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return fmt(d); };
 
   try {
-    // (a) BASELINE — nothing configured yet.
+    // (a) BASELINE: nothing configured yet.
     check('no delegation → resolveDelegate_ returns null', resolveDelegate_(A) === null);
     check('no delegation → self still allowed', canActAs_(A, A).allowed === true);
     check('no delegation → self reports no onBehalfOf', canActAs_(A, A).onBehalfOf === '');
@@ -12439,7 +12844,7 @@ function testDelegationResolution() {
     check('delegate is allowed to act', act.allowed === true);
     check('delegate acts ON BEHALF OF the original', getNormalizedEmail_(act.onBehalfOf) === getNormalizedEmail_(A),
       act.onBehalfOf);
-    // 🚩 EXCLUSIVITY — the load-bearing assertion. While delegated, the ORIGINAL is refused
+    // 🚩 EXCLUSIVITY: the load-bearing assertion. While delegated, the ORIGINAL is refused
     // too. If this ever flips back to true, two people can approve the same Pending row.
     check('EXCLUSIVE: original is refused while delegated', canActAs_(A, A).allowed === false);
     check('EXCLUSIVE: exactly one identity may act',
@@ -12456,7 +12861,7 @@ function testDelegationResolution() {
     sheet.getRange(sheet.getLastRow(), DELEGATION_COLS.IS_ACTIVE).setValue('NO');
     SpreadsheetApp.flush();
     check('Is_Active=NO overrides a valid window', resolveDelegate_(A) === null);
-    // Pausing must hand authority straight BACK — otherwise a paused delegation would leave
+    // Pausing must hand authority straight BACK, otherwise a paused delegation would leave
     // the row with nobody able to act on it at all, which is worse than the original problem.
     check('pausing restores the original', canActAs_(A, A).allowed === true);
     check('pausing revokes the delegate', canActAs_(B, A).allowed === false);
@@ -12473,7 +12878,7 @@ function testDelegationResolution() {
     sheet.getRange(sheet.getLastRow(), DELEGATION_COLS.END_DATE).setValue(day(+7));
     SpreadsheetApp.flush();
 
-    // (e) NO CHAINING — B also delegates to C. A must still resolve to B.
+    // (e) NO CHAINING: B also delegates to C. A must still resolve to B.
     sheet.appendRow([TAG + '-2', B, C, day(-1), day(+7), 'Also away', 'YES', 'test', new Date().toISOString()]);
     SpreadsheetApp.flush();
     const r2 = resolveDelegate_(A);
@@ -12484,7 +12889,7 @@ function testDelegationResolution() {
 
   } catch (e) {
     failed++;
-    details.push('FAIL  unexpected exception — ' + e.toString());
+    details.push('FAIL  unexpected exception: ' + e.toString());
   } finally {
     try {
       const data = sheet.getDataRange().getValues();
@@ -12492,13 +12897,13 @@ function testDelegationResolution() {
         if (String(data[i][DELEGATION_COLS.DELEGATION_ID - 1] || '').indexOf(TAG) === 0) sheet.deleteRow(i + 1);
       }
     } catch (cleanupErr) {
-      details.push('WARN  cleanup failed, remove ' + TAG + '* rows by hand — ' + cleanupErr.toString());
+      details.push('WARN  cleanup failed, remove ' + TAG + '* rows by hand: ' + cleanupErr.toString());
     }
   }
 
   details.forEach(function (d) { Logger.log(d); });
   Logger.log('testDelegationResolution: ' + passed + ' passed, ' + failed + ' failed');
-  return { ok: failed === 0, success: failed === 0, passed: passed, failed: failed,
+  return { ok: failed === 0, passed: passed, failed: failed,
            total: passed + failed, details: details };
 }
 
@@ -12507,10 +12912,10 @@ function testDelegationResolution() {
 
   LAYMAN (Tropang Ex):
   Test para sa bagong read cache. Tatlong bagay ang sinisigurado niya, at yung una ang
-  pinakaimportante: kapag PATAY ang cache (default), dapat pareho lang siya sa dating code —
+  pinakaimportante: kapag PATAY ang cache (default), dapat pareho lang siya sa dating code,
   walang naiba. Pangalawa: kapag BUKAS, hindi na siya nagdo-download ulit ng parehong tab.
   Pangatlo: kapag may sinulat ka habang bukas ang cache, kailangan mong sabihin sa cache na
-  kalimutan yung luma (invalidateSheetCache_), kung hindi luma pa rin ang makikita mo — at
+  kalimutan yung luma (invalidateSheetCache_), kung hindi luma pa rin ang makikita mo, at
   yun mismo yung dahilan kung bakit hindi natin binubuksan ang cache sa mga write path.
 
   TECHNICAL:
@@ -12518,28 +12923,28 @@ function testDelegationResolution() {
     (a) cache OFF is byte-equal to a direct getDataRange().getValues();
     (b) cache ON returns the SAME array reference on the second read (proving one fetch);
     (c) the cache is torn down after withSheetCache_ returns, including when fn throws;
-    (d) a write made while the cache is ON is invisible until invalidateSheetCache_ —
+    (d) a write made while the cache is ON is invisible until invalidateSheetCache_,
         this is the documented hazard, asserted deliberately so it stays documented;
     (e) nesting composes: an inner withSheetCache_ does not tear down the outer one.
 
   Editor-run only. Writes one namespaced row to Risk_Audit and deletes it afterwards.
 
   PARAMS:    (none)
-  RETURNS:   { success, passed, failed, total, details }
+  RETURNS:   { ok, passed, failed, total, details }
 */
 function testSheetReadCache() {
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
 
   const details = [];
   let passed = 0, failed = 0;
   function check(name, cond, extra) {
     if (cond) { passed++; details.push('PASS  ' + name); }
-    else { failed++; details.push('FAIL  ' + name + (extra ? ' — ' + extra : '')); }
+    else { failed++; details.push('FAIL  ' + name + (extra ? ': ' + extra : '')); }
   }
 
   const MARK = 'CACHETEST-' + Date.now();
   const sheet = getDatabaseSheet_(DB_SHEET_NAMES.RISK_AUDIT, true);
-  if (!sheet) return { ok: false, success: false, error: 'Risk_Audit sheet unavailable.' };
+  if (!sheet) return { ok: false, message: 'Risk_Audit sheet unavailable.' };
 
   try {
     // (a) OFF is identical to the raw call it replaced.
@@ -12561,7 +12966,7 @@ function testSheetReadCache() {
       check('cache survives the nested call', __SHEET_CACHE !== null &&
         readSheetValues_(sheet) === first);
 
-      // (d) the documented staleness hazard — a write is invisible until invalidated.
+      // (d) the documented staleness hazard, a write is invisible until invalidated.
       const before = first.length;
       sheet.appendRow([MARK, '', '', 'CacheTest', '', '', new Date().toISOString()]);
       SpreadsheetApp.flush();
@@ -12583,7 +12988,7 @@ function testSheetReadCache() {
 
   } catch (e) {
     failed++;
-    details.push('FAIL  unexpected exception — ' + e.toString());
+    details.push('FAIL  unexpected exception: ' + e.toString());
   } finally {
     // Clean up the marker row regardless of outcome.
     try {
@@ -12592,14 +12997,14 @@ function testSheetReadCache() {
         if (String(data[i][0]) === MARK) sheet.deleteRow(i + 1);
       }
     } catch (cleanupErr) {
-      details.push('WARN  cleanup failed — ' + cleanupErr.toString());
+      details.push('WARN  cleanup failed: ' + cleanupErr.toString());
     }
     __SHEET_CACHE = null; // never leave the cache on for the next execution
   }
 
   details.forEach(function (d) { Logger.log(d); });
   Logger.log('testSheetReadCache: ' + passed + ' passed, ' + failed + ' failed');
-  return { ok: failed === 0, success: failed === 0, passed: passed, failed: failed,
+  return { ok: failed === 0, passed: passed, failed: failed,
            total: passed + failed, details: details };
 }
 
@@ -12608,7 +13013,7 @@ function testSheetReadCache() {
 
   LAYMAN (Tropang Ex):
   Ito yung test para sa pinakabagong pagbabago: hindi na binubura ang lumang approval rows tuwing
-  may resubmit. Ginagaya niya yung totoong senaryo — may na-approve, may na-return habang may
+  may resubmit. Ginagaya niya yung totoong senaryo, may na-approve, may na-return habang may
   approver na hindi pa nakakaaksyon, tapos nag-resubmit. Sinisiguro niyang (a) buhay pa rin yung
   round 1, (b) may bagong round 2, at (c) yung pinaka-importante: hindi na-route pabalik sa
   natengga na approver ng round 1. Yun mismo yung bug na tinatakpan ng lumang delete.
@@ -12616,16 +13021,16 @@ function testSheetReadCache() {
   TECHNICAL:
   Focused regression test for the append-only workflow. Builds a session with a Stage-A ladder and
   an ISM row that stays Pending (the abandoned-row case), drives a Return, calls submitApplication_
-  to force a resubmit, then asserts round retention, round increment, and — the load-bearing one —
+  to force a resubmit, then asserts round retention, round increment, and, the load-bearing one,
   that getCurrentRound_-scoped routing does NOT match the round-1 leftover.
 
   Editor-run only. Writes to the live DB under a namespaced session id and cleans up after itself.
 
   PARAMS:    (none)
-  RETURNS:   { success, passed, failed, total, details }
+  RETURNS:   { ok, passed, failed, total, details }
 */
 function testAppendOnlyRounds() {
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
 
   var T = 'ROUNDTEST-' + new Date().getTime().toString(36).toUpperCase();
   var E = Session.getActiveUser().getEmail();
@@ -12642,7 +13047,7 @@ function testAppendOnlyRounds() {
   var apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
   var ismSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
 
-  Logger.log('🔁 Append-only round test — ' + T);
+  Logger.log('🔁 Append-only round test: ' + T);
 
   try {
     var pia1 = JSON.stringify({
@@ -12661,9 +13066,9 @@ function testAppendOnlyRounds() {
 
     check('S1: round 1 detected', getCurrentRound_(T) === 1, 'got ' + getCurrentRound_(T));
 
-    // Return at step 1 with a flag — this is what bounces it back to the applicant.
+    // Return at step 1 with a flag, this is what bounces it back to the applicant.
     var ret = processApprovalDecision_(T, E, 'Return', 'Returning for corrections. This comment is deliberately long enough to satisfy the minimum-length validation applied to Return decisions.', 1, JSON.stringify({ 'Program Name': 'please correct this' }));
-    check('S2: Return accepted', ret && ret.success, ret && ret.error);
+    check('S2: Return accepted', ret && ret.ok, ret && ret.message);
     SpreadsheetApp.flush();
 
     // Flags must be persisted on the approver's OWN row (replaces Revision_History.FlaggedFields).
@@ -12683,7 +13088,7 @@ function testAppendOnlyRounds() {
       sessionId: T, appId: T, pia1: JSON.parse(pia1), pia2: {}, pia3: {}, pia4: {}, pia5: [],
       linkedReqId: '', isFlagged: false
     });
-    check('S4: resubmit accepted', resub && resub.success, resub && resub.error);
+    check('S4: resubmit accepted', resub && resub.ok, resub && resub.message);
     SpreadsheetApp.flush();
 
     var after = readSheetValues_(apprSheet);
@@ -12706,7 +13111,7 @@ function testAppendOnlyRounds() {
 
     // The whole point: a round-1 row left Pending must NOT be reachable by round-2 routing.
     check('S8: round 1 left an abandoned Pending row (the hazard exists)',
-      pendingRound1Steps.length > 0, 'none found — test would be vacuous');
+      pendingRound1Steps.length > 0, 'none found, test would be vacuous');
 
     var leaked = false;
     for (var k = 1; k < after.length; k++) {
@@ -12764,8 +13169,8 @@ function testAppendOnlyRounds() {
     } catch (ce) { Logger.log('  ⚠ cleanup failed: ' + ce.toString()); }
   }
 
-  Logger.log('🔁 Append-only round test — ' + r.passed + '/' + r.total + ' passed, ' + r.failed + ' failed');
-  return { ok: r.failed === 0, success: r.failed === 0, passed: r.passed, failed: r.failed, total: r.total, details: r.details };
+  Logger.log('🔁 Append-only round test: ' + r.passed + '/' + r.total + ' passed: ' + r.failed + ' failed');
+  return { ok: r.failed === 0, passed: r.passed, failed: r.failed, total: r.total, details: r.details };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -12784,7 +13189,7 @@ function checkProperties() {
   // SECURITY: public by necessity (trigger handlers bind by name string; editor-run helpers
   // must appear in the Run picker). Gate on owner-or-trigger context so a domain user cannot
   // invoke it from a browser console via google.script.run.
-  if (!isOwnerContext_()) return { ok: false, success: false, error: 'Not authorized.' };
+  if (!isOwnerContext_()) return { ok: false, message: 'Not authorized.' };
   var key = PropertiesService.getScriptProperties().getProperty('ADMIN_API_KEY');
   Logger.log('ADMIN_API_KEY: ' + (key ? '✅ SET (' + key.substring(0, 6) + '...)' : '❌ MISSING'));
 }
