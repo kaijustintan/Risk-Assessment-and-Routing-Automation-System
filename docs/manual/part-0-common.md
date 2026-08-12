@@ -79,18 +79,41 @@ URL.** A change in one app silently breaks another that reads the same sheet.
 |-------|----------------|-------|-------------|
 | `Data_Collection` | DCS | One row per DCS request | LogID, **ReqID**, UserEmail, **Status**, ImmediateHeadEmail, DeptHeadEmail, DivHeadEmail, FileID, Metadata_JSON, Timestamp, Metadata_Agency, Remarks |
 | `Applications` | PIA | One row per PIA submission | **SessionID**, ApplicantEmail, Status, PIA_1_Data … PIA_5_Data (JSON), **Linked_ReqID**, ApproverFlags |
-| `Approval_Workflow` | PIA | Stage A head decisions | ApprovalID, SessionID, CurrentStep, ApproverName, ApproverEmail, Decision, Comments, DecisionDate, Status |
-| `ISM_Approval_Workflow` | PIA | Stage B InfoSec decisions | ISM_Approval_ID, SessionID, CurrentStep, ISM_Member_Name, ISM_Member_Email, Decision, Comments, DecisionDate, Status, Requires_DivHead, Routing_Destination |
-| `DivisionHead_Approval_Workflow` | PIA | Stage D escalation decisions | Escalation_ID, SessionID, DivHead_Email, Decision, Comments, DecisionDate, Status |
+| `Approval_Workflow` | PIA | Stage A head decisions, **one set per round** | ApprovalID, SessionID, CurrentStep, ApproverName, ApproverEmail, Decision, Comments, DecisionDate, Status, **RoundNumber**, **FlaggedFields**, **ActedBy** |
+| `ISM_Approval_Workflow` | PIA | Stage B InfoSec decisions, **one set per round** | ISM_Approval_ID, SessionID, CurrentStep, ISM_Member_Name, ISM_Member_Email, Decision, Comments, DecisionDate, Status, Requires_DivHead, Routing_Destination, **RoundNumber**, **FlaggedFields**, **ActedBy** |
+| `DivisionHead_Approval_Workflow` | PIA | Stage D escalation decisions, **one set per round** | Escalation_ID, SessionID, DivHead_Email, Decision, Comments, DecisionDate, Status, **RoundNumber**, **FlaggedFields**, **ActedBy** |
+| `Application_Snapshots` | PIA | The submitted PIA answers as they stood **before** each resubmit overwrote them | SnapshotID, **SessionID**, **RoundNumber**, ApplicantEmail, Status_At_Snapshot, PIA_1_Data … PIA_5_Data, Approver_Flags, Linked_ReqID, SnapshotAt |
 | `Risk_Audit` | all | Audit trail / anomaly flags | LogID, SessionID, Action, UserEmail, Timestamp, (internal flags) |
 | `InfoSec_Email_Config` | Admin | ISM members + DCOPS/TechServe routing emails (TechServe is **per-site**) | Member_ID, Member_Name, Member_Email, Role, IsActive, JobPos, **Site** |
 | `Admin_Notification_Config` | Admin | Extra accounts granted Admin access, beyond ISM personnel | Config_ID + an email column (matched case-insensitively) |
 | `System_Configuration` | Admin/DCS | Key-value settings (template links, etc.) | Configuration_Key, Value, Description |
 | `Drafts` | DCS + PIA (shared) | Auto-saved form state, 7-day TTL | DraftID, UserEmail, SessionID, Type, StateJSON, SavedAt/SavedTimestamp, ExpiresAt |
+| `Delegations` | Admin (edits) / PIA (reads) | Out-of-office cover: who acts while an approver is away. **Empty is the normal state.** | Delegation_ID, From_Email, To_Email, Start_Date, End_Date, Reason, Is_Active, Created_By, Created_At |
+| `Email_Queue` | PIA | Outgoing mail, incl. the **fully rendered body** of every notification | Queue_ID, SessionID, Recipient, Subject, Body_Plain, Body_HTML, Type, Status, Attempts, Last_Error, Created_At, Sent_At |
 
 > **Note on `Risk_Audit`:** the old PIA manual called this the "Paranormal event log." That
 > is a typo/hallucination — it is the **anomalous event** audit trail (normal actions are
 > `Logger.log`-ged; the sheet records genuinely anomalous events + key actions like deletes).
+
+> 🚩 **`RoundNumber` (added 2026-08-11).** Every workflow row now declares which resubmission round
+> it belongs to. A blank value means round 1 (rows written before the change). This is what lets the
+> system keep every round's approvals instead of deleting them — and it is why any code asking
+> *"who approves next?"* must filter to the current round, while anything showing *"what happened?"*
+> must not. A retired `Revision_History` tab may still be present in the spreadsheet; nothing reads
+> or writes it any more and it can be deleted.
+
+> 🚩 **`ActedBy` (added 2026-08-12).** Blank on almost every row, and that is the point: it is only
+> filled when a **delegate** made the decision instead of the named approver. The row still carries
+> the original approver's name, so without this column a delegated approval would look as though
+> someone approved their own request while on leave. Read it as "approved by *ActedBy* on behalf of
+> *ApproverEmail*."
+
+> 🚩 **Where the personal data actually is** (matters for retention). Ranked by sensitivity per row:
+> `Applications` and `Application_Snapshots` hold the full assessment answers; `Email_Queue` holds
+> **entire rendered email bodies** including names and request details; `Data_Collection`'s
+> `Metadata_JSON` is the richest single blob; `Risk_Audit` records an email address on every action;
+> and the Drive folder (`ADMIN_FOLDER_ID`, plus its `Archive` subfolder) holds the signed NDA / DPA /
+> DSA files. Nothing purged any of it until the retention sweep was added — see §0.6.
 
 ### Secrets & config (never in code)
 Stored in each project's **Script Properties** (see §0.4 for the URL ones). Notably:
@@ -135,15 +158,22 @@ named in PIA1 is emailed a review link.
   **resumes at the next member** (comes back down).
 - **DivHead Deny** → app Denied (terminal). **DivHead Return** → bounces to the applicant.
 
-### Return = full restart (not resume) 🚩
+### Return = full restart of the ladder (not resume) 🚩
 A **Return** from *any* approver (head, ISM, or DivHead) always bounces to the **applicant**,
-never to a previous approver. On resubmit, PIA **deletes all** `Approval_Workflow` +
-`ISM_Approval_Workflow` + `DivisionHead_Approval_Workflow` rows for that session and
-**rebuilds the ladder from Stage A, Step 1.** All prior approvals are wiped; lineage is kept
-via a revision id (`-V2`, `-V3`…) but progress resets to zero.
+never to a previous approver. On resubmit, PIA starts the ladder again from **Stage A, Step 1** —
+everyone must approve again, nothing resumes mid-chain.
+
+**But nothing is erased.** Each resubmission is recorded as a new **round**: the previous round's
+approvals, comments and flagged items stay in the workflow sheets permanently, tagged with their
+`RoundNumber`. The screens and emails show every round, grouped.
 - **Return ≠ Deny.** Return is a fixable loop; Deny/Reject is terminal.
 - If the linked **DCS** is `Returned`, PIA resubmission is **blocked** until the DCS is fixed
   first.
+
+> 🚩 **Changed 2026-08-11.** This used to delete the previous round's rows and keep only a
+> best-effort copy in a separate `Revision_History` tab. If that copy ever failed, the round was
+> lost silently. The workflow is now append-only and `Revision_History` has been retired.
+> See §0.6 for the developer detail.
 
 ### The 5-stage progress timeline
 The "Overall Progress Timeline" the requester sees has **5 stages** (verified in
@@ -309,6 +339,18 @@ Users and approvers now open documents through **`apiDownloadDcsFile`**, which r
 caller is party to that request, confirms the requested file actually belongs to it, and returns the
 bytes to the browser. No Drive URL ever reaches the page.
 
+**Clicking "View" opens the document on the page** *(changed 2026-08-12)* — it no longer forces a
+download into the user's Downloads folder. The point of View is to check what was submitted, not to
+scatter copies of signed contracts across people's laptops, so PDFs and images render in an overlay
+and a Download button sits next to them for when a copy is genuinely wanted. Word and Excel files
+cannot be rendered by a browser, so those show a short notice and the Download button only.
+
+> ⚠️ For maintainers: the viewer must render into the **current page**, never `window.open()`. The
+> apps run inside Apps Script's sandboxed iframe, where popups are blocked and a blob URL is not
+> reliably navigable as a top-level document. The same viewer exists in **three** places — both
+> frontends and `getStyledHtmlWrapper_` in `pia_code.js` (the page an approver reaches from an email
+> link) — and they must be edited together.
+
 **One deliberate exception:** the Certificate of Approval email and PDF sent to DCOPS / TechServe
 carry real links, because an email client cannot call back into the app. Those files are elevated to
 **domain-only** link sharing (never public), only at final-certificate time, and only for that one
@@ -347,6 +389,11 @@ request. See `getAndShareDCSFiles_` in `pia_code.js`.
 
 **Round 2 (2026-08-11)** — prompted by a cross-repository review against the sibling COC portal
 (`docs/Cross-Repo Review - DCS vs COC.md`):
+- **The approval workflow is now append-only.** A resubmit appends a new round instead of deleting
+  the previous one, so approval history can no longer be lost. Two columns (`RoundNumber`,
+  `FlaggedFields`) were added to each of the three workflow sheets; `Revision_History` and its
+  best-effort snapshot were retired, removing ~256 lines of stitching code and a cross-app column
+  mirror between PIA and DCS. Regression test: `testAppendOnlyRounds()`.
 - **Callable surface closed project-wide** (F-09): 178 → 82 public functions, none unguarded.
   Notably `getSystemSecret` had been returning the HMAC signing key to any domain caller, and
   `getAdminData` had been returning every request in the system with all PII.
@@ -358,6 +405,36 @@ request. See `getAndShareDCSFiles_` in `pia_code.js`.
   of the assessment that approvers actually signed off on.
 - **Daily reminders now fail loudly.** A failed pre-filter read used to produce a silent
   zero-reminder run; it now aborts with a logged reason and an `{aborted:true}` return.
+
+**Round 3 (2026-08-12)** — the remaining items from the same cross-repository review:
+- **F-06 closed: no raw exception text ever reaches a browser again.** 89 catch blocks were
+  returning Google's own error message, which quotes the spreadsheet ID and Drive folder ID. They
+  now go through `safeError_`, which logs the real exception and returns a plain message plus a
+  short **reference code**. If a user reports an error, ask for that code and search the
+  Executions log for it. Responses also gained a machine-readable `code`
+  (`UNAUTHORIZED` / `FORBIDDEN` / `NOT_FOUND` / `VALIDATION` / `CONFLICT` / `ALREADY_ACTIONED` /
+  `BUSY` / `INTERNAL`) so the UI can tell failure *types* apart without matching on strings.
+- **Formula-injection guard on Admin → Export to Sheet.** That export is the only place in the
+  system where user-typed text lands in a spreadsheet a person then opens, so a value beginning
+  with `=` stopped being text and ran as a formula under the admin's own Google account. Values
+  are now written as plain text.
+- **Delegation / out-of-office** (`Delegations` sheet + `ActedBy`). ISM can record who covers for
+  an approver on leave; review emails, reminders and the approval link all route to the delegate,
+  and the decision is recorded as made on the original approver's behalf. Approvers **cannot** set
+  their own delegate. Regression test: `testDelegationResolution()`.
+- **Retention & purge — built, and shipped switched OFF.** Nothing in the system had ever deleted
+  personal data. The sweep is complete but inert: it reports what *would* go and deletes nothing
+  until ISM sets a retention period and turns off dry-run. 🚩 **A purge cannot be undone. Run the
+  preview and review it with ISM first.** It also takes over the DCS draft purge, which had been
+  written for a daily trigger that was never installed.
+- **"Where do requests get stuck" dashboard** (Admin → Analytics). Days-waiting buckets plus a
+  most-stuck list, computed from data that already existed — no new columns.
+- **Performance.** All ~150 whole-sheet reads now go through one reader with an opt-in
+  per-request cache, and the database file is opened once per run instead of up to 13 times.
+  Regression test: `testSheetReadCache()`.
+- **One canonical design-token file** (`docs/design-tokens.css`) replacing six drifting copies —
+  including the two backend copies that rendered the approver-facing decision page in the *wrong
+  navy* for months.
 
 Full detail: `docs/Security - Review Findings.md` and `docs/Security - Recommendations.md`
 (reproduced in Appendix, see `appendices.md`).

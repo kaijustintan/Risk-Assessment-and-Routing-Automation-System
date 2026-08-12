@@ -52,7 +52,8 @@ is the unguarded direct-call surface.
 | F-05 | 🟠 High | ⚠️ **Was only half-fixed → ✅ Closed 2026-08-11** | The 2026-06-23 fix guarded `apiPhase3_FetchPIAData`/`FetchDCSData` and `apiGetApplicationData` — the **wrappers**. `getApplicationData` itself stayed a public global, so `google.script.run.getApplicationData('PIA-000123')` still returned the full record for any guessable session id. **The primitive is now `getApplicationData_`.** See §F-05 note below. |
 | F-07 | 🟡 Medium | ✅ Verified PASS | `submitApplication_` already re-checks ownership in-lock + server-computes status; no change needed |
 | F-08 | 🟢 Low | ✅ Fixed | DCS: `getGatewayRecord_` bound to `Session.getActiveUser()` (override ignored) |
-| F-06 | 🟡 Medium | ⏳ Deferred (3b) | Error-message sweep — 58 `error: e.toString()/e.message` sites across 3 files; do as a dedicated pass with a shared `safeError_` helper |
+| F-06 | 🟡 Medium | ✅ Fixed 2026-08-12 | Error-message sweep done. The real count was **89**, not 58 — the original estimate missed the multi-line object literals and the non-`success` envelopes (`{found:false, …, error: err.message}`) in `Phase 1/Code.js`. All now route through `safeError_(e, ERR.INTERNAL)`, one identical copy per project. See the F-06 section below. |
+| — | 🟡 Medium | ✅ Closed 2026-08-12 | **Sheets formula injection in `exportToSheet`** — never had an F-number; it came from the cross-repo review (§IV.10). Applicant free text was written into a NEW spreadsheet an admin then OPENS, so a leading `=` executed as a formula under the admin's identity. Now apostrophe-guarded at both `appendRow` boundaries via `sanitizeCellValue_`, plus a plain-text number format. Deliberately **not** applied to live-DB writes — those cells are `JSON.parse`d. |
 | — | 🟡 Medium | ✅ Closed 2026-08-11 | `adminApi_resendToStage` / `adminApi_resendEmail` / `getFailedEmails` / `getEmailLog` — resolved by **privatization** rather than by a guard, which sidesteps the original concern entirely: they are dispatched only from `handleAdminApi_`'s `switch`, so a trailing underscore breaks no caller and no `checkAccess_` is needed on a possibly-no-active-user external path. |
 
 ### 🔴 F-09 (new, 2026-08-11) — project-wide callable-surface exposure
@@ -190,11 +191,34 @@ purpose, applicant, approval timeline) by sessionId. *(Note: `apiGetApplicationD
 
 ## 4. Medium / Low findings
 
-### 🟡 F-06 — Raw error text returned to the client
-**Checklist:** E-3 Sensitive Info Exposure (CWE-200) · **Score: FAIL (Medium)**
-Multiple endpoints return `{ success:false, error: e.toString()/e.message }` to the UI (e.g.
-`apiGetSystemConfig`, `apiGetRequestData`, Admin `handleAdminApi_` [~522], `deleteEntry` [~1884]).
-Leaks sheet/column names and internal messages. Fix: generic message to user, detail to `Logger` only.
+### 🟡 F-06 — Raw error text returned to the client — ✅ FIXED 2026-08-12
+**Checklist:** E-3 Sensitive Info Exposure (CWE-200) · **Original score: FAIL (Medium)**
+
+**What it was.** Endpoints returned `{ success:false, error: e.toString()/e.message }` straight to
+the browser. GAS exceptions quote the offending resource, so a Drive failure leaked the folder ID
+and a Sheets failure leaked the spreadsheet ID.
+
+**Actual scope: 89 sites, not the 58 originally estimated** (Phase 1: 14, PIA: 32, Admin: 43). The
+undercount came from two shapes the first pass did not look for: multi-line object literals, and
+the non-`success` envelopes in `Phase 1/Code.js` (`{found:false, state:null, error: err.message}`).
+Two of the line references in the original finding were also stale, and `deleteEntry` no longer
+exists anywhere in the repo.
+
+**The fix.** `safeError_(e, code, publicMessage)` — one identical copy per project, since the three
+GAS projects cannot share code. It logs `[ref] CODE :: stack` and returns a generic message plus a
+short **reference code**; the user quotes the ref, the admin finds it in the Executions log. The
+real exception is deliberately **not** written to `Risk_Audit` (log bloat, and a sheet write inside
+an error handler is a second failure waiting to happen).
+
+Responses also gained a machine-readable `code` from a fixed vocabulary (`UNAUTHORIZED`,
+`FORBIDDEN`, `NOT_FOUND`, `VALIDATION`, `CONFLICT`, `ALREADY_ACTIONED`, `BUSY`, `INTERNAL`), so the
+UI can branch on failure *type* instead of string-matching.
+
+🚩 **The envelope is dual-key for one release** — `{ok, code, message}` alongside the legacy
+`{success, error}` — because the three projects deploy independently and a frontend lagging a
+backend is the normal case. Drop the legacy pair from all three backends **and** the three
+frontends in the same change. Verification: the `ok:` count must equal the `success:` count in
+each backend.
 
 ### 🟡 F-07 — Mass-assignment of raw PIA cells in `submitApplication`
 **Checklist:** Z-6 / CWE-915 · **Score: NEEDS-EVIDENCE (Medium)**

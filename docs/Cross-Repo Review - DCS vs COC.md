@@ -868,14 +868,40 @@ string into source next to `ENABLED_DOMAIN_CHECK`, since they are one control sp
 | Accessibility | `:focus-visible` on nav and tabs, keyboard activation for `role="button"` rows, label/id association on all fields, amber token darkened to `#8a5510` for AA contrast, `.table-scroll` so wide tables scroll independently | 88 a11y attributes total across 6,897 lines; **3** `:focus-visible` uses; 1 `prefers-reduced-motion` block; no `.table-scroll` equivalent | DCS is behind on keyboard and contrast |
 | Router | `navigateTo()` single entry, `replaceState` (deliberate, app supplies its own Back), `afterRender_<page>` hook | `show(name)` + `renderCurrentScreen()` + `renderWithErrorBoundary` | Roughly equivalent. **DCS's error boundary is better** and COC should take it (§II.12f) |
 
+> ⚠️ **Three claims in the table above were checked against the code on 2026-08-12 and were
+> wrong or stale. Corrected here rather than deleted, so the same mistakes are not re-made:**
+>
+> 1. **"Emoji as UI icons … throughout" — overstated.** The cited `📄 View Endorsement Letter` at
+>    `pia_index.html:3558` no longer existed. Actual count across all three frontends was **7**,
+>    all `⚠`/`✓`/`✗` semantic glyphs, now inline SVG via `icon()`. The ~127 emoji in `pia_code.js`
+>    are inside `Logger.log` — developer-facing, useful as grep anchors, and left alone.
+> 2. **"Three separate copies" of the palette — there were SIX.** Each backend also emits its own
+>    `:root` in `getStyledHtmlWrapper_`, and those used a *different navy* (`#1a3a5c` vs the
+>    canonical `#1e3a5f`). That is the page an approver lands on from an email link, so it was the
+>    most visible drift and the one nobody had noticed.
+> 3. **"One `:root` block" implies the three were otherwise identical — they were not.** Effective
+>    `--radius` was 4px (DCS), 6px (PIA) and 10px (Admin), the last because Admin re-declared it
+>    further down its own block, silently overriding the shared token above it.
+
 **Recommendation for DCS, in order:**
 1. Add a `callServer(fnName, ...args)` promise bridge and migrate call sites opportunistically. Cheap,
    immediately useful, and it is the prerequisite for uniform loading/error states.
-2. Extract the `:root` token block into a single canonical copy in this repo and treat the three
-   in-file copies as generated. Even without runtime sharing, one source file that gets pasted three
-   times beats three independently-edited files.
-3. Replace emoji icons with inline SVG. COC's `renderIcon(name, size)` returning a Lucide path using
-   `currentColor` is directly portable.
+2. ✅ **DONE 2026-08-12** — `docs/design-tokens.css` is now that canonical copy, pasted into **six**
+   targets (three frontends + the `getStyledHtmlWrapper_` block in each backend), each marked
+   `GENERATED from docs/design-tokens.css`. Runtime sharing is impossible not only across projects
+   but even *within* Phase 1: its `doGet` uses `createHtmlOutputFromFile`, which does not process
+   scriptlets at all, so an `include()` partial would emit as literal text.
+   ~~Extract the `:root` token block into a single canonical copy in this repo and treat the three
+   in-file copies as generated.~~
+3. ✅ **DONE 2026-08-12** — `icon(name, size)` added to `index.html` and `adminView.html`, Lucide
+   paths on `currentColor`, zero network requests, exactly as COC's `renderIcon` does it. Only 7
+   glyphs needed replacing (see the correction note above). One constraint worth recording: the
+   helper returns HTML, so it works only where the sink is `innerHTML`. Through `textContent` or
+   `summaryRow()` (which HTML-escapes its value) it renders as literal markup — in those places the
+   glyph was **dropped** rather than substituted, because a tick inside a sentence is punctuation,
+   not an icon. Switching those sinks to `innerHTML` would have introduced an XSS surface, since the
+   interpolated value is a user-supplied filename.
+   ~~Replace emoji icons with inline SVG.~~
 4. Do an accessibility pass mirroring COC's: `:focus-visible`, keyboard activation on clickable rows,
    label/id association, and a table-scroll wrapper.
 
@@ -914,6 +940,8 @@ first. Auto-repair only after you have seen a month of clean reports.
 
 ### IV.2 Delegation and out-of-office
 
+✅ **DONE 2026-08-12.** Implemented for DCS/PIA as an **admin-managed** `Delegations` sheet + `ActedBy` on each workflow row. Approvers cannot appoint their own stand-in. Single-hop, no chaining. The hard part was not the table: the review token is HMAC-signed over the approver's email, so the delegate is resolved at **notify** time and the token minted over *their* address — see `recipientFor_` / `canActAs_` in `pia_code.js`.
+
 **Both.** Neither system handles an approver being on leave. COC's only remedy is an admin editing the
 chain, which changes it for every in-flight request in that group at once. DCS's is worse: the head
 emails are baked into each request at submit time, so there is no chain to edit.
@@ -931,6 +959,8 @@ Terminal status `Withdrawn`, owner-only, only from a pending state, notifies the
 
 ### IV.4 Error-code vocabulary and no raw exception text to the client
 
+✅ **DONE 2026-08-12.** For DCS. All **89** sites (not the 58 estimated — see the F-06 note) now use `safeError_`, and the `code` vocabulary landed as `ERR.*`. Shipped as a **dual-key** envelope (`{ok, code, message}` + legacy `{success, error}`) for one release, because the three GAS projects deploy independently. COC unchanged.
+
 **Both.** COC §12.11: mutations variously return `{success:false, error}` or `{success:false, message}`,
 and there is no error-code vocabulary, so the UI cannot branch on failure *type* without string
 matching. DCS has the same inconsistency plus a worse variant, recorded in its own security doc as
@@ -945,6 +975,8 @@ the real exception is logged server-side, because Drive exceptions echo the offe
 Generalize that one function's discipline to every handler in both systems.
 
 ### IV.5 SLA/aging metrics and bottleneck reporting
+
+✅ **DONE 2026-08-12.** For DCS, in Admin → Analytics: days-waiting buckets plus a most-stuck list. Confirmed the raw material was already there — `NotifiedDate` on all three workflow sheets, **zero new columns**. Round-scoped, since this asks "who acts next". COC unchanged.
 
 **Both.** DCS has an analytics tab; COC has stat cards. Neither answers the question management will
 ask within a month of go-live: *where do requests get stuck, and for how long?*
@@ -994,6 +1026,8 @@ storing `status` and `step` separately rather than encoding the step into the st
 
 ### IV.9 Retention, purge, and PII hygiene
 
+✅ **DONE 2026-08-12.** For DCS — **built but shipped inert.** The blocker noted below ("needs a policy decision from ISM") is real, so the engine is complete and switched OFF: it reports what would go and deletes nothing until ISM sets `RETENTION_MONTHS` and turns off dry-run. Lives in Admin because Phase 1 has neither `script.scriptapp` nor a purge path. Also took over the DCS draft purge, which had been written for a trigger that was never installed. COC unchanged.
+
 **Both.** Both store real personal data in Google Sheets indefinitely. DCS additionally logs email
 addresses into `Risk_Audit` on every action, and its own recommendations doc flags "PII sa logs" as
 open. Neither has a documented retention period or a purge job (DCS purges *drafts* at 7 days, nothing
@@ -1004,6 +1038,8 @@ the period to a cold spreadsheet and redacts the PII columns in the live one. Fo
 2 is literally a Privacy Impact Assessment, not having a retention policy is an awkward look.
 
 ### IV.10 Sheets formula injection
+
+✅ **DONE 2026-08-12.** For DCS. `sanitizeCellValue_` apostrophe-guards both `appendRow` boundaries in `exportToSheet`, plus a plain-text number format. Worse than described: `formatExportCell` **explodes JSON blobs into `key: value` lines**, so PIA answers normally inert behind a leading `{` were being unpacked. Deliberately not applied to live-DB writes (those cells are `JSON.parse`d). COC unchanged.
 
 **Both.** Neither defends against a value beginning with `=`, `+`, `-`, or `@` being written into a
 cell. COC notes the exposure is low because data is read back through the API rather than evaluated in
@@ -1042,7 +1078,7 @@ Effort is calibrated to this project: **Low** ≈ under a day, **Medium** ≈ 1-
 | 6 | **Make the reminder pre-filter fail closed** | DCS | `pia_code.js:5277` currently catches a read failure and proceeds to "process all pending rows," which blasts reminders at every approver in the system including on completed/denied requests. | None | III.10e |
 | 7 | **Move `ADMIN_API_KEY` out of module scope into a memoized getter** | DCS | A `PropertiesService` call at file-load fires on every execution and a failure there is an uncatchable script-load error that kills the whole app. Also makes key rotation take effect. | None | III.8 |
 | 8 | **Add `.trim()` to `getProp_` / config reads** | DCS | Pasting a Drive ID into the Properties UI routinely picks up whitespace; `getFolderById(" 1abc ")` fails opaquely. COC learned this the hard way. | None | III.8 |
-| 9 | **Escape leading `= + - @` before writing cells, especially in `exportToSheet`** | DCS (then COC) | DCS exports the dashboard into a Spreadsheet a human opens, so formula injection is genuinely exploitable, unlike in COC. | None | IV.10 |
+| 9 | **[DONE 2026-08-12 (DCS). Worse than described: formatExportCell explodes JSON blobs into "key: value" lines, so PIA answers normally inert behind a leading { were being unpacked into injectable cells.]** **Escape leading `= + - @` before writing cells, especially in `exportToSheet`** | DCS (then COC) | DCS exports the dashboard into a Spreadsheet a human opens, so formula injection is genuinely exploitable, unlike in COC. | None | IV.10 |
 | 10 | **Adopt DCS's render error boundary** | COC | One bad renderer currently white-screens the app. | None | II.12f |
 | 11 | **Narrow COC's mail scope to `gmail.send`** | COC | `mail.google.com` grants full mailbox read/delete for a system that only sends. | Forces re-auth on next deploy | II.12a |
 | 12 | **Copy `isOwnerContext_()` into DCS and guard the trigger handlers** | DCS | `processEmailQueue`, `sendDailyReminders`, `purgeExpiredDrafts`, `setupReminderTrigger` and the `test*` functions are public send-amplifiers. Any user can loop them and burn the daily Gmail quota, which then silently disables all workflow mail. | None | III.3 |
@@ -1064,12 +1100,12 @@ Effort is calibrated to this project: **Low** ≈ under a day, **Medium** ≈ 1-
 | 21 | **Replace full-sheet reads with `createTextFinder` in PIA and Admin** | DCS (then COC) | 132 full-sheet reads in `pia_code.js`, 15 in `admin_code.js`, and the correct pattern already exists in `Phase 1/Code.js` (24 uses). Directly fixes COC §12.4 too. | Must copy the *whole* pattern (`findAll()` + take-last + re-read inside the lock), not just the API call | II.5 |
 | 22 | **Magic-byte upload validation** | COC | COC currently accepts any file type and trusts the client-supplied MIME for the blob. 15 lines. | Rejects some legitimately weird files. Does not address macros, which is open on both sides | II.6 |
 | 23 | **Unified error shape + `safeError_` helper** | Both | DCS leaks raw GAS exceptions at 58 sites (its own F-06, deferred); those echo Drive/Sheets resource IDs. Neither UI can branch on failure type. | Touches every handler; do it as one mechanical pass | IV.4 |
-| 24 | **`callServer()` bridge + single design-token source + SVG icons + a11y pass** | DCS | Three drifting copies of the palette, 20+ hand-rolled RPC handlers, emoji as UI icons (against this project's own frontend rules), 3 `:focus-visible` uses in 6,897 lines. | Incremental; migrate call sites opportunistically | III.9 |
+| 24 | **[PARTIAL 2026-08-12 (DCS). Design tokens unified (six copies, not three) and emoji icons replaced. The callServer() bridge and the a11y pass are still open.]** **`callServer()` bridge + single design-token source + SVG icons + a11y pass** | DCS | Three drifting copies of the palette, 20+ hand-rolled RPC handlers, emoji as UI icons (against this project's own frontend rules), 3 `:focus-visible` uses in 6,897 lines. | Incremental; migrate call sites opportunistically | III.9 |
 | 25 | **Approver-chain phase A+B: directory validation, then a department→heads registry with logged overrides** | DCS | Converts the integrity control from detection to prevention. Today an applicant types their own approvers and the only defense is an after-the-fact flag that does not block anything. | Prefilled read-only fields will generate "my head isn't listed" tickets; the override path must exist from day one | III.4 |
 | 26 | **Extract pure functions and unit-test them under Node** | Both | Both have real candidates that need zero infrastructure. Converts a manual runbook into `node --test`. | Genuinely does not test the Sheets/Gmail/Session layer, which is where most bugs live | IV.7 |
 | 27 | **Weekly reconciler report (report only, no auto-fix)** | Both | Nothing currently detects divergence between cached status and the authoritative rows. | Report first for a month before considering auto-repair | IV.1 |
 | 28 | **Daily health digest to ISM** | Both | Both systems' failure mode is silence. DCS already computes most of the inputs and reports none of them. | ~10 lines | IV.6 |
-| 29 | **SLA/aging metrics** | Both | Management will ask "where do requests get stuck" within a month of go-live, and neither system can answer. | None; the raw data already exists in both | IV.5 |
+| 29 | **[DONE 2026-08-12 (DCS). Admin -> Analytics. Confirmed the raw material already existed: NotifiedDate on all three workflow sheets, zero new columns.]** **SLA/aging metrics** | Both | Management will ask "where do requests get stuck" within a month of go-live, and neither system can answer. | None; the raw data already exists in both | IV.5 |
 
 ---
 
@@ -1079,10 +1115,10 @@ Effort is calibrated to this project: **Low** ≈ under a day, **Medium** ≈ 1-
 |---|---|---|---|---|---|
 | 30 | **Append-only workflow: stop deleting rows on resubmit** | DCS | Today a resubmit deletes all three workflow sheets' rows for the session, and the trail survives only via an explicitly non-blocking snapshot. If it throws, the round is gone and nothing notices. Steps: add `RoundNumber` → append rounds instead of delete+rebuild → retire the snapshot. | Touches the submit path, every workflow reader, the reminder engine, and the certificate builder. Do it in the three ordered steps in §III.1, each independently shippable | III.1 |
 | 31 | **Accessor seam per project + generated column maps + header assertions** | DCS | The `getPIARecordByDCSId_` `'B:B'` bug (`7590b7c`) is exactly what this prevents, and it reached production. Also the prerequisite for item 21 landing cleanly. | Multi-week. Can be done sheet-by-sheet with no behavior change. GAS cannot share files across projects, so this is three parallel seams over one generated schema | III.2 |
-| 32 | **Delegation / out-of-office** | Both | The most commonly requested post-launch feature in any approval system, and neither can do it. DCS is worse off because heads are baked into each request at submit. | Adds a resolution step to every notify path and a new concept to the audit trail | IV.2 |
+| 32 | **[DONE 2026-08-12 (DCS). Admin-managed only, single-hop. The real cost was not the table but the HMAC token, which is signed over the approver email, so the delegate is resolved at notify time.]** **Delegation / out-of-office** | Both | The most commonly requested post-launch feature in any approval system, and neither can do it. DCS is worse off because heads are baked into each request at submit. | Adds a resolution step to every notify path and a new concept to the audit trail | IV.2 |
 | 33 | **Config-driven step count and stage conditions** | Both | COC is hard-capped at 3 while its schema and its own comments claim "unlimited"; a hand-added `sequence = 4` row silently locks the request out permanently with no error. DCS hardcodes 2+2. | For COC, lifting the cap means changing the `STATUS` enum, which is a frozen DTO in filters, subjects, and badge maps. **Decouple `status` from `step` first** | IV.8 · III.7 |
 | 34 | **Workspace-directory-sourced approver chains** | DCS | Phase C of item 25, and the real answer: the chain maintains itself and cannot be gamed. Already in `docs/Security - Recommendations.md` §2. | New OAuth scope (`admin.directory.user.readonly`), forced re-auth, and a dependency on directory hygiene that may not exist | III.4 |
-| 35 | **Retention policy + archival/purge + PII redaction in logs** | Both | Both store real personal data in Sheets forever. For a system whose Phase 2 is a Privacy Impact Assessment, this is an awkward gap. | Needs a policy decision from ISM before any code | IV.9 |
+| 35 | **[BUILT BUT INERT 2026-08-12 (DCS). The "needs a policy decision from ISM" blocker is real, so the sweep ships disabled and dry-run: it reports, it does not delete. PII-in-logs redaction is still open.]** **Retention policy + archival/purge + PII redaction in logs** | Both | Both store real personal data in Sheets forever. For a system whose Phase 2 is a Privacy Impact Assessment, this is an awkward gap. | Needs a policy decision from ISM before any code | IV.9 |
 | 36 | **Consolidate DCS's three projects, or extract a shared library** | DCS | Admin duplicates PIA's `notifyApprover` / `notifyApplicant` / `apiPhase3_NotifyISMember`, its own `escapeHtml`, its own retry wrapper, and its own certificate builder. Every email-template change is a 2-project edit. `CLAUDE.md` correctly warns not to "sync the names," which is a symptom, not a solution. | Very high risk. A GAS **Library** is the low-risk middle path (shared code, versioned, no deployment-URL change), at the cost of a per-call performance hit and a version-pinning discipline. **Do not attempt before item 31** | I.1 · II.10 |
 
 ---

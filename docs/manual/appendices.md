@@ -54,6 +54,43 @@
 - **Loophole/hardening pass:** queue-fallback for the final applicant email, safe TechServe
   fallback (no PII to the wrong team), and a document-required backend check.
 
+### August 2026 session — cross-repo review backlog cleared
+Prompted by `docs/Cross-Repo Review - DCS vs COC.md`. Two waves.
+
+**Wave 1 (2026-08-11) — append-only approvals + callable surface.** A resubmit no longer deletes
+the previous round's approvals; `Revision_History` retired. Callable surface closed project-wide
+(178 → 82 public functions). Uploaded documents made private. Answer snapshots added.
+See [§0.6 Hardening history, Round 2](part-0-common.md#hardening-history).
+
+**Wave 2 (2026-08-12) — the remaining seven items.**
+- **No raw error text reaches a browser** (finding F-06, closed). 89 catch blocks were handing
+  Google's own error message to the user, and those quote the spreadsheet and Drive folder IDs.
+  Users now see a plain sentence plus a short **reference code**; ask for that code and search the
+  Executions log for it. Errors also carry a machine-readable type so the UI can distinguish
+  "not allowed" from "system busy" ([§0.6](part-0-common.md#06--security-model)).
+- **Export to Sheet is no longer formula-injectable.** A request whose text began with `=` used to
+  execute as a spreadsheet formula the moment an admin opened the export, under the admin's own
+  Google account ([Part 3](part-3-admin.md)).
+- **Approver delegation / out-of-office** — new `Delegations` tab + `ActedBy` column. ISM records
+  who covers an approver on leave; emails, reminders and the approval link all follow.
+  🚩 **ISM-managed only** — approvers cannot pick their own stand-in, and it is **not retroactive**
+  (use Email Routing → Resend for mail already sent) ([Part 3](part-3-admin.md)).
+- **Retention & purge — built and shipped SWITCHED OFF.** Nothing had ever deleted personal data.
+  The sweep reports what *would* go and deletes nothing until ISM sets a period and turns off
+  dry-run. 🚩 **A purge cannot be undone — preview it with ISM first.** It also takes over the DCS
+  draft purge, which had been written for a trigger that was never installed.
+- **"Where do requests get stuck" panel** in Admin → Analytics: days-waiting buckets and a
+  most-stuck list, from data that already existed.
+- **Performance** — ~150 whole-sheet reads unified behind one reader with an opt-in per-request
+  cache; the database file is now opened once per run instead of up to 13 times.
+- **One canonical design-token file**, replacing six drifting copies — including two that had been
+  rendering the approver-facing decision page in the wrong navy.
+- **"View" now shows the document on the page** instead of downloading it. PDFs and images open in
+  an overlay; Word/Excel still download, since browsers cannot display them. Applies everywhere
+  documents are listed, including the approver's review page.
+
+Detail: [§0.6 Hardening history, Round 3](part-0-common.md#hardening-history).
+
 ### Recent commits (newest first)
 | Commit | Summary |
 |--------|---------|

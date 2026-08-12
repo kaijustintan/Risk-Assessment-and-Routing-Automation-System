@@ -1,0 +1,89 @@
+/*
+  FILE: docs/design-tokens.css
+
+  LAYMAN (Tropang Ex):
+  Ito yung IISANG pinagmumulan ng lahat ng kulay, sukat ng corner, font at bilis ng
+  animation ng buong RARS. Dati, may sariling kopya ang bawat app — kaya nag-drift:
+  iba't iba na ang pagka-bilog ng corners (4px sa DCS, 6px sa PIA, 10px sa Admin), at
+  ibang navy pa ang lumalabas sa mga page na nakikita ng approver galing sa email.
+
+  Kapag may babaguhin kang token: DITO mo baguhin, tapos i-paste sa ANIM na lugar sa baba.
+  Huwag i-edit yung kopya nang diretso — mababalik lang yung drift.
+
+  TECHNICAL:
+  Canonical copy of the 31-variable `:root` token block. This file is NOT loaded at
+  runtime and cannot be — RARS is three independent Google Apps Script projects with no
+  library binding between them, and Phase 1's doGet uses createHtmlOutputFromFile (which
+  does not process scriptlets at all), so even a same-project <?!= include('tokens') ?>
+  is unavailable there. Repo-side source of truth + deliberate paste is the correct shape
+  for this architecture, and is what the cross-repo review recommended.
+
+  🚩 THE SIX PASTE TARGETS (all must match this file byte-for-byte):
+
+    FRONTENDS (the three main app pages)
+      1. Phase 1/index.html        :root in the <style> block
+      2. Phase 2/pia_index.html    :root in the <style> block
+      3. Admin/adminView.html      :root in the <style> block  — Admin then ADDS 71 of its
+                                   own aliases (--slate-*, --indigo-*, shadows, sidebar
+                                   metrics). Those stay Admin-only; do not hoist them here.
+
+    BACKENDS (the server-rendered pages an approver lands on from an email link)
+      4. Phase 1/Code.js           getStyledHtmlWrapper_
+      5. Phase 2/pia_code.js       getStyledHtmlWrapper_
+      6. Admin/admin_code.js       getStyledHtmlWrapper_
+
+  ⚠️ Targets 4-6 are the ones everyone forgets, and they were the worst drift: they used
+  navy #1a3a5c instead of the canonical #1e3a5f. Those are not internal pages — that is
+  the "Approve / Return" screen a Division Head sees. Check them when you change a colour.
+
+  RESOLVED DRIFT (2026-08-11), for the record:
+    --radius       4px  (was 6px in PIA, 10px in Admin, 6px in the backend wrappers)
+    --radius-lg    9px  (was 12px in PIA, 14px in Admin, 12px in the backend wrappers)
+    --danger-text  the var() passthrough (PIA had a hardcoded #dc2626, which is also
+                   lighter than #991b1b and failed AA against the pale danger background)
+    --navy family  #1e3a5f (the three backend wrappers were on #1a3a5c)
+
+  The `var(--color-*, fallback)` passthrough form is deliberate: it lets a host page
+  override a token, and falls back to the literal when nothing does. Keep the pattern.
+*/
+
+:root {
+  /* Pass-through system tokens */
+  --bg:      var(--color-background-primary,    #ffffff);
+  --bg2:     var(--color-background-secondary,  #f7f8fa);
+  --bg3:     var(--color-background-tertiary,   #eff1f5);
+  --text:    var(--color-text-primary,          #111827);
+  --text2:   var(--color-text-secondary,        #4b5563);
+  --text3:   var(--color-text-tertiary,         #9ca3af);
+  --border:  var(--color-border-tertiary,       #e5e7eb);
+  --border2: var(--color-border-secondary,      #d1d5db);
+  --radius:  var(--border-radius-md,            4px);
+  --radius-lg: var(--border-radius-lg,          9px);
+  --font:    var(--font-sans,                   'DM Sans', system-ui, sans-serif);
+  --font-mono: var(--font-mono,                 'DM Mono', monospace);
+
+  /* success/warning/danger */
+  --success:      var(--color-background-success,  #ecfdf5);
+  --success-text: var(--color-text-success,        #065f46);
+  --danger:       var(--color-background-danger,   #fef2f2);
+  --danger-text:  var(--color-text-danger,         #991b1b);
+  --warn:         var(--color-background-warning,  #fffbeb);
+  --warn-text:    var(--color-text-warning,        #92400e);
+
+  /* Navy blue palette (Megaworld Corp.) */
+  --navy:         #1e3a5f;
+  --navy-mid:     #2a5285;
+  --navy-bright:  #3b76c4;
+  --navy-glow:    rgba(30, 58, 95, 0.12);
+  --navy-tint:    #f4f7fb;
+  --navy-text:    #0f2238;
+  --navy-border:  rgba(30, 58, 95, 0.18);
+
+  /* Motion */
+  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:   cubic-bezier(0.4, 0, 1, 1);
+  --ease:      cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast:  140ms;
+  --dur-med:   240ms;
+  --dur-slow:  400ms;
+}

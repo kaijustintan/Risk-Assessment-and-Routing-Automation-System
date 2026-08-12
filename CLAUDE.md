@@ -407,15 +407,18 @@ member picks `EscalateToDivisionHead` (`apiPhase3_ProcessISMDecision` ~7154):
   DivHead approve resumes the chain to them), the Division Head is reviewed **once per
   escalation** (the prior DivHead row is already resolved, so a fresh Pending one is created).
 
-**🔁 Return = FULL restart, not resume.** A "Return" from **any** approver (head, InfoSec, or
-DivHead) always bounces to the **applicant** — never to a previous approver. On resubmit,
-`submitApplication` **deletes all** `Approval_Workflow` + `ISM_Approval_Workflow` +
-`DivisionHead_Approval_Workflow` rows for that session and **rebuilds the ladder from Stage A,
-Step 1 (Immediate Head)**. All prior approvals are wiped; nothing resumes mid-chain. Lineage is
-kept via a revision id (`-V2`, `-V3`…) but approval progress resets to zero. (`pia_code.js`
-~3790.) ⚠️ **Return ≠ Deny:** Return is a fixable loop; Deny/Reject is terminal. And if the
-linked **DCS** is `Returned`, PIA resubmission is **blocked** until the DCS is fixed first
-(`pia_code.js` ~3730).
+**🔁 Return = FULL restart of the ladder, but NOT a deletion of history.** A "Return" from **any**
+approver (head, InfoSec, or DivHead) always bounces to the **applicant** — never to a previous
+approver. On resubmit, `submitApplication_` **appends a new round** (`RoundNumber = N+1`) starting at
+Stage A Step 1, and **the previous round's rows are kept**. Approval *progress* resets to zero;
+approval *history* does not. Nothing resumes mid-chain.
+
+⚠️ Until 2026-08-11 this path **deleted** the prior rows and relied on a best-effort photocopy — see
+the append-only section further down for why that changed and what replaced it. If you are reading
+older notes that say "deletes all rows," they describe the retired behaviour.
+
+⚠️ **Return ≠ Deny:** Return is a fixable loop; Deny/Reject is terminal. And if the linked **DCS** is
+`Returned`, PIA resubmission is **blocked** until the DCS is fixed first.
 
 **📧 Email links — how they're built & why they break.** All workflow emails (approver review,
 ISM, reminders, applicant status) build their links **at send time** from Script Properties,
@@ -539,43 +542,263 @@ callers stamp that status immediately before invoking it (ISM `~7862`→`~7871`,
 > breaking scriptlet resolution would mean no page renders at all. Low severity (it returns project
 > HTML, not user data) against a high blast radius. Same call, for the same reason, as COC's.
 
-**🗒 History is NOT append-only — it's destructive-with-snapshot.** On resubmit, `submitApplication_`
-**deletes all rows** for the session from `Approval_Workflow`, `ISM_Approval_Workflow`, and
-`DivisionHead_Approval_Workflow` and clears `Approver_Flags`. The trail survives only because
-`writeRevisionHistorySnapshot_` copies actioned rows into the append-only `Revision_History` sheet
-*first*.
+**🗒 The approval workflow IS append-only (since 2026-08-11). Nothing is deleted on resubmit.**
 
-> **🚩 2026-08-11 — the resubmit path also OVERWRITES the answers, and that half is now snapshotted
-> too.** `Applications.PIA_1_Data … PIA_5_Data` are `setValue`'d over in place. `Revision_History`
-> stores the **decisions** of a round ("X approved, here is the comment") but never stored the
-> **submission** those decisions were made against, so "what exactly did the Department Head approve
-> in round 1?" had no answer anywhere in the system. For a Privacy Impact Assessment that is a
-> compliance gap, not a nice-to-have.
+> **What it used to be, and why it changed.** `submitApplication_` used to **delete every row** for
+> the session from all three workflow sheets and rebuild the ladder from Stage A Step 1. That delete
+> was never a business requirement — the rule is only "a return restarts the ladder." It existed
+> because the sheets had **no round column**, so a `SessionID = X AND Status = 'Pending'` scan could
+> not tell a live row from an abandoned one (classic case: ISM member 2 is still `Pending` when ISM
+> member 1 returns the request; append round 2 without a discriminator and routing matches both).
 >
-> New sheet **`Application_Snapshots`** (`APPLICATION_SNAPSHOT_COLS`), written by
-> `writeApplicationSnapshot_` immediately before the overwrite, inside the same lock, keyed by the
-> same `(SessionID, RoundNumber)` pair as `Revision_History`. **Read the two together.**
->
-> It is a separate tab on purpose: `REVISION_HISTORY_COLS` is **mirrored in `Phase 1/Code.js`
-> (`getRevisionHistoryRows_`)**, so widening that sheet would be a cross-app contract break of
-> exactly the kind §2 forbids.
->
-> Its failure path is the point: still non-blocking (a history failure must never block a resubmit),
-> but a failure now writes a **`Snapshot Failed` row into `Risk_Audit`** instead of vanishing into a
-> `Logger.log`. Silent loss was the defect; blocking the user was never the fix.
+> Wiping was the cheap way to guarantee one answer, and `Revision_History` existed purely as a
+> photocopy taken before the shredding. It cost: a **silent-loss path** (the snapshot was
+> try/catch + non-blocking, so a failure lost the round with no signal), a **deliberately lossy**
+> record (`status === 'Pending'` rows were dropped, never copied), and **256 lines across two
+> projects** whose only job was to stitch the two sources back together.
+
+**How it works now:**
+- `APPROVAL_COLS` / `ISM_WORKFLOW_COLS` / `DIV_HEAD_CONFIG_COLS` each gained **`ROUND_NUMBER`** and
+  **`FLAGGED_FIELDS`**, appended at the end so no existing index shifted.
+- A resubmit **appends round N+1**; earlier rounds stay untouched and are the authoritative history.
+- **`getCurrentRound_(sessionId)`** derives the live round as `MAX(RoundNumber)` across the three
+  sheets. **`roundOf_(row, cols)`** reads a row's round, treating blank as **1** — which is what
+  makes every pre-change row still behave correctly with no migration.
+- **`rowMatches_(row, cols, sessionId, round)`** is the one predicate every scan should use, and it
+  makes the critical distinction explicit at the call site:
+  - `round = <n>` → **routing** read ("who acts next?"). Must be scoped, or a stale row hijacks it.
+  - `round = null` → **history / authorization** read ("what happened?" / "were they ever party to
+    this?"). Must span all rounds.
+- 🚩 **`isAuthorizedForApplication_` is deliberately NOT round-scoped** and scans `Approval_Workflow`
+  directly. `appData.approvers` carries only the current ladder, so scoping authorization too would
+  silently revoke view access from anyone who approved an earlier round.
+- `writeDecisionFlags_` persists what each approver flagged onto **their own decision row**, which is
+  what replaced `Revision_History.FlaggedFields`.
+- **`Revision_History` is retired.** `writeRevisionHistorySnapshot_`, `getRevisionHistorySheet_`,
+  `getRevisionHistory_`, `REVISION_HISTORY_COLS` and DCS's mirrored `getRevisionHistoryRows_` are all
+  deleted. `getUnifiedHistory_` is now one scan (`collectAllRoundDecisions_`) instead of a union.
+- DCS reads history via **`getApprovalHistoryRounds_`**, which resolves columns **by header name**
+  (`getHeaderIndexMap_`) instead of the old mirrored index map — so PIA can add a column without
+  breaking Phase 1. Its trackers keep showing the current round only (`keepCurrentRound_`); Admin
+  does the same via `keepCurrentRoundRows_`.
+- Regression test: **`testAppendOnlyRounds()`** (editor-run, self-cleaning) asserts round retention,
+  round increment, flag persistence, and that an abandoned round-1 `Pending` row is never matched at
+  round 2.
+
+**Still true:** `Approver_Flags` on the `Applications` row is still cleared on resubmit (it is the
+working copy for the current round), and `Applications.PIA_1..5_Data` is still **overwritten** —
+which is why `Application_Snapshots` exists and must stay.
+
+**🗒 `Application_Snapshots` — the answers, and why it is NOT the same kind of thing.**
+
+`Applications.PIA_1_Data … PIA_5_Data` are still `setValue`'d over in place on resubmit. The
+workflow sheets record the **decisions** of a round ("X approved, here is the comment") but not the
+**submission** those decisions were made against — so "what exactly did the Department Head approve
+in round 1?" had no answer anywhere. For a Privacy Impact Assessment that is a compliance gap.
+
+`writeApplicationSnapshot_` writes one row to **`Application_Snapshots`** immediately before the
+overwrite, inside the same lock, keyed by the same `(SessionID, RoundNumber)` pair the workflow rows
+use. **Read the two together.**
+
+> ⚠️ **Do not "simplify" this away along with `Revision_History`.** They are different animals.
+> `Revision_History` was a copy-before-**DELETE** of rows that never needed deleting — a workaround,
+> correctly retired. This is a copy-before-**UPDATE** of a genuinely single-current-state row that
+> every app looks up by `SessionID`; versioning it into multiple rows would break every reader.
+> Current-state row + separate history table is the right pattern here.
+
+Its failure path is the point: still non-blocking (a history write must never block a resubmit), but
+a failure writes a **`Snapshot Failed` row into `Risk_Audit`** instead of vanishing into a
+`Logger.log`. Silent loss was the defect; blocking the user was never the fix.
 
 Respect these properties when editing the resubmit path:
-- The snapshot is **best-effort and explicitly non-blocking** ("a history-write failure must NEVER
-  block a resubmit"). If it throws, that round's *decisions* are gone. Don't add work inside it that
-  can fail. (The newer `writeApplicationSnapshot_` at least self-reports into `Risk_Audit`.)
-- `RoundNumber` is **derived** by scanning max-prior-round + 1 (~3048), safe only because it runs inside
-  `submitApplication`'s lock. Don't call it from an unlocked context.
-- Only **non-Pending** rows are snapshotted (~3072) — a round where nobody acted leaves no trace.
-- The **current** round is never in `Revision_History`; read paths must union it with the live workflow
-  sheets (`collectCurrentRoundDecisions_`). Any new history reader has to do the same union.
+- Round derivation runs **inside `submitApplication_`'s lock**. `getCurrentRound_` is only race-free
+  there. Don't move it to an unlocked context.
+- The snapshot must run **before** the `setValue` block and **before** `Approver_Flags` is cleared.
+  Read the prior row **once**, up front, and pass that same array along.
+- Any **new history reader** should call `getUnifiedHistory_` (PIA) or `getApprovalHistoryRounds_`
+  (DCS). Do not hand-roll another workflow scan — that is how the old union logic drifted.
+- Any **new routing scan** must pass a round to `rowMatches_`. Forgetting it reintroduces the exact
+  bug the delete was hiding, and it will not show up until someone resubmits.
 
-`Risk_Audit` (`logDCSAuditTrail`, `Phase 1/Code.js:2018`) *is* genuinely append-only, but it logs
+`Risk_Audit` (`logDCSAuditTrail_`, `Phase 1/Code.js`) *is* genuinely append-only, but it logs
 risk/action events, not the approval timeline. Don't confuse the two.
+
+---
+
+## 8c. The 2026-08-12 batch — error contract, read cache, delegation, retention, aging
+
+> Seven items from `docs/Cross-Repo Review - DCS vs COC.md` shipped together. Each one added a
+> convention that later code has to respect. Read the four 🚩 rules below before touching the
+> affected paths.
+
+### 🚩 The error contract is DUAL-KEY, for one release only
+
+Every backend failure now returns **both** shapes in one object:
+
+```js
+{ ok:false, code:'NOT_FOUND', message:'…', ref:'7f3a91',
+  success:false, error:'…' }        // ← legacy pair, delete next release
+```
+
+`ok` / `code` / `message` is the contract going forward. `success` / `error` exist **only** so
+an unmigrated frontend call site keeps working — the three GAS projects deploy independently,
+so backend/frontend version skew is the normal case, not an edge case.
+
+- **`ERR` / `ERR_MESSAGES` / `fail_(code, msg)` / `safeError_(e, code, publicMsg)`** — one
+  identical copy per project. They cannot be shared; **edit all three together.**
+- **In a catch block, always `return safeError_(e, ERR.INTERNAL)`.** Never
+  `error: e.toString()`. GAS exceptions echo the spreadsheet ID and Drive folder IDs — that was
+  finding **F-06**, and all 89 sites are now closed. The real exception goes to `Logger.log`
+  only, keyed by `ref`; the user reads the ref back to you and you find it in the Executions log.
+- ⚠️ **Deliberately NOT written to `Risk_Audit`.** An audit row per error is the log-bloat
+  pattern this repo avoids elsewhere, and a sheet write inside an error handler is a second
+  failure waiting to happen.
+- **Every** `success: true/false` now carries a mirrored `ok:`. A new return without it will
+  read as falsy in the frontend. Parity check: `ok:` count must equal `success:` count per file.
+- **When dropping the legacy pair**, remove it from all three backends *and* stop the frontends
+  reading it in the same change. Non-RPC fields that merely happen to be named `error` must not
+  be touched: `Email_Queue.Last_Error` (`adminView.html`), `flags.error` inside audit JSON, and
+  PIA's `result.errors` **array** from validation.
+
+### 🚩 The sheet read cache is OFF by default and only ever wrapped around READ-ONLY paths
+
+`readSheetValues_(sheet)` replaced all ~150 `getDataRange().getValues()` call sites across the
+three backends. With the cache off it *is* that call, which is what made the conversion a
+behaviour-preserving no-op.
+
+- **`withSheetCache_(fn)` enables it for the duration of `fn`.** Nesting composes — the
+  outermost wrapper owns the lifetime. Currently wrapped: `apiGetApplicationData`,
+  `apiGetApprovalHistory`, `adminGetPipelineView_`, `getAdminData`, `adminApi_getAgingReport`,
+  `adminApi_runRetentionDryRun`.
+- ⛔ **Never wrap a path that writes.** That makes write-then-stale-read structurally
+  impossible instead of depending on someone remembering to invalidate across 151 write sites.
+  Extending the cache to mutators needs a write-then-reread audit first (`processApprovalDecision_`
+  writes a decision and then `checkAllApproved_` re-reads the same sheet) — do it as its own
+  change, with its own test.
+- **A cache hit returns the SAME array reference.** Never mutate a cached read. Write paths
+  therefore still call `sheet.getDataRange().getValues()` directly — that is intentional in
+  `deleteRowsWhere_`, `adminApi_setRetentionConfig`, `adminApi_saveDelegation` etc, not an oversight.
+- **`readSheetValues_(null)` THROWS**, matching the TypeError the old call produced. Returning
+  `[]` would have quietly converted fail-loud paths into fail-silent ones — `sendDailyReminders_`'s
+  pre-filter is fail-*closed* precisely because an empty map reads as "nobody has been reminded"
+  and would blast every pending approver in the system.
+- Separately, **`__SS_HANDLE_CACHE` memoizes the Spreadsheet handle** (PIA + Admin; Phase 1
+  already had `getCachedSpreadsheet_`). That one is always safe — a Spreadsheet object is a live
+  handle, not a snapshot — and it applies on write paths too. One approver clicking an email link
+  used to re-open the file ~13 times.
+- Regression test: **`testSheetReadCache()`** (editor-run, self-cleaning).
+
+### 🚩 Delegation exists, is ADMIN-MANAGED, and is single-hop
+
+New **`Delegations`** sheet (`Delegation_ID, From_Email, To_Email, Start_Date, End_Date, Reason,
+Is_Active, Created_By, Created_At`) + **`ACTED_BY`** appended to the end of `APPROVAL_COLS` (16),
+`ISM_WORKFLOW_COLS` (19), `DIV_HEAD_CONFIG_COLS` (14) — same append-at-the-end convention as
+`ROUND_NUMBER`, so no existing index shifted.
+
+**Why it was not just a lookup table.** The approver email is denormalized into the workflow row
+at submit time, and *three* mechanisms key off it: the F-02 identity guard, **the HMAC review
+token which is signed over that email**, and the row lookup. A delegate forwarded the original's
+link fails all three — forwarding is not a workaround.
+
+The fix resolves the delegate **at notify time, not at decision time**:
+
+| Piece | File | Rule |
+|---|---|---|
+| `resolveDelegate_(email)` | `pia_code.js` | forward lookup, one hop. **Fails OPEN to "no delegate"** — a broken table must degrade to normal routing, never to "nobody is notified" |
+| `delegatorsFor_(email)` | `pia_code.js` | reverse lookup, used only by authorization. **Fails CLOSED** — it is an auth decision |
+| `canActAs_(caller, approver)` | `pia_code.js` | the widened F-02 predicate. **EXCLUSIVE** — delegation is resolved *first*, so while one is active the delegate is the only one who passes and the original is refused too. Empty table → collapses to a plain identity check |
+| `recipientFor_(approver)` | `pia_code.js` | the single choke point every notify path uses, so recipient and token subject can never disagree |
+| `writeActedBy_` | `pia_code.js` | records who really clicked; blank means they acted personally |
+| `adminApi_getDelegations` / `saveDelegation` / `deleteDelegation` | `admin_code.js` | ISM CRUD. Column order **must** stay in step with `DELEGATION_COLS` — that is the cross-app contract |
+
+- 🚩 **A delegation is a HANDOFF, not a second key.** While one is active the original approver
+  can neither decide (`canActAs_` refuses them) nor see the handed-off Pending row
+  (`isAuthorizedForApplication_` filters it). The first cut was additive and let both act, which
+  meant two people could hold a valid link to the same Pending row and both click Approve — the
+  loser of that race gets a bare "record not found" and `ACTED_BY` becomes ambiguous. **Do not
+  reorder `canActAs_` to check same-person first**; that single change reopens the window.
+- **View exclusivity is deliberately NARROWER than decide exclusivity.** Only a row that is both
+  *mine* and still *Pending* disappears. Anything already decided — an earlier round of the same
+  request, or any other request entirely — stays visible. Blanket-hiding would mean a two-week
+  leave silently blanks out months of that approver's own past work, which reads as data loss.
+- ⛔ **No self-service.** Approvers cannot appoint their own stand-in; that would let any approver
+  quietly route their own approvals to a chosen colleague.
+- ⛔ **No chaining.** A→B and B→C means A resolves to B, never C. Loop risk + accountability hole.
+  If it is ever needed, add cycle detection first.
+- Both addresses are `isAuthorizedDomain_`-checked, so a delegation can never send an approval
+  link outside the company.
+- **Not retroactive** — links are signed at send time. For a request already in an inbox, use
+  Email Routing → Resend after adding the delegation.
+- Fixed as a prerequisite: `processDivHeadDecision_`'s row lookup used a raw `.toLowerCase()`
+  while the other two used `getNormalizedEmail_`. With delegation that inconsistency would have
+  let the guard pass and then the row lookup miss.
+- Regression test: **`testDelegationResolution()`** (editor-run, self-cleaning).
+
+### 🚩 Retention ships INERT — two switches must both be thrown
+
+`System_Configuration`: `RETENTION_ENABLED=FALSE`, `RETENTION_MONTHS=24`, `RETENTION_DRY_RUN=TRUE`.
+**Both** `ENABLED=TRUE` and `DRY_RUN=FALSE` are required before one row is deleted.
+
+- Lives in **Admin**, not Phase 1 — a scheduled job needs `script.scriptapp` and a Drive purge
+  needs `drive`. Admin has both; **Phase 1 has neither**, so putting it there would mean a new
+  manifest scope and forced re-auth of the DCS app for every user.
+- **Terminal-state only**, and both sides must be closed (a Complete PIA against a Returned DCS
+  is still live). Age is measured from the request's **last decision**, not its submission.
+- `getRetentionConfig_` fails safe in every direction — missing sheet, missing key, or an
+  unparseable number all resolve to disabled + dry-run.
+- Every run, dry or live, writes a `Risk_Audit` summary row. Drive files are **trashed**
+  (30-day recovery), not hard-deleted. Sheet rows are gone for good and **not git-revertible**.
+- `adminApi_runRetentionDryRun` passes `forceDryRun:true` unconditionally, so the UI button can
+  never delete regardless of the stored config.
+- **Folds in the dormant draft purge.** `Phase 1/Code.js:purgeExpiredDrafts()` was written for a
+  daily trigger that was never installed (Phase 1 cannot create one). `purgeExpiredDraftsFromAdmin_`
+  takes it over — and fixes a real bug: Phase 1's version filtered on `ExpiresAt` only, and DCS
+  and PIA **share** the `Drafts` sheet, so it would have deleted PIA drafts too.
+
+### Smaller, but don't undo them
+
+- **`sanitizeCellValue_` (Admin) guards `exportToSheet` against formula injection.** That export
+  is the *only* artifact in the system a human opens in the Sheets UI, so `=IMPORTXML(...)` stops
+  being an inert string and runs as the admin. Applied as a `.map()` at both `appendRow`
+  boundaries plus `setNumberFormat('@')`. Deliberately **not** applied to live-DB writes — those
+  cells are `JSON.parse`d and the marker would be a correctness risk with no security gain.
+- **`docs/design-tokens.css` is the canonical token source, pasted into SIX places** — the three
+  frontends *and* the `getStyledHtmlWrapper_` block in each backend. The backend three are the
+  ones everyone forgets and were the worst drift (navy `#1a3a5c` instead of `#1e3a5f`); that is
+  the "Approve / Return" page a Division Head actually lands on. Resolved drift: radius unified
+  to 4/9 (PIA was 6/12, Admin 10/14), PIA's hardcoded `--danger-text: #dc2626` back to the
+  passthrough. ⚠️ The ~60 inline `#1a3a5c` hexes in email/certificate HTML were left alone on
+  purpose — emails can't use CSS variables, and the cert goes through the legacy HTML→PDF engine.
+- **Documents PREVIEW inline instead of force-downloading.** `downloadDcsFile` → **`viewDcsFile`**,
+  which hands the bytes to `showFilePreview` — an in-page overlay. PDFs render in an `<iframe>`,
+  images in an `<img>`, everything else (docx/xlsx) shows a "cannot be displayed" notice; a
+  Download button is always present as the escape hatch. The server endpoint keeps the name
+  `apiDownloadDcsFile` — it genuinely returns bytes, only the presentation changed.
+  - ⛔ **Never `window.open(blobUrl)` here.** The apps are served inside Apps Script's sandboxed
+    iframe: popups are blocked and a blob URL minted in that frame is not reliably navigable as a
+    top-level document. Rendering into the *current* document is the only thing that works.
+  - 🚩 **The blob URL is revoked in `closeFilePreview`, not after creation.** The old download-only
+    path could revoke immediately; a preview cannot, because the `<iframe>`/`<img>` reads the URL
+    for as long as it is on screen. Every exit route (X, backdrop, Esc, opening another file)
+    funnels through `closeFilePreview` — miss one and the blob leaks for the life of the page.
+  - The filename goes in via `textContent`, never `innerHTML`: it is user-supplied and the local
+    escape helper differs between the three copies, so `textContent` is the portable safe choice.
+  - **Three copies** (`Phase 1/index.html`, `Phase 2/pia_index.html`, and `getStyledHtmlWrapper_`
+    in `pia_code.js`) — edit together. The third sits inside a backtick template literal, so it
+    must stay free of backticks and dollar-brace sequences. Verify a change there by *rendering*
+    the wrapper and parsing the emitted `<script>`; `node --check` on the file cannot see that
+    class of breakage (CLAUDE.md §8).
+- **`icon(name, size)` replaced the last 7 emoji UI glyphs** with inline Lucide SVG using
+  `currentColor`. It returns HTML, so it only works where the sink is `innerHTML` — through
+  `textContent` or `summaryRow()` (which escapes) it renders as literal markup. In those places
+  the glyph was dropped instead. **Leave `Logger.log` emoji alone**; they are useful grep anchors.
+- **`parseAnyDate_` / `daysSince_` (Admin)** normalize the **four** date encodings that exist in
+  this DB: `YYYY-MM-DD` (Notified/Reminder), en-PH locale strings (Decision/Submission), ISO
+  (`Risk_Audit`), and epoch ms (drafts). Any new date maths must go through them. They return
+  `null` for junk, never epoch-0 — "unknown age" must not masquerade as "very old".
+- **The aging report is round-scoped** (`keepCurrentRoundRows_`) because it asks "who acts
+  next". Retention is **not** round-scoped because it asks "what happened". Same distinction as
+  `rowMatches_`.
 
 ---
 
