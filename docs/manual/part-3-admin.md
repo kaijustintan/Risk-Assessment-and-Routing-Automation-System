@@ -186,6 +186,26 @@ policy.
 > the DCS and PIA sides are finished. Age is counted from the request's **last decision**, not its
 > submission, so a request that took eight months to approve is not purged eight months early.
 
+#### Weekly Database Backup *(added 2026-08-12)*
+The entire system's data lives in one Google Sheet. Drive's built-in version history protects
+against a bad edit, but not against the file itself being deleted or corrupted. The backup job
+makes a full copy of the database spreadsheet every Sunday at around 3am, into a Drive folder
+named **RARS Database Backups** (created automatically on the first run). It keeps the newest
+**8 copies** (roughly two months) and moves older ones to the trash, where Drive keeps them for
+another 30 days.
+
+**One-time setup (owner account, Apps Script editor, Admin project):** run `setupBackupTrigger()`
+once. That is the whole installation. To take an extra backup on demand (for example, right
+before enabling retention), run `runDatabaseBackup()` from the editor.
+
+> 🚩 **If a backup fails, the script owner gets Google's trigger-failure email.** That is
+> deliberate: a backup that fails silently is discovered the day you need it. Do not ignore
+> those emails; each failure is also logged as a `Database Backup Failed` row in `Risk_Audit`.
+
+> ℹ️ Backup copies are **owner-only** files (a fresh Drive copy inherits no sharing). They contain
+> everything the live database contains, including personal data, so do not share the backup
+> folder.
+
 ---
 
 ## §3.2: Maintenance 🛠
@@ -200,6 +220,7 @@ policy.
 | `ADMIN_API_KEY` | Yes | Shared email-tracking key, **must match the PIA side** |
 | `WEB_APP_URL` | Optional | Live **PIA** `/exec` for resend CTAs (missing → button omitted gracefully) |
 | `SHEET_PREFIX` | Optional | Prefix if sheet tabs are namespaced |
+| `BACKUP_FOLDER_ID` | Auto-set | Drive folder the weekly backup writes to; created and stored by the first `runDatabaseBackup()` run. Point it at a different folder id to relocate backups |
 
 **Code constants** (`admin_code.js`): `ENABLED_DOMAIN_CHECK = true` (line ~145, gate is
 **on**), `MAX_ROWS = 500` (cap on `getAdminData`), `SHEET_NAMES` (canonical tab names, ~line

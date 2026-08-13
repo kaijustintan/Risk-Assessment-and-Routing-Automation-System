@@ -58,6 +58,18 @@
     - getConfigData()                     read System_Configuration + InfoSec_Email_Config
     - saveConfigData(sysUpdates, info)    write/append those two config sheets
 
+  CATEGORY: RETENTION & BACKUP (scheduled jobs)
+    - runRetentionSweep_(opts)            terminal-state purge engine (inert until enabled)
+    - runRetentionSweep()                 owner/trigger-gated wrapper (monthly trigger target)
+    - setupRetentionTrigger()             install the monthly retention trigger
+    - adminApi_getRetentionConfig()       read the three retention settings
+    - adminApi_setRetentionConfig(cfg)    write them
+    - adminApi_runRetentionDryRun()       UI button, forceDryRun always true
+    - purgeExpiredDraftsFromAdmin_()      expired-drafts cleanup folded into the sweep
+    - runDatabaseBackup_()                weekly spreadsheet copy, keeps newest 8, fail-loud
+    - runDatabaseBackup()                 owner/trigger-gated wrapper (weekly trigger target)
+    - setupBackupTrigger()                install the weekly backup trigger (Sun ~3am)
+
   CATEGORY: SHEET HELPERS & UTILS
     - getSpreadsheet_()                   open the DB by SPREADSHEET_ID
     - getSheet_(name)                     resolve a sheet by exact-then-prefixed name
@@ -2986,6 +2998,146 @@ function setupRetentionTrigger() {
   Logger.log('Retention trigger installed, runRetentionSweep() runs on the 1st at ~2am.');
   return { ok: true,
            message: 'Monthly retention trigger installed. It stays a no-op until RETENTION_ENABLED is TRUE.' };
+}
+
+// ─── Database backup (weekly, self-pruning) ────────────────────────────────────
+
+/*
+  Function: runDatabaseBackup_
+
+  LAYMAN (Tropang Ex):
+  Ang buong RARS ay nakatira sa IISANG Google Sheet. Isang file. May version history ang
+  Drive, pero hindi yun export: kapag nabura o na-corrupt ang file mismo, kasama lahat ng
+  data ng tatlong app. Ito yung lingguhang photocopy: kinokopya ang buong spreadsheet sa
+  isang backup folder, itinatago ang pinakabagong 8, at binubura (sa trash lang, 30-day
+  recovery) ang mas luma pa doon.
+
+  TECHNICAL:
+  Copies the DB spreadsheet (SPREADSHEET_ID) into the backup folder via makeCopy, then
+  prunes: every file in the folder whose name starts with BACKUP_PREFIX beyond the newest
+  KEEP_COUNT is setTrashed(true). The folder resolves from the BACKUP_FOLDER_ID Script
+  Property; when unset, a folder named 'RARS Database Backups' is created once in the
+  owner's Drive root and its id is stored back into the property (self-configuring).
+
+  🚩 FAIL-LOUD ON PURPOSE, the opposite of the retention sweep's posture. A backup job
+  that fails silently is worse than no backup job: you discover it the day you need the
+  backup. The catch block writes a 'Database Backup Failed' Risk_Audit row and RETHROWS,
+  so the time-driven trigger records a failure and Apps Script emails the owner its
+  daily failure digest. Do not soften this to log-and-continue.
+
+  PARAMS:    (none)
+  RETURNS:   { ok:true, file, kept, pruned } on success; THROWS on any failure.
+
+  STEPS
+    Step 1: Resolve the DB file and the backup folder
+      Layman    : Hanapin yung database file at yung folder na paglalagyan ng kopya.
+      Technical : SPREADSHEET_ID → DriveApp.getFileById. BACKUP_FOLDER_ID → getFolderById,
+                  else create 'RARS Database Backups' and store the property.
+    Step 2: Copy
+      Layman    : Gawa ng photocopy na may petsa sa pangalan.
+      Technical : makeCopy('RARS DB Backup yyyy-MM-dd HH:mm', folder). The copy inherits
+                  NO sharing (a fresh Drive file is owner-only), so backups stay private.
+    Step 3: Prune to the newest KEEP_COUNT
+      Layman    : Itago ang 8 pinakabago, itapon sa trash ang mas luma.
+      Technical : Collect prefix-matched files, sort by getDateCreated() desc, trash the
+                  tail. Trash, never hard delete: 30 days of recovery.
+    Step 4: Audit
+      Layman    : Isulat sa Risk_Audit na tumakbo (o pumalpak) ang backup.
+      Technical : logAuditTrail_('SYSTEM', 'Database Backup', {file, kept, pruned}); the
+                  failure path writes 'Database Backup Failed' then rethrows.
+
+  EXAMPLE
+    runDatabaseBackup_()
+    → { ok:true, file:'RARS DB Backup 2026-08-16 03:04', kept:8, pruned:1 }
+    → throws 'SPREADSHEET_ID not set in Script Properties.' on a blank project
+*/
+function runDatabaseBackup_() {
+  var BACKUP_PREFIX = 'RARS DB Backup ';
+  var KEEP_COUNT = 8;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var ssId = props.getProperty('SPREADSHEET_ID');
+    if (!ssId) throw new Error('SPREADSHEET_ID not set in Script Properties.');
+
+    // Step 1: resolve (or create once) the backup folder.
+    var folder = null;
+    var folderId = props.getProperty('BACKUP_FOLDER_ID');
+    if (folderId) {
+      folder = DriveApp.getFolderById(folderId); // throws on a bad id: fail loud, see header
+    } else {
+      folder = DriveApp.createFolder('RARS Database Backups');
+      props.setProperty('BACKUP_FOLDER_ID', folder.getId());
+      Logger.log('runDatabaseBackup_: created backup folder ' + folder.getId() + ' and stored BACKUP_FOLDER_ID.');
+    }
+
+    // Step 2: copy.
+    var stamp = Utilities.formatDate(new Date(), 'Asia/Manila', 'yyyy-MM-dd HH:mm');
+    var copyName = BACKUP_PREFIX + stamp;
+    DriveApp.getFileById(ssId).makeCopy(copyName, folder);
+
+    // Step 3: prune, newest KEEP_COUNT survive.
+    var backups = [];
+    var iter = folder.getFiles();
+    while (iter.hasNext()) {
+      var f = iter.next();
+      if (f.getName().indexOf(BACKUP_PREFIX) === 0) backups.push(f);
+    }
+    backups.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+    var pruned = 0;
+    for (var i = KEEP_COUNT; i < backups.length; i++) {
+      backups[i].setTrashed(true);
+      pruned++;
+    }
+
+    // Step 4: audit.
+    var kept = Math.min(backups.length, KEEP_COUNT);
+    logAuditTrail_('SYSTEM', 'Database Backup', { file: copyName, kept: kept, pruned: pruned });
+    Logger.log('runDatabaseBackup_: wrote "' + copyName + '", kept ' + kept + ', pruned ' + pruned + '.');
+    return { ok: true, file: copyName, kept: kept, pruned: pruned };
+  } catch (e) {
+    try { logAuditTrail_('SYSTEM', 'Database Backup Failed', { detail: String(e).slice(0, 400) }); } catch (ignored) {}
+    throw e; // fail loud: the trigger failure digest is the alarm (see doc header)
+  }
+}
+
+/*
+  Function: runDatabaseBackup
+  LAYMAN:    Ito yung pinapatakbo ng lingguhang trigger. Owner o trigger lang ang makakatawag,
+             hindi kahit sinong user mula sa browser.
+  TECHNICAL: Public because the trigger binds its handler by NAME STRING, same convention as
+             runRetentionSweep. Guarded with isOwnerContext_(); thin wrapper over the private
+             implementation.
+  PARAMS:    (none)
+  RETURNS:   The backup report, or an authorization failure. Throws on backup failure.
+*/
+function runDatabaseBackup() {
+  if (!isOwnerContext_()) return fail_(ERR.FORBIDDEN, 'Not authorized.');
+  return runDatabaseBackup_();
+}
+
+/*
+  Function: setupBackupTrigger
+  LAYMAN:    Ginagawa yung lingguhang schedule ng backup (tuwing Linggo, mga alas-3 ng umaga).
+             Ligtas patakbuhin nang paulit-ulit: binubura muna ang lumang schedule bago
+             gumawa ng bago.
+  TECHNICAL: Deletes any existing runDatabaseBackup trigger first (dedupe, mirroring
+             setupRetentionTrigger), then installs a weekly Sunday 3am one. Requires
+             script.scriptapp and drive, both already in Admin's manifest, so installing
+             this forces NO re-authorization.
+  PARAMS:    (none)
+  RETURNS:   {ok:true, message} or an authorization failure.
+*/
+function setupBackupTrigger() {
+  if (!isOwnerContext_()) return fail_(ERR.FORBIDDEN, 'Not authorized.');
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'runDatabaseBackup') ScriptApp.deleteTrigger(triggers[i]);
+  }
+  ScriptApp.newTrigger('runDatabaseBackup').timeBased().everyWeeks(1)
+    .onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(3).create();
+  Logger.log('Backup trigger installed, runDatabaseBackup() runs every Sunday at ~3am.');
+  return { ok: true,
+           message: 'Weekly backup trigger installed (Sundays ~3am, keeps the newest 8 copies).' };
 }
 
 /*
