@@ -1278,6 +1278,38 @@
   }
 
   /* ═══════════════════════════════════════════════════
+     PHONE (480px), mirrors Phase 1's proven block (2026-08-12)
+     The PIA sections are the longest forms in RARS and applicants open the
+     status/revision links on phones, so the wizard gets the same treatment
+     the DCS form already has: tighter scale, and the primary action pinned
+     to the bottom of the viewport instead of hiding below a long scroll.
+  ═══════════════════════════════════════════════════ */
+  @media (max-width: 480px) {
+    body { font-size: 10.5px; }
+    #app { padding: 0.5rem 0.75rem 3rem; }
+
+    .page-header h1 { font-size: 1.15rem; }
+    .card { padding: 1rem 0.875rem; }
+    .check-table { font-size: 12px; }
+    .check-table th, .check-table td { padding: 8px 6px; }
+
+    /* Sticky mobile actions for the long wizard screens. Margin compensates the
+       #app padding above so the bar spans edge to edge. env(safe-area-inset-bottom)
+       clears the iOS home indicator. */
+    #screen-pia1 .btn-row, #screen-pia2 .btn-row, #screen-pia3 .btn-row,
+    #screen-pia4 .btn-row, #screen-pia5 .btn-row, #screen-summary .btn-row {
+      position: sticky;
+      bottom: 0;
+      background: var(--bg);
+      margin: 1.5rem -0.75rem -3rem;
+      padding: 0.875rem 0.75rem calc(1.25rem + env(safe-area-inset-bottom));
+      border-top: 1px solid var(--border);
+      z-index: 100;
+      box-shadow: 0 -4px 16px rgba(0,0,0,0.04);
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════
      REDUCED MOTION
   ═══════════════════════════════════════════════════ */
   @media (prefers-reduced-motion: reduce) {
@@ -1650,6 +1682,12 @@ function persistStateImmediate() {
     
     google.script.run
       .withSuccessHandler(result => {
+        // Envelope-aware (2026-08-12): apiSaveDraft now RETURNS {ok:false, code, message}
+        // for its auth gate instead of throwing, so a refused save must not show 'Saved'.
+        if (result && result.ok === false) {
+          showDraftStatus('Save failed: ' + (result.message || 'not saved'), true);
+          return;
+        }
         if (result && result.draftId) {
           state.draftId = result.draftId;
         }

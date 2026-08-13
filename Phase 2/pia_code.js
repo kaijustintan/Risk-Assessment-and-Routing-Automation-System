@@ -89,7 +89,6 @@
     - initializeApprovalWorkflow_(sessionId, appData)  seed approver rows
     - processApprovalDecision_(...)           record a head/approver decision + advance
     - processDivHeadDecision_(...)            record a Division-Head escalation decision
-    - checkAllApproved_(sessionId)            true when every approver approved
     - updateDCSStatus_(reqId, newStatus)      write status back to the DCS sheet
     - logAuditTrail_(sessionId, action, flags) append a Risk_Audit row
 
@@ -133,10 +132,11 @@
 
   CATEGORY: CLIENT API (google.script.run)
     - apiSubmitApplication / apiGetDCSContext / apiGetUserDCSRequests
-    - apiGetUserEmail / apiGetUserSubmissions / apiGenerateNewSessionId
+    - apiGetUserEmail / apiGenerateNewSessionId
     - apiProcessApprovalDecision / apiGetApplicationData
     - apiSaveDraft / apiRestoreDraft / apiListUserDrafts / apiLoadDraft
-    - apiDeleteDraft / apiMarkDraftComplete / apiGenerateRevisionSessionId
+    - apiDeleteDraft / apiMarkDraftComplete
+    (apiGetUserSubmissions_ / apiGenerateRevisionSessionId_ privatized 2026-08-12: no frontend caller)
 
   CATEGORY: SETUP / MIGRATION / UTILITIES / TESTS
     - cleanupExpiredDrafts() / getProp_(key) / migrateAddReminderColumns()
@@ -771,8 +771,10 @@ function sendEmailWithRetry_(recipient, subject, body, options) {
   LAYMAN:    Checks that an approve/deny email link is genuine, not expired, and for the right
              action, before honoring the click.
   TECHNICAL: Rejects missing token/timestamp or links older than TOKEN_VALIDITY_MS (14 days).
-             Recomputes the action-bound HMAC and compares. For legacy links issued before the
-             2026-06-01 cutoff it also accepts the old action-less HMAC (bounded backward compat).
+             Recomputes the action-bound HMAC and compares. A legacy fallback that accepted the
+             old action-less HMAC for links issued before 2026-06-01 was removed on 2026-08-12:
+             the 14-day TTL had made it unreachable since 2026-06-15 (a token cannot be both
+             pre-cutoff and within TTL), so it was dead code, not a live compatibility path.
   PARAMS:    - sessionId, email, token, timestamp, fields from the link.
              - action: expected bound action (default '').
   RETURNS:   Boolean, true only if the token verifies and is within TTL.
@@ -790,20 +792,7 @@ function isTokenValid_(sessionId, email, token, timestamp, action = '') {
   
   // Validate token with action
   const expectedTokenWithAction = generateAuthToken_(sessionId, normalizedEmail, timestamp, action);
-  if (token === expectedTokenWithAction) {
-    return true;
-  }
-  
-  // Gate backwards compatibility on a hard cutoff date to prevent perpetual CSRF risk on old tokens
-  const FALLBACK_CUTOFF_MS = new Date('2026-06-01T00:00:00Z').getTime(); 
-  if (issuedAt < FALLBACK_CUTOFF_MS) {
-    const expectedTokenWithoutAction = generateAuthToken_(sessionId, normalizedEmail, timestamp, '');
-    if (token === expectedTokenWithoutAction) {
-      return true;
-    }
-  }
-  
-  return false;
+  return token === expectedTokenWithAction;
 }
 
 /*
@@ -4255,8 +4244,9 @@ function getDatabaseSheet_(sheetName, createIfMissing) {
 
   ⚠️ NOT extended to mutation paths in this pass, on purpose. Doing that safely needs a
   write-then-reread audit of every mutator first (processApprovalDecision_ writes a
-  decision and then checkAllApproved_ re-reads the same sheet, for one). Do that as its
-  own change, with its own test, not as a side effect of something else.
+  decision and then re-reads the same sheet fresh to check whether every approver has now
+  approved, for one). Do that as its own change, with its own test, not as a side effect
+  of something else.
 */
 var __SHEET_CACHE = null;
 
@@ -5716,7 +5706,7 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
           if (linkedReqId) updateDCSStatus_(linkedReqId, 'Complete');
           
           let certResult = null;
-          try { certResult = routeApprovedRequest_(sessionId, routingDest); } catch (e) {}
+          try { certResult = routeApprovedRequest_(sessionId, routingDest, __round); } catch (e) {}
           notifyApplicant_(sessionId, 'approved_divhead_final', {
             certBlob: (certResult && certResult.ok) ? certResult.pdfBlob : null,
             techserveEmails: (certResult && certResult.ok) ? certResult.techserveEmails : ''
@@ -5725,7 +5715,7 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
       } else {
         // Don't notify applicant here, the ISM member's approval handler
         // will notify the applicant when they act (progressing_ism or approved_ism_final).
-        notifyISMember_(sessionId, escalatedStep + 1);
+        notifyISMember_(sessionId, escalatedStep + 1, __round);
         Logger.log(`processDivHeadDecision_: Resumed ISM workflow at step ${escalatedStep + 1}`);
       }
     } else { // Deny or Return
@@ -5999,7 +5989,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
           // PHASE 3: Initialize ISM workflow and notify first ISM member
           let ismInitSuccess = false;
           try {
-            const ismInitResult = apiPhase3_InitializeISMWorkflow_(sessionId);
+            const ismInitResult = apiPhase3_InitializeISMWorkflow_(sessionId, __round);
             if (ismInitResult.ok) {
               ismInitSuccess = true;
               Logger.log(`[AUDIT] ${sessionId}: ISM_WORKFLOW_INITIALIZED`);
@@ -6017,7 +6007,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
               Logger.log(`[AUDIT] ${sessionId}: Application Approved`);
               notifyApplicant_(sessionId, 'approved_main');
               // Notify the first ISM member
-              notifyISMember_(sessionId, 1);
+              notifyISMember_(sessionId, 1, __round);
             } else {
               // ISM init failed: set non-terminal status so admin knows to configure ISM
               appSheet.getRange(appRow, APPLICATIONS_COLS.STATUS).setValue('Approved (ISM Pending)');
@@ -6029,7 +6019,7 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
         } else {
           notifyApplicant_(sessionId, 'progressing');
           // Notify next approver
-          notifyApprover_(sessionId, approverIndex + 1);
+          notifyApprover_(sessionId, approverIndex + 1, __round);
         }
       } else if (decision === 'Reject' || decision === 'Return') {
         apprSheet.getRange(currentRow, APPROVAL_COLS.STATUS).setValue('Returned');
@@ -6094,37 +6084,9 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
   }
 }
 
-/*
-  Function: checkAllApproved_
-  LAYMAN:    Tells you whether every approver in the ladder has approved this application.
-  TECHNICAL: Scans Approval_Workflow rows for sessionId; returns false on the first non-'Approved'
-             status, true otherwise. Logs a warning for any unrecognized status value.
-  PARAMS:    - sessionId: application id.
-  RETURNS:   Boolean (true also if there are no matching rows).
-*/
-function checkAllApproved_(sessionId) {
-  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
-  const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
-  const data = readSheetValues_(apprSheet);
-  const validStatuses = ['Approved', 'Pending', 'Rejected', 'Returned', 'Denied'];
-  
-  for (let i = 1; i < data.length; i++) {
-    if (rowMatches_(data[i], APPROVAL_COLS, sessionId, __round)) {
-      const status = data[i][APPROVAL_COLS.STATUS - 1];
-      
-      // Log unexpected status values
-      if (!validStatuses.includes(status)) {
-        Logger.log('WARNING: Unknown approval status "' + status + '" for ' + sessionId);
-      }
-      
-      // Only return true if ALL are Approved
-      if (status !== 'Approved') {
-        return false;
-      }
-    }
-  }
-  return true;
-}
+/* checkAllApproved_ was deleted here (2026-08-12, R-5 audit): it had zero live callers.
+   processApprovalDecision_ performs the same all-approved check inline against a fresh
+   post-write read, which is the copy that actually runs. */
 
 /*
   Function: updateDCSStatus_
@@ -6202,7 +6164,7 @@ function updateDCSStatus_(reqId, newStatus, approverFlags) {
   PARAMS:    - sessionId, recipient, subject, plainBody, type, htmlBody.
   RETURNS:   The queueId string, or null on failure.
 */
-function queueEmail_(sessionId, recipient, subject, plainBody, type, htmlBody) {
+function queueEmail_(sessionId, recipient, subject, plainBody, type, htmlBody, round = null) {
   try {
     const queueSheet = getDatabaseSheet_(DB_SHEET_NAMES.EMAIL_QUEUE, true);
     const queueId = 'EQ-' + new Date().getTime() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -6243,7 +6205,8 @@ function queueEmail_(sessionId, recipient, subject, plainBody, type, htmlBody) {
           var normRecipient = String(getNormalizedEmail_(recipient) || '').toLowerCase();
           // Append-only: scope to the live round so an abandoned Pending row from an earlier
           // round can never absorb this stamp instead of the row we actually just emailed.
-          var stampRound = getCurrentRound_(sessionId) || 1;
+          // PERF (2026-08-12): callers inside a locked decision pass their __round down.
+          var stampRound = round || getCurrentRound_(sessionId) || 1;
           for (var wr = 1; wr < wfData.length; wr++) {
             if (!rowMatches_(wfData[wr], wfInfo.cols, sessionId, stampRound)) continue;
             var rowEmail = String(getNormalizedEmail_(wfData[wr][wfInfo.emailCol - 1]) || '').toLowerCase();
@@ -6974,10 +6937,13 @@ function buildPiaEmailHtml_(opts) {
              audit trail and never thrown (the DB write already happened).
   PARAMS:    - sessionId: application id.
              - approverIndex: 0-based index of the approver to notify (step = index+1).
+             - round: optional round already derived by the caller (PERF, 2026-08-12: inside one
+               locked decision execution the round cannot change, so callers that hold __round pass
+               it down instead of paying getCurrentRound_'s 3-sheet scan again). Omitted → derived.
   RETURNS:   undefined. No-op if no approver exists at that step.
 */
-function notifyApprover_(sessionId, approverIndex) {
-  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
+function notifyApprover_(sessionId, approverIndex, round = null) {
+  const __round = round || getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   // FAILSAFE: Email failures must never crash the caller (DB already updated)
   try {
     // CRITICAL FIX C1: Get URL at runtime
@@ -7027,7 +6993,7 @@ function notifyApprover_(sessionId, approverIndex) {
     const reviewUrl = `${baseUrl}&action=Review`;
 
     SpreadsheetApp.flush(); 
-    const appData = getApplicationData_(sessionId);
+    const appData = getApplicationData_(sessionId, __round);
     
     if (!appData) {
       Logger.log('ERROR: Cannot notify approver - no app data found for ' + sessionId);
@@ -7058,7 +7024,7 @@ function notifyApprover_(sessionId, approverIndex) {
     });
 
     // Queue email for deferred reliable delivery (avoids Gmail throttling in-request)
-    queueEmail_(sessionId, _routed.email, subject, "Please view this email in an HTML-compatible client.", 'approver', htmlBody);
+    queueEmail_(sessionId, _routed.email, subject, "Please view this email in an HTML-compatible client.", 'approver', htmlBody, __round);
 
     // Commit 6: mark when this approver was first notified (starts their 7-day reminder clock).
     if (approverRowIndex > 0) stampNotifiedDate_(apprSheet, approverRowIndex + 1, APPROVAL_COLS.NOTIFIED_DATE);
@@ -7455,9 +7421,11 @@ function generateEmailDecisionsHTML_(sessionId) {
              order (Immediate Head step 1 / Dept Head step 2, shifting if no immediate head) plus the
              Privacy Officer email. Computes approvalStep = count of Approved rows.
   PARAMS:    - sessionId: application id (trim/uppercase-insensitive).
+             - round: optional round already derived by the caller (PERF, 2026-08-12: see
+               notifyApprover_). Omitted → derived.
   RETURNS:   The app object, or null if not found.
 */
-function getApplicationData_(sessionId) {
+function getApplicationData_(sessionId, round = null) {
   const appSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPLICATIONS, true);
   const apprSheet = getDatabaseSheet_(DB_SHEET_NAMES.APPROVAL_WORKFLOW, true);
 
@@ -7507,7 +7475,7 @@ function getApplicationData_(sessionId) {
   // set instead of one per round. Prior rounds are history and are read via getUnifiedHistory_.
   // ⚠ Authorization does NOT rely on this list being complete: isAuthorizedForApplication_ scans
   //   Approval_Workflow across ALL rounds so an approver from an earlier round keeps view access.
-  const __round = getCurrentRound_(sessionId) || 1;
+  const __round = round || getCurrentRound_(sessionId) || 1;
 
   for (let i = 1; i < apprData_values.length; i++) {
     if (String(apprData_values[i][APPROVAL_COLS.SESSION_ID - 1] || '').trim().toUpperCase() === searchId &&
@@ -7979,7 +7947,7 @@ function adminGetFailedEmails_(sinceDays) {
 function adminResendEmail_(sessionId, recipient, type) {
   const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
-    var appData = getApplicationData_(sessionId);
+    var appData = getApplicationData_(sessionId, __round);
     if (!appData) return { ok: false, message: 'Application not found: ' + sessionId};
     var normalizedType = String(type || '').toLowerCase().trim();
     if (normalizedType === 'approver') {
@@ -7993,7 +7961,7 @@ function adminResendEmail_(sessionId, recipient, type) {
         }
       }
       if (foundStep < 0) return { ok: false, message: 'No pending approval step for: ' + recipient};
-      notifyApprover_(sessionId, foundStep);
+      notifyApprover_(sessionId, foundStep, __round);
     } else if (normalizedType === 'applicant') {
       var currentStatus = String(appData.status || '').toLowerCase();
       var nstatus = 'submitted';
@@ -8012,7 +7980,7 @@ function adminResendEmail_(sessionId, recipient, type) {
         }
       }
       if (foundStep < 0) return { ok: false, message: 'No pending ISM step for: ' + recipient};
-      notifyISMember_(sessionId, foundStep);
+      notifyISMember_(sessionId, foundStep, __round);
     } else {
       return { ok: false, message: 'Invalid type: ' + type + '. Must be approver, applicant, or ism.'};
     }
@@ -9431,9 +9399,11 @@ function getPIIFieldsList_(appData) {
              ISM_Approval_Workflow row ('<sessionId>-ISM-<n>') for each, then flushes. Fails if no
              members are configured.
   PARAMS:    - sessionId: application id.
+             - round: optional round already derived by the caller (PERF, 2026-08-12: see
+               notifyApprover_). Omitted → derived.
   RETURNS:   { ok:true, message, members } or { ok:false, code, message }.
 */
-function apiPhase3_InitializeISMWorkflow_(sessionId) {
+function apiPhase3_InitializeISMWorkflow_(sessionId, round = null) {
   try {
     const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
     const ismInfo = apiPhase3_GetInfoSecMembers_();
@@ -9444,7 +9414,7 @@ function apiPhase3_InitializeISMWorkflow_(sessionId) {
 
     // Append-only workflow: stamp the round so a later resubmission's ISM rows never collide
     // with these. Reuses the round already established by the Stage-A rows for this session.
-    const round = getCurrentRound_(sessionId) || 1;
+    round = round || getCurrentRound_(sessionId) || 1;
 
     // Create ISM approval records
     ismInfo.data.members.forEach((member, index) => {
@@ -9501,7 +9471,7 @@ function apiPhase3_RetryISMWorkflow_(sessionId) {
   const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
     // Validate that the application exists and is in the expected state
-    const appData = getApplicationData_(sessionId);
+    const appData = getApplicationData_(sessionId, __round);
     if (!appData) {
       return { ok: false, message: 'Application not found: ' + sessionId };
     }
@@ -9521,7 +9491,7 @@ function apiPhase3_RetryISMWorkflow_(sessionId) {
     }
     
     // Attempt initialization
-    const result = apiPhase3_InitializeISMWorkflow_(sessionId);
+    const result = apiPhase3_InitializeISMWorkflow_(sessionId, __round);
     if (!result.ok) {
       return result; // Propagate the specific error
     }
@@ -9535,7 +9505,7 @@ function apiPhase3_RetryISMWorkflow_(sessionId) {
     }
     
     // Notify the first ISM member
-    notifyISMember_(sessionId, 1);
+    notifyISMember_(sessionId, 1, __round);
     
     return {
       ok: true,
@@ -9682,7 +9652,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
             let certResult = null;
             if (routingDestination) {
               try {
-                certResult = routeApprovedRequest_(sessionId, routingDestination);
+                certResult = routeApprovedRequest_(sessionId, routingDestination, __round);
                 Logger.log(`[AUDIT] ${sessionId}: Routed to: ${routingDestination}`);
               } catch (routeErr) {
                 Logger.log('Error routing to destination: ' + routeErr.toString());
@@ -9698,7 +9668,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       } else if (!allApproved && currentStep < totalMembers) {
         notifyApplicant_(sessionId, 'progressing_ism');
         // Notify next ISM member
-        notifyISMember_(sessionId, currentStep + 1);
+        notifyISMember_(sessionId, currentStep + 1, __round);
       }
     } else if (decision === 'Deny') {
       ismWorkflowSheet.getRange(currentRow, ISM_WORKFLOW_COLS.STATUS).setValue('Denied');
@@ -9787,7 +9757,10 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       // Prevents duplicate escalation records when multiple ISM members escalate
       // Append-only workflow: scope the dedup check to the CURRENT round. A Pending escalation
       // left over from an earlier round must not suppress a legitimate new one.
-      const escalationRound = getCurrentRound_(sessionId) || 1;
+      // PERF (2026-08-12): reuse the entry __round instead of re-deriving. Inside this locked
+      // execution the round cannot change, and the rowMatches_ call below already scopes to
+      // __round, so a second derivation could only ever agree with it (or hide a bug if not).
+      const escalationRound = __round;
       const existingDivData = readSheetValues_(divHeadSheet);
       let hasPendingEscalation = false;
       let divHeadRowNum = -1; // 1-based sheet row of the Pending DivHead escalation (for NOTIFIED_DATE stamping)
@@ -9845,7 +9818,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
               </div>
               <div><a href="${reviewUrl}" style="display:inline-block;padding:11px 24px;background:#2a5285;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Review Access Request →</a></div>`
           });
-          queueEmail_(sessionId, _routed.email, subject, "Please view this email in an HTML-compatible client.", 'divhead', htmlBody);
+          queueEmail_(sessionId, _routed.email, subject, "Please view this email in an HTML-compatible client.", 'divhead', htmlBody, __round);
           // Commit 6: mark when the Division Head was first notified (starts their 7-day reminder clock).
           if (divHeadRowNum > 0) stampNotifiedDate_(divHeadSheet, divHeadRowNum, DIV_HEAD_CONFIG_COLS.NOTIFIED_DATE);
         } catch(e) {
@@ -9885,10 +9858,12 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
              at stepNumber, builds an action-bound HMAC 'ISMReview' URL, renders via buildPiaEmailHtml_,
              and queueEmail_(type:'ism'). Missing member / errors are audited, never thrown.
   PARAMS:    - sessionId: application id; stepNumber, 1-based ISM step.
+             - round: optional round already derived by the caller (PERF, 2026-08-12: see
+               notifyApprover_). Omitted → derived.
   RETURNS:   undefined. No-op (audited) if no Pending member at that step.
 */
-function notifyISMember_(sessionId, stepNumber) {
-  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
+function notifyISMember_(sessionId, stepNumber, round = null) {
+  const __round = round || getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
     // CRITICAL FIX C1: Get URL at runtime
     const webAppUrl = getWebAppUrl_() || ScriptApp.getService().getUrl();
@@ -9934,7 +9909,7 @@ function notifyISMember_(sessionId, stepNumber) {
     const baseUrl = `${webAppUrl}?sessionId=${sessionId}&email=${encodeURIComponent(normalizedIsmEmail)}&token=${token}&ts=${ts}&step=${stepNumber}`;
     const reviewUrl = `${baseUrl}&action=ISMReview`;
 
-    const appData = getApplicationData_(sessionId);
+    const appData = getApplicationData_(sessionId, __round);
     const subject = `ISM InfoSec Review Required: ${sessionId}`;
     const htmlBody = buildPiaEmailHtml_({
       heading: 'ISM InfoSec Review Required',
@@ -9957,7 +9932,7 @@ function notifyISMember_(sessionId, stepNumber) {
     });
 
     // Queue for deferred delivery (avoids Gmail throttling in-request)
-    queueEmail_(sessionId, _routed.email, subject, "Please view this email in an HTML-compatible client.", 'ism', htmlBody);
+    queueEmail_(sessionId, _routed.email, subject, "Please view this email in an HTML-compatible client.", 'ism', htmlBody, __round);
     // Commit 6: mark when this ISM member was first notified (starts their 7-day reminder clock).
     if (ismRowIndex > 0) stampNotifiedDate_(ismWorkflowSheet, ismRowIndex + 1, ISM_WORKFLOW_COLS.NOTIFIED_DATE);
     Logger.log('✓ ISM review notification queued for ' + ismMember.email + ' step ' + stepNumber);
@@ -9984,10 +9959,12 @@ function notifyISMember_(sessionId, stepNumber) {
              certificate HTML, generates a PDF blob (Utilities.newBlob → getAs PDF), and sends via
              sendEmailWithRetry_ with the PDF attached. Finally notifyApplicant_('routed_implementation').
   PARAMS:    - sessionId: application id; destination, 'DCOPS' | 'TECHSERVE' | 'BOTH'.
+             - round: optional round already derived by the caller (PERF, 2026-08-12: see
+               notifyApprover_). Omitted → derived.
   RETURNS:   { ok:true, message, sentTo } or { ok:false, code, message }.
 */
-function routeApprovedRequest_(sessionId, destination) {
-  const __round = getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
+function routeApprovedRequest_(sessionId, destination, round = null) {
+  const __round = round || getCurrentRound_(sessionId) || 1; // append-only: scope routing scans to the live round
   try {
     // Normalize destination to handle case sensitivity from frontend radio buttons
     const normalizedDest = String(destination || '').toUpperCase();
@@ -10006,7 +9983,7 @@ function routeApprovedRequest_(sessionId, destination) {
       return { ok: false, message: 'Could not retrieve destination email configuration' };
     }
 
-    const appData = getApplicationData_(sessionId);
+    const appData = getApplicationData_(sessionId, __round);
     if (!appData) {
       return { ok: false, message: 'Application not found' };
     }
@@ -10792,20 +10769,23 @@ function apiGetUserEmail() {
 }
 
 /*
-  Function: apiGetUserSubmissions
-  LAYMAN:    Frontend endpoint for the "My Applications" list.
-  TECHNICAL: Thin wrapper over getUserSubmissions_(); re-throws on error so the client sees it.
+  Function: apiGetUserSubmissions_
+  LAYMAN:    Was meant to be the "My Applications" list endpoint, but the frontend never wired it
+             up. Privatized (2026-08-12) per the surface rule: no frontend caller, no bare name.
+  TECHNICAL: Thin wrapper over getUserSubmissions_() (which scopes to the active user). Kept, not
+             deleted, so a future "My PIA Submissions" screen can re-publish it: to do that, drop
+             the underscore AND convert the re-throw to the {ok, code, message, ref} envelope.
   PARAMS:    (none)
   RETURNS:   Array of submission summaries ([] if none).
 */
-function apiGetUserSubmissions() {
+function apiGetUserSubmissions_() {
   try {
     const result = getUserSubmissions_();
-    Logger.log('apiGetUserSubmissions returning ' + (result ? result.length : 0) + ' records');
+    Logger.log('apiGetUserSubmissions_ returning ' + (result ? result.length : 0) + ' records');
     return result || [];
   } catch (error) {
-    Logger.log('ERROR in apiGetUserSubmissions: ' + error.toString());
-    throw error;  // Re-throw so frontend sees the error
+    Logger.log('ERROR in apiGetUserSubmissions_: ' + error.toString());
+    throw error;
   }
 }
 
@@ -10859,7 +10839,7 @@ function apiSaveDraft(sessionId, stateData) {
   try {
     Logger.log('📥 apiSaveDraft called: sessionId=' + sessionId);
     const userEmail = Session.getActiveUser().getEmail();
-    if (!userEmail) throw new Error('User not authenticated');
+    if (!userEmail) return fail_(ERR.UNAUTHORIZED);
     Logger.log('👤 User authenticated: ' + userEmail);
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
@@ -10954,7 +10934,7 @@ function apiRestoreDraft(sessionId) {
   try {
     Logger.log('📤 apiRestoreDraft called: sessionId=' + sessionId);
     const userEmail = Session.getActiveUser().getEmail();
-    if (!userEmail) throw new Error('User not authenticated');
+    if (!userEmail) return fail_(ERR.UNAUTHORIZED);
     Logger.log('👤 User authenticated: ' + userEmail);
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
@@ -11016,7 +10996,7 @@ function apiListUserDrafts() {
   try {
     Logger.log('📋 apiListUserDrafts called');
     const userEmail = Session.getActiveUser().getEmail();
-    if (!userEmail) throw new Error('User not authenticated');
+    if (!userEmail) return fail_(ERR.UNAUTHORIZED);
     Logger.log('👤 User: ' + userEmail);
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
@@ -11082,7 +11062,7 @@ function apiLoadDraft(draftId) {
   try {
     Logger.log('📥 apiLoadDraft called: draftId=' + draftId);
     const userEmail = Session.getActiveUser().getEmail();
-    if (!userEmail) throw new Error('User not authenticated');
+    if (!userEmail) return fail_(ERR.UNAUTHORIZED);
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
     const data = readSheetValues_(draftsSheet);
@@ -11129,7 +11109,7 @@ function apiDeleteDraft(draftId) {
   try {
     Logger.log('🗑️  apiDeleteDraft called: draftId=' + draftId);
     const userEmail = Session.getActiveUser().getEmail();
-    if (!userEmail) throw new Error('User not authenticated');
+    if (!userEmail) return fail_(ERR.UNAUTHORIZED);
     
     const draftsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DRAFTS, true);
     const data = readSheetValues_(draftsSheet);
@@ -11243,17 +11223,20 @@ function cleanupExpiredDrafts() {
 }
 
 /*
-  Function: apiGenerateRevisionSessionId
-  LAYMAN:    When a user wants to fix and resubmit a returned/rejected application, this safely issues
-             the next revision id, but only for their own app, only if it really was returned/rejected,
-             and not while the linked DCS is still 'Returned'.
+  Function: apiGenerateRevisionSessionId_
+  LAYMAN:    Leftover from the retired '-V2' revision-id scheme. A resubmit now UPDATES the same
+             sessionId and appends a new round (see submitApplication_), so nothing calls this any
+             more. Privatized (2026-08-12) per the surface rule: no frontend caller, no bare name.
   TECHNICAL: Validates base id format, finds the latest revision row for that base, enforces owner ==
              active user and status in (rejected|returned), and blocks if DCS-flagged and the DCS is
-             still 'Returned'. Then returns getNextRevisionSessionId_(baseId). Throws on any gate failure.
+             still 'Returned'. Then returns getNextRevisionSessionId_(baseId). Throws on any gate
+             failure. Legacy '-V#' rows in Applications are still read correctly by apiGetDCSContext;
+             only the ALLOCATION of new -V ids is retired. If this is ever re-published, drop the
+             underscore AND convert the throws to the {ok, code, message, ref} envelope.
   PARAMS:    - baseSessionId: the original/any-version application id.
   RETURNS:   { ok:true, sessionId } ; throws Error on invalid/unauthorized/not-revisable.
 */
-function apiGenerateRevisionSessionId(baseSessionId) {
+function apiGenerateRevisionSessionId_(baseSessionId) {
   const baseId = String(baseSessionId || '').trim().replace(/-V\d+$/, '');
   if (!/^PIA-\d{6}$/.test(baseId)) {
     throw new Error('Invalid base session ID format.');
