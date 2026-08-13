@@ -3226,28 +3226,28 @@ function renderUnifiedApprovalHistory(data) {
 /*
   Function Name: escapeHtml
   LAYMAN: Makes a string safe to drop into HTML so user text can't break the page or inject markup.
-  TECHNICAL: Replaces & < > " ' with their HTML entities. The primary XSS defense for all
-             template-literal interpolation in this file.
+  TECHNICAL: Replaces the five HTML-significant characters with their named entities. The
+             primary XSS defense for all template-literal interpolation in this file.
 
-             The & replacement MUST stay first: escaping it after the others would
-             double-escape the entities they just produced (&lt; becomes &amp;lt;).
+             Two things future edits must preserve, both learned the hard way:
 
-             Do not let an editor, a docs pass, or an entity-decoding sweep "simplify"
-             the right-hand sides back to bare characters. Until 2026-08-12 this read
-             .replace(/&/g,'&').replace(/</g,'<')... , four identity no-ops, so only the
-             apostrophe was ever escaped. It is the sole XSS defense for 71 interpolation
-             sites in this file, including approver comments rendered into innerHTML.
+             1. The ampersand replacement MUST stay FIRST. Escaping it after the others
+                would re-escape the entities they just produced.
+             2. Keep this on ONE line, byte-identical in shape to the copies in
+                pia_index.html and getStyledHtmlWrapper_. Until 2026-08-12 each
+                replacement here mapped its character to ITSELF, so nothing but the
+                apostrophe was ever escaped, and this is the sole defense for 71
+                interpolation sites including approver comments written into innerHTML.
+                Repairing it as a multi-line chain blanked the served page with
+                "Failed to execute 'write' on 'Document'" (CLAUDE.md section 8: GAS
+                serve-time corruption that node --check cannot see). The single-line
+                form is the one this environment is known to serve intact.
   PARAMS:
   - str: the raw string (falsy -> '').
   RETURNS: The HTML-escaped string.
 */
 function escapeHtml(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 /*
