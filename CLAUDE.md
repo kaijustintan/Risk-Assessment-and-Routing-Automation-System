@@ -356,19 +356,24 @@ ask before inventing one, consistency with the navy system matters to the superv
 - **🚨 There is NO certificate template file, don't go looking for one.** The Certificate of Approval
   is built as an **HTML string in source** and converted in one line:
   `Utilities.newBlob(html, MimeType.HTML, name).getAs(MimeType.PDF)`
-  (`Phase 2/pia_code.js:8596`; same technique in `Admin/admin_code.js:2698` resend and `:3122` download,
-  which base64s the blob back to the browser). No Google Docs template, no `DriveApp.makeCopy`, no
-  `DocumentApp`, no `{{token}}` replacement, data is interpolated inline as `${escapeHtml(...)}` across
-  the ~200-line cert body at `pia_code.js:8400–8590`. **Consequences to respect when editing it:**
+  (`Phase 2/pia_code.js` ~10596 inside `routeApprovedRequest_`; same technique in
+  `Admin/admin_code.js` ~4283 resend and ~4707 download, which base64s the blob back to the
+  browser; line numbers drift, anchor on the function names). No Google Docs template, no
+  `DriveApp.makeCopy`, no `DocumentApp`, no `{{token}}` replacement, data is interpolated inline
+  as `${escapeHtml(...)}` across the ~200-line cert body. ⚠️ **The Admin copy
+  (`buildCertificateHtml_`) is a genuinely different layout** (3 columns not 4, no comments, no
+  history section, different agency fields), not a paste of PIA's; both gatherers are round-scoped
+  via `keepCurrentRoundRows_` since 2026-08-13 (they used to flatten every round's Approved rows
+  into one roster). **Consequences to respect when editing it:**
   (a) the layout IS the source, so redesigns are normal code edits (good: diffable, no template-ID SPOF);
   (b) the converter is Google's **legacy HTML→PDF engine**, table-based HTML + inline CSS only. No
   flexbox/grid, no page-break control, no headers/footers/page numbers. Don't "modernize" the cert CSS;
   it will silently render wrong in the PDF while looking fine in the email;
   (c) the PDF is built from the *email* HTML with the remote logo `<img>` string-replaced out
-  (`pia_code.js:8591`) because the converter won't reliably fetch remote images. One body, two renderings,
-  edit the shared HTML, not one copy;
+  (just above the `newBlob` call) because the converter won't reliably fetch remote images. One body,
+  two renderings, edit the shared HTML, not one copy;
   (d) **the PDF is never archived.** It lives in memory, gets attached, and is discarded. Re-issuance works
-  by *regenerating from the DB* (`apiAdmin_DownloadCertificate`, `admin_code.js:2973`). There is no cert
+  by *regenerating from the DB* (`apiAdmin_DownloadCertificate`, `admin_code.js` ~4558). There is no cert
   Drive folder and no issuance-log sheet. A cert therefore reflects the DB *now*, not at signing time.
 
 ---
@@ -476,6 +481,31 @@ Present in all three decision fns: `processApprovalDecision` (~4544), `processDi
 re-deciding a resolved request returns "record not found." `submitApplication` re-checks ownership
 *inside* the lock (~4128, TOCTOU-aware, logs `SECURITY ALERT`). **Never add a mutator without this
 guard, and never rely on the caller having gone through a handler.**
+
+**🚩 The flags contract (2026-08-13): flags may ONLY accompany a Return.** A flag is a correction
+request for the applicant, and the only decision that ever carries flags back to the applicant is
+Return (`Applications.Approver_Flags` is mirrored only on the Return paths). Approve or Escalate
+submitted with flags used to record a request nobody was ever shown, a silent workflow failure
+found in live data (a Dept Head approved over two flags; the applicant never saw them). Now:
+- Server side: all three decision mutators refuse `Approve` (and ISM `EscalateToDivisionHead`)
+  when `hasFlags_(approverFlags)` is true. `Deny` + flags stays allowed (terminal, flags inert).
+  `Return` still REQUIRES at least one flag (pre-existing client check).
+- Client side: both review-form copies disable the `.flag-blocks-this` buttons inside
+  `updateFlagsInput()`, and guard `submitWithRouting` (ISM) / the form `submit` event via
+  `event.submitter` (standard).
+- **Do not relax one side without the other.** The client half is courtesy; the server half is the
+  rule (`apiProcessApprovalDecision` is public RPC).
+
+**🚩 Decision text is PLAIN TEXT (2026-08-13), enforced at the mutators.** All three decision
+functions strip `<[^>]*>` from `comments` and pass `approverFlags` through `sanitizeFlagsJson_`
+(keys AND values stripped; custom PIA-2 field labels are user text) at entry, so the RPC path and
+the form path store the same thing. `sanitizeInput_`'s old rich-text allowlist
+(`<b|strong|em|...>`) is deleted; it contradicted `handleEmailAction_`'s strip-everything on the
+same field, and nobody had ever chosen between the two. Do not re-add an allowlist without
+revisiting that decision by name. Related display-only mapping: the stored status `'Approved'`
+(meaning: heads done, ISM pending) renders as "Approved by Heads (Awaiting ISM Review)" on the
+review pages; **the stored `Applications.Status` strings are frozen cross-app contracts and the
+write side is untouched.**
 
 **🔒 The second half of the convention: the trailing underscore is a security boundary.** The
 guard above covers functions that *receive* a caller email to compare against. Functions that don't

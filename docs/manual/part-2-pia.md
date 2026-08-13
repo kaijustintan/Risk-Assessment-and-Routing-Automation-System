@@ -52,14 +52,30 @@ you can close and resume later via the **same DCS link**.
 3. Update flagged + any other fields; review and resubmit.
 4. 🚩 **If DCS fields were flagged, you must fix the DCS request first**, then use the new
    DCS link to revise the PIA. (Return = full restart, see
-   [§0.3](part-0-common.md#03--the-approval-ladder--progress-timeline).)
+   [§0.3](part-0-common.md#03--the-approval-ladder--progress-timeline).) The email's button now
+   opens **your specific request**, not the DCS home screen *(fixed 2026-08-13)*.
+
+### Reviewing an application (approvers) 🚩 *changed 2026-08-13*
+
+**Flagging an item means "please correct this," so it can only be sent with a Return.**
+
+- Click the flag icon beside any field or document. The reason now opens in a **centered dialog**
+  instead of a box squeezed into the row. Type the reason (up to 200 characters), then **Save Flag**.
+- While **any** flag is set, **Approve** and **Escalate to Division Head** are **disabled**. To
+  continue you either remove the flags, or choose **Return to Requestor** to send them back.
+- **Return still requires at least one flag**, so the requestor always knows what to fix.
+- **Deny** is unaffected; a denial is terminal and flags are not acted on either way.
+
+> **Why this changed.** Flagging and then approving used to be allowed. The flag was recorded in
+> the history but **never shown to the requestor**, and the request advanced anyway, so a
+> correction you asked for silently never happened. Found in live data on 2026-08-13.
 
 ### PIA status indicators
 | Status | Meaning |
 |--------|---------|
 | Pending | Awaiting the first approver's decision |
-| Approved | Current approver approved |
-| Approved (ISM Pending) | Heads approved; ISM review pending |
+| Approved | Current approver approved. On the review pages this displays as **"Approved by Heads (Awaiting ISM Review)"** *(2026-08-13)*, so an ISM reviewer cannot mistake it for a final approval |
+| Approved (ISM Pending) | Heads approved; ISM review pending (same display label as above) |
 | Approved by ISM | All ISM approved; routing to the implementation team |
 | Returned | Sent back to requestor for revision |
 | Denied / Rejected by ISM | Permanently rejected (locked for audit) |

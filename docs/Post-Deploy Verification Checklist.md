@@ -375,6 +375,62 @@ The request stalls silently. It is only visible via the aging report.
 
 ---
 
+# Addendum: the F1-F9 fixes (added 2026-08-13)
+
+Verify these after the F-fix waves deploy. They ship in three independent waves, so each block can
+be checked as soon as its wave is live.
+
+## Wave 1 (PIA only)
+
+**A1: Flags can only be sent with a Return** *(F5, the highest-value fix here)*
+1. Open any approver review link. Flag one field, save a reason.
+2. ✅ **Pass:** Approve is **greyed out** and hovering it explains why. On an ISM link, Escalate is
+   greyed out too.
+3. Remove the flag. ✅ **Pass:** both buttons come back.
+4. Flag again, then click **Return to Requestor**. ✅ **Pass:** the Return goes through normally.
+5. Confirm on a Stage A head link **and** an ISM link; they are two separate code copies.
+
+**A2: Flag reason is a dialog** *(F9)*: clicking the flag icon opens a centered dialog, not a box
+inside the row. Esc closes it, Enter saves it, Save shows the red "Flagged:" chip on the row, and
+the chip's Remove clears the flag.
+
+**A3: Status label at the ISM stage** *(F6)*: with a request past both heads, the ISM review page's
+Current Status reads **"Approved by Heads (Awaiting ISM Review)"**, not a bare "Approved".
+
+**A4: Return email deep-links** *(F4)*: trigger a Return **that flags a DCS field** (this is the
+branch that was broken). The applicant's email button must open **that request's details**, not the
+DCS home screen.
+
+**A5: Plain text everywhere** *(F1a/F1b)*: put `<b>test</b>` in a decision comment **and** in a flag
+reason. ✅ **Pass:** both store and display as literal text with no bold anywhere: the request page,
+the notification email, and the certificate.
+
+## Wave 2 (DCS + PIA)
+
+**B1: PDF preview** *(F2, the experiment)*: click **View** on a PDF.
+- ✅ **Best case:** the PDF renders in the overlay.
+- ✅ **Acceptable:** a message says it could not be previewed, and **Download** works.
+- ❌ **Fail:** a blank panel with no message. Report this; it means `<object>` did not help either
+  and we fall back to the Drive-link decision.
+- Check on **both** DCS and PIA, and on an approver review page (three separate copies).
+
+**B2: Current round stands out** *(F7)*: on a request with 2+ rounds, the current round's heading
+is a navy pill; earlier rounds stay muted grey. Check the DCS request detail and the PIA history.
+
+## Wave 3 (PIA + Admin)
+
+**C1: History groups by round, then by body** *(F8)*: open a certificate PDF from a multi-round
+request. Under each round heading you should see **Department / Division Approvals** then
+**ISM InfoSec Approvals** as sub-headings. Same structure in the approval emails and on the review
+pages.
+
+**C2: Certificate roster is current-round only** *(latent bug found while scoping F8)*: on a
+request that went through a return and resubmit, the Admin certificate's approver tables must list
+each approver **once**, not once per round. Compare the PIA-emailed certificate with the one
+downloaded from Admin: the rosters should now agree.
+
+---
+
 ## Reporting a failure
 
 For anything that fails, capture:
