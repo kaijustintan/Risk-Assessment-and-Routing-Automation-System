@@ -2277,9 +2277,16 @@ function renderApprovalTimeline(rounds) {
   for (var i = 0; i < rounds.length; i++) {
     var r = rounds[i];
     var headerLabel = 'Round ' + r.round + (r.isCurrent ? ' (Current)' : ' (returned and revised)');
-    html += '<div style="font-size:11px;font-weight:700;color:' + (r.isCurrent ? 'var(--navy-text)' : 'var(--text3)') +
-      ';text-transform:uppercase;letter-spacing:0.05em;margin:12px 0 10px;border-bottom:1px solid var(--border);padding-bottom:4px;">' +
-      escapeHtml(headerLabel) + '</div>';
+    // F7 (2026-08-13): current round gets the .step-badge pill; history keeps the muted
+    // underline. Same treatment as Phase 1's roundHeader; keep the two in step.
+    if (r.isCurrent) {
+      html += '<div style="margin:12px 0 10px;"><span class="step-badge" style="margin-bottom:0;">' +
+        escapeHtml(headerLabel) + '</span></div>';
+    } else {
+      html += '<div style="font-size:11px;font-weight:700;color:var(--text3)' +
+        ';text-transform:uppercase;letter-spacing:0.05em;margin:12px 0 10px;border-bottom:1px solid var(--border);padding-bottom:4px;">' +
+        escapeHtml(headerLabel) + '</div>';
+    }
     html += '<div class="timeline">';
     var ds = r.decisions || [];
     for (var j = 0; j < ds.length; j++) {
@@ -4033,11 +4040,21 @@ function showFilePreview(data) {
     (isImg ? 'display:flex;align-items:center;justify-content:center;padding:12px;' : '');
 
   if (isPdf) {
-    var frame = document.createElement('iframe');
-    frame.src = __filePreviewUrl;
-    frame.title = name;
-    frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
-    pane.appendChild(frame);
+    // F2 (2026-08-13): <object> instead of <iframe>. Chrome refused to render a blob: PDF in an
+    // iframe inside Apps Script's sandboxed frame (blank panel plus a sandbox warning in the
+    // console). <object> also carries built-in fallback content: if the browser cannot render
+    // the PDF, the child message shows instead of a silent blank pane. Three copies of this
+    // function exist (here, Phase 1/index.html, getStyledHtmlWrapper_); edit together.
+    var obj = document.createElement('object');
+    obj.data = __filePreviewUrl;
+    obj.type = mime;
+    obj.setAttribute('aria-label', name);
+    obj.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+    var fb = document.createElement('div');
+    fb.style.cssText = 'padding:36px 24px;text-align:center;color:#4b5563;font-size:13px;line-height:1.7;';
+    fb.textContent = 'This document could not be previewed in the browser. Use Download to open it.';
+    obj.appendChild(fb);
+    pane.appendChild(obj);
   } else if (isImg) {
     var img = document.createElement('img');
     img.src = __filePreviewUrl;

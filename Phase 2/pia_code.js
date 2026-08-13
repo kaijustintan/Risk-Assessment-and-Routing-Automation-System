@@ -2133,11 +2133,20 @@ function getStyledHtmlWrapper_(header, content) {
             (isImg ? 'display:flex;align-items:center;justify-content:center;padding:12px;' : '');
 
           if (isPdf) {
-            var frame = document.createElement('iframe');
-            frame.src = __filePreviewUrl;
-            frame.title = name;
-            frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
-            pane.appendChild(frame);
+            // F2 (2026-08-13): <object> instead of <iframe>; blob: PDFs blanked in an iframe
+            // inside the GAS sandbox. Fallback child shows when the browser cannot render.
+            // Three copies exist (Phase 1/index.html, pia_index.html, here); edit together.
+            // This copy lives inside a template literal: NO backticks, NO dollar-brace.
+            var obj = document.createElement('object');
+            obj.data = __filePreviewUrl;
+            obj.type = mime;
+            obj.setAttribute('aria-label', name);
+            obj.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+            var fb = document.createElement('div');
+            fb.style.cssText = 'padding:36px 24px;text-align:center;color:#4b5563;font-size:13px;line-height:1.7;';
+            fb.textContent = 'This document could not be previewed in the browser. Use Download to open it.';
+            obj.appendChild(fb);
+            pane.appendChild(obj);
           } else if (isImg) {
             var img = document.createElement('img');
             img.src = __filePreviewUrl;
@@ -3061,9 +3070,28 @@ function handleEmailAction_(params) {
       </div>
     `;
 
+    // F6 (2026-08-13): display label. The stored value 'Approved' means exactly "Stage A heads
+    // done, ISM pending" (written at the moment the ISM workflow is initialized), but an ISM
+    // reviewer reading a bare "Approved" badge can take it as "already fully approved" and
+    // review less carefully. Map it, DISPLAY ONLY, to say which stage it actually is. The
+    // stored Applications.Status strings are frozen cross-app contracts (Admin reads them);
+    // never change the write side for a labelling problem.
+    const statusDisplay = (() => {
+      const raw = String(appData.status || '');
+      if (raw === 'Approved' || raw === 'Approved (ISM Pending)') {
+        return 'Approved by Heads (Awaiting ISM Review)';
+      }
+      return raw;
+    })();
+
     // Determine status badge class
     const badgeClass = (() => {
       const s = String(appData.status || '').toLowerCase();
+      // F6: heads-approved-awaiting-ISM renders as in-progress, not final green. NOTE the
+      // wrapper CSS defines only approved/complete/denied/escalated/pending/rejected/returned,
+      // so 'pending' is the correct in-progress class HERE (status-processing does not exist
+      // in getStyledHtmlWrapper_'s stylesheet, only in the app frontends).
+      if (s === 'approved' || s === 'approved (ism pending)') return 'pending';
       if (s.includes('approve')) return 'approved';
       // Round-4: Returned is a fixable loop, not a terminal denial, amber, not red.
       // 'Rejected by ISM' stays terminal-red; plain 'Rejected' is the legacy Returned label.
@@ -3079,9 +3107,10 @@ function handleEmailAction_(params) {
         <div style="font-weight: 600; color: var(--navy-text); margin-bottom: 6px;">Flag System Guide</div>
         <ol style="margin: 0 0 6px 18px; padding: 0;">
           <li>Click the flag button (<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: middle;"><path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z"/></svg>) next to a field value to flag it for the requestor.</li>
-          <li>Type the reason for the flag (max 50 characters), then click <strong>Save</strong>. The flag turns <span style="color: var(--danger-text); font-weight: 600;">red</span> when active.</li>
+          <li>Type the reason for the flag (max 200 characters), then click <strong>Save Flag</strong>. The flag turns <span style="color: var(--danger-text); font-weight: 600;">red</span> when active.</li>
           <li>To remove a flag, click <strong>Remove</strong> next to the flagged field.</li>
         </ol>
+        <div style="font-size: 12px; color: var(--text3);">Flags are correction requests for the requestor, so they can only be submitted with a <strong>Return</strong>. While any flag is set, Approve and Escalate are disabled.</div>
       </div>
     `;
 
@@ -3089,7 +3118,7 @@ function handleEmailAction_(params) {
       <div style="margin-bottom: 12px; padding-bottom: 20px; border-bottom: 1px dashed var(--border);">
         <div class="step-badge" style="background: var(--bg3); color: var(--text3); border-color: var(--border);">Application Brief</div>
         <div class="summary-row"><div class="summary-label">DCS Request</div><div class="summary-value"><strong>${escapeHtml_(appData.linkedReqId || '—')}</strong></div></div>
-        <div class="summary-row"><div class="summary-label">Current Status</div><div class="summary-value"><span class="status-badge status-${badgeClass}">${escapeHtml_(appData.status)}</span></div></div>
+        <div class="summary-row"><div class="summary-label">Current Status</div><div class="summary-value"><span class="status-badge status-${badgeClass}">${escapeHtml_(statusDisplay)}</span></div></div>
         <div class="summary-row"><div class="summary-label">Program</div><div class="summary-value"><strong>${escapeHtml_(appData.pia1.program || '—')}</strong></div></div>
         <div class="summary-row"><div class="summary-label">Purpose</div><div class="summary-value">${escapeHtml_(appData.pia1.purpose)}</div></div>
         <div class="summary-row">
@@ -3307,11 +3336,11 @@ function handleEmailAction_(params) {
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%;">
           <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Advance this application to the next approval stage or finalize it.</div>
-            <button type="button" class="btn btn-success" style="padding:16px; width:100%; justify-content:center; font-size:16px;" onclick="submitWithRouting('Approve')">Approve</button>
+            <button type="button" class="btn btn-success flag-blocks-this" style="padding:16px; width:100%; justify-content:center; font-size:16px;" onclick="submitWithRouting('Approve')">Approve</button>
           </div>
           <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Forward this application to the Division Head for executive review.</div>
-            <button type="button" class="btn btn-secondary" style="background:#1e40af; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#1e40af;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
+            <button type="button" class="btn btn-secondary flag-blocks-this" style="background:#1e40af; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#1e40af;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
           </div>
           <div class="action-deny-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Send this application back to the original requestor for necessary revisions.</div>
@@ -3337,7 +3366,7 @@ function handleEmailAction_(params) {
         escalateBtnHtml = `
           <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Forward this application to the Division Head for executive review.</div>
-            <button type="button" class="btn btn-secondary" style="background:#1e40af; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#1e40af;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
+            <button type="button" class="btn btn-secondary flag-blocks-this" style="background:#1e40af; color:white; padding:16px; width:100%; justify-content:center; font-size:16px; border-color:#1e40af;" onclick="submitWithRouting('EscalateToDivisionHead')">Escalate to Division Head</button>
           </div>
         `;
       }
@@ -3345,7 +3374,7 @@ function handleEmailAction_(params) {
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%;">
           <div class="action-approve-group" style="display:flex; flex-direction:column; gap:4px;">
             <div style="font-size: 13px; color: var(--text2);">Advance this application to the next approval stage or finalize it.</div>
-            <button type="button" class="btn btn-success" style="padding:16px; width:100%; justify-content:center; font-size:16px;" onclick="submitWithRouting('Approve')">Approve</button>
+            <button type="button" class="btn btn-success flag-blocks-this" style="padding:16px; width:100%; justify-content:center; font-size:16px;" onclick="submitWithRouting('Approve')">Approve</button>
           </div>
           ${escalateBtnHtml}
           <div class="action-deny-group" style="display:flex; flex-direction:column; gap:4px;">
@@ -3450,48 +3479,96 @@ function handleEmailAction_(params) {
           </div>
         </div>
       </div>
-      
+
+      <!-- Flag Reason Modal (F9, 2026-08-13: replaces the inline flag box that cluttered the row) -->
+      <div id="flagModal" class="decision-modal-overlay" style="display:none;">
+        <div class="decision-modal" style="max-width: 440px;">
+          <h3 class="decision-modal-header">Flag for Correction</h3>
+          <div id="flagModalField" style="font-size:12.5px; font-weight:600; color:var(--danger-text); margin-bottom:10px; word-break:break-word;"></div>
+          <input type="text" id="flagReasonInput" maxlength="200" placeholder="Reason (required, max 200 chars)" style="width:100%; box-sizing:border-box; padding:9px 10px; border:1px solid var(--border2); border-radius:4px; font-size:13px; margin-bottom:16px;">
+          <div style="display:flex; gap:10px;">
+            <button type="button" class="btn btn-primary" id="flagModalSave" onclick="saveFlagModal()" style="flex:1; padding:10px; justify-content:center;">Save Flag</button>
+            <button type="button" class="btn btn-danger" id="flagModalRemove" onclick="removeFlagModal()" style="flex:1; padding:10px; justify-content:center; display:none;">Remove</button>
+            <button type="button" class="btn btn-secondary" onclick="closeFlagModal()" style="flex:1; padding:10px; justify-content:center;">Cancel</button>
+          </div>
+        </div>
+      </div>
+
       <script>
         let flagData = {};
-        
+        let flagModalTarget = null;   // { flagName, row } for the flag being edited in the modal
+
+        // F9 (2026-08-13): the reason input is a centered modal now, not a box injected into the
+        // row. The row reference is captured on open so Save/Remove can still mark the flag
+        // button and render the saved chip in the right place.
         function toggleFlagBox(btn) {
           const flagName = btn.getAttribute('data-flag');
           const row = btn.closest('.summary-row') || btn.parentElement;
-          
-          let box = row.querySelector('.flag-input-box');
-          if (!box) {
-            box = document.createElement('div');
-            box.className = 'flag-input-box';
-            box.style.gridColumn = '1 / -1';
-            box.style.background = 'var(--danger)';
-            box.style.padding = '8px 12px';
-            box.style.borderRadius = 'var(--radius)';
-            box.style.display = 'flex';
-            box.style.alignItems = 'center';
-            box.style.gap = '8px';
-            box.style.border = '1px solid rgba(220,38,38,0.2)';
-            box.style.marginTop = '4px';
-            
-            box.innerHTML = 
-              '<span style="font-size:12px; font-weight:600; color:var(--danger-text); white-space:nowrap;">Flag Reason:</span>' +
-              '<input type="text" class="flag-reason-input" maxlength="200" placeholder="Required (max 200 chars)" style="flex:1; padding:6px; border:1px solid var(--border2); border-radius:4px; font-size:12px;">' +
-              '<button type="button" class="btn btn-sm btn-primary save-flag-btn" style="padding:4px 10px;">Save</button>' +
-              '<button type="button" class="btn btn-sm btn-danger remove-flag-btn" style="padding:4px 10px; display:none;">Remove</button>' +
-              '<button type="button" class="btn btn-sm btn-secondary close-flag-btn" style="padding:4px 10px;">Close</button>';
-              
-            box.querySelector('.save-flag-btn').onclick = function() { saveFlagInline(this, flagName); };
-            box.querySelector('.remove-flag-btn').onclick = function() { removeFlagInline(this, flagName); };
-            box.querySelector('.close-flag-btn').onclick = function() { closeFlagInline(this); };
-            
-            row.appendChild(box);
-          } else {
-            box.style.display = 'flex';
-          }
-          
-          const input = box.querySelector('.flag-reason-input');
+          flagModalTarget = { flagName: flagName, row: row };
+          document.getElementById('flagModalField').textContent = flagName;
+          const input = document.getElementById('flagReasonInput');
           input.value = flagData[flagName] || '';
-          box.querySelector('.remove-flag-btn').style.display = flagData[flagName] ? 'block' : 'none';
+          document.getElementById('flagModalRemove').style.display = flagData[flagName] ? 'block' : 'none';
+          document.getElementById('flagModal').style.display = 'flex';
           input.focus();
+        }
+
+        function closeFlagModal() {
+          document.getElementById('flagModal').style.display = 'none';
+          flagModalTarget = null;
+        }
+
+        function saveFlagModal() {
+          if (!flagModalTarget) return;
+          const reason = document.getElementById('flagReasonInput').value.trim();
+          if (!reason) { showError('Please provide a reason.'); return; }
+          const flagName = flagModalTarget.flagName;
+          const row = flagModalTarget.row;
+          flagData[flagName] = reason;
+          updateFlagsInput();
+          const flagBtn = row.querySelector('.flag-btn[data-flag="' + flagName.replace(/"/g, '\\\\"') + '"]');
+          if (flagBtn) flagBtn.classList.add('active');
+          renderSavedFlagChip(row, flagName, reason);
+          closeFlagModal();
+        }
+
+        function removeFlagModal() {
+          if (!flagModalTarget) return;
+          const row = flagModalTarget.row;
+          const flagName = flagModalTarget.flagName;
+          closeFlagModal();
+          clearFlag(row, flagName);
+        }
+
+        function renderSavedFlagChip(row, flagName, reason) {
+          let savedDisplay = row.querySelector('.flag-saved-display');
+          if (!savedDisplay) {
+            savedDisplay = document.createElement('div');
+            savedDisplay.className = 'flag-saved-display';
+            savedDisplay.style.gridColumn = '1 / -1';
+            savedDisplay.style.fontSize = '12px';
+            savedDisplay.style.color = 'var(--danger-text)';
+            savedDisplay.style.background = 'rgba(220,38,38,0.05)';
+            savedDisplay.style.padding = '6px 10px';
+            savedDisplay.style.borderRadius = '4px';
+            savedDisplay.style.marginTop = '4px';
+            savedDisplay.style.display = 'flex';
+            savedDisplay.style.justifyContent = 'space-between';
+            savedDisplay.style.alignItems = 'center';
+            row.appendChild(savedDisplay);
+          }
+          savedDisplay.style.display = 'flex';
+          savedDisplay.innerHTML = '<span><strong>Flagged:</strong> ' + escapeHtmlLocal(reason) + '</span><button type="button" class="btn btn-sm btn-danger remove-saved-flag-btn" style="padding:2px 8px; font-size:11px;">Remove</button>';
+          savedDisplay.querySelector('.remove-saved-flag-btn').onclick = function() { clearFlag(row, flagName); };
+        }
+
+        function clearFlag(row, flagName) {
+          delete flagData[flagName];
+          updateFlagsInput();
+          const flagBtn = row.querySelector('.flag-btn[data-flag="' + flagName.replace(/"/g, '\\\\"') + '"]');
+          if (flagBtn) flagBtn.classList.remove('active');
+          const savedDisplay = row.querySelector('.flag-saved-display');
+          if (savedDisplay) savedDisplay.style.display = 'none';
         }
 
         function toggleQuickFlag(btn) {
@@ -3506,72 +3583,20 @@ function handleEmailAction_(params) {
           updateFlagsInput();
         }
 
-        function saveFlagInline(btn, flagName) {
-          const box = btn.closest('.flag-input-box');
-          const input = box.querySelector('.flag-reason-input');
-          const reason = input.value.trim();
-          
-          if (!reason) { showError('Please provide a reason.'); return; }
-          
-          flagData[flagName] = reason;
-          updateFlagsInput();
-          
-          const container = box.parentElement;
-          const flagBtn = container.querySelector('.flag-btn[data-flag="' + flagName.replace(/"/g, '\\\\"') + '"]');
-          if (flagBtn) flagBtn.classList.add('active');
-          
-          box.style.display = 'none';
-          
-          let savedDisplay = container.querySelector('.flag-saved-display');
-          if (!savedDisplay) {
-            savedDisplay = document.createElement('div');
-            savedDisplay.className = 'flag-saved-display';
-            savedDisplay.style.gridColumn = '1 / -1';
-            savedDisplay.style.fontSize = '12px';
-            savedDisplay.style.color = 'var(--danger-text)';
-            savedDisplay.style.background = 'rgba(220,38,38,0.05)';
-            savedDisplay.style.padding = '6px 10px';
-            savedDisplay.style.borderRadius = '4px';
-            savedDisplay.style.marginTop = '4px';
-            savedDisplay.style.display = 'flex';
-            savedDisplay.style.justifyContent = 'space-between';
-            savedDisplay.style.alignItems = 'center';
-            container.appendChild(savedDisplay);
-          }
-          savedDisplay.style.display = 'flex';
-          savedDisplay.innerHTML = '<span><strong>Flagged:</strong> ' + escapeHtmlLocal(reason) + '</span><button type="button" class="btn btn-sm btn-danger remove-saved-flag-btn" style="padding:2px 8px; font-size:11px;">Remove</button>';
-          savedDisplay.querySelector('.remove-saved-flag-btn').onclick = function() { removeFlagInline(this, flagName); };
-        }
-
-        function removeFlagInline(btn, flagName) {
-          delete flagData[flagName];
-          updateFlagsInput();
-          
-          const container = btn.closest('.flag-input-box')?.parentElement || btn.closest('.flag-saved-display')?.parentElement;
-          if (!container) return;
-          
-          const flagBtn = container.querySelector('.flag-btn[data-flag="' + flagName.replace(/"/g, '\\\\"') + '"]');
-          if (flagBtn) flagBtn.classList.remove('active');
-          
-          const box = container.querySelector('.flag-input-box');
-          if (box) {
-            box.style.display = 'none';
-            box.querySelector('.flag-reason-input').value = '';
-            box.querySelector('.remove-flag-btn').style.display = 'none';
-          }
-          
-          const savedDisplay = container.querySelector('.flag-saved-display');
-          if (savedDisplay) savedDisplay.style.display = 'none';
-        }
-
-        function closeFlagInline(btn) {
-          const box = btn.closest('.flag-input-box');
-          if (box) box.style.display = 'none';
-        }
-
         function updateFlagsInput() {
           const input = document.getElementById('approverFlagsInput');
           if (input) input.value = JSON.stringify(flagData);
+          // F5 (2026-08-13): flags are a correction request and only a Return carries them back
+          // to the applicant. Disable Approve/Escalate while any flag is set; the server
+          // enforces the same rule, this is the courtesy half.
+          const blocked = Object.keys(flagData).length > 0;
+          const btns = document.querySelectorAll('.flag-blocks-this');
+          for (let i = 0; i < btns.length; i++) {
+            btns[i].disabled = blocked;
+            btns[i].style.opacity = blocked ? '0.5' : '';
+            btns[i].style.cursor = blocked ? 'not-allowed' : '';
+            btns[i].title = blocked ? 'You have flagged items. Remove the flags to continue, or choose Return to send them back.' : '';
+          }
         }
 
         function escapeHtmlLocal(str) {
@@ -3601,18 +3626,20 @@ function handleEmailAction_(params) {
           }
           
           document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+              const fm = document.getElementById('flagModal');
+              if (fm && fm.style.display !== 'none') closeFlagModal();
+              return;
+            }
             if (event.key === 'Enter') {
               const target = event.target;
               if (target.tagName === 'TEXTAREA' || target.isContentEditable) return;
               event.preventDefault();
-              if (target.classList.contains('flag-reason-input')) {
-                 const saveBtn = target.parentElement.querySelector('.save-flag-btn');
-                 if (saveBtn) saveBtn.click();
-              }
+              if (target.id === 'flagReasonInput') saveFlagModal();
             }
           });
         });
-        
+
         function clearRoutingError() {
           document.getElementById('routingError').style.display = 'none';
         }
@@ -3654,10 +3681,19 @@ function handleEmailAction_(params) {
         }
         
         function submitWithRouting(decision) {
+          // F5 (2026-08-13): this function only ever submits Approve or Escalate, and neither
+          // may carry flags (they would be recorded and never shown to anyone). The buttons are
+          // disabled while flags exist; this guard covers the keyboard/programmatic path, and
+          // the server refuses the combination regardless.
+          if (Object.keys(flagData).length > 0) {
+            showError('Flagged items can only accompany a Return. Remove the flags to continue, or choose Return to send them back.');
+            return;
+          }
+
           const editor = document.getElementById('editor');
           const decisionInput = document.getElementById('ismDecisionInput');
           const routingInput = document.getElementById('routingDestinationInput');
-          
+
           const plainText = editor.value.trim();
 
           // Remarks (min 50 chars) required for every decision (the modal gate that used to enforce this is gone).
@@ -3791,7 +3827,7 @@ function handleEmailAction_(params) {
 
     const actionButtonsHtml = `
       <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
-        <button type="submit" name="action" value="Approve" class="btn btn-success" onclick="document.getElementById('actionTokenInput').value='${approveToken}'; showDecisionOverlay();">Approve</button>
+        <button type="submit" name="action" value="Approve" class="btn btn-success flag-blocks-this" onclick="document.getElementById('actionTokenInput').value='${approveToken}'; showDecisionOverlay();">Approve</button>
         <button type="button" class="btn btn-warn" onclick="showReturnOptions()">Return to Requestor</button>
         <button type="submit" name="action" value="Deny" class="btn btn-danger" onclick="document.getElementById('actionTokenInput').value='${denyToken}'; showDecisionOverlay();">Deny</button>
       </div>
@@ -3866,47 +3902,97 @@ function handleEmailAction_(params) {
           </div>
         </div>
       </form>
+
+      <!-- Flag Reason Modal (F9, 2026-08-13: replaces the inline flag box that cluttered the row) -->
+      <div id="flagModal" class="decision-modal-overlay" style="display:none;">
+        <div class="decision-modal" style="max-width: 440px;">
+          <h3 class="decision-modal-header">Flag for Correction</h3>
+          <div id="flagModalField" style="font-size:12.5px; font-weight:600; color:var(--danger-text); margin-bottom:10px; word-break:break-word;"></div>
+          <input type="text" id="flagReasonInput" maxlength="200" placeholder="Reason (required, max 200 chars)" style="width:100%; box-sizing:border-box; padding:9px 10px; border:1px solid var(--border2); border-radius:4px; font-size:13px; margin-bottom:16px;">
+          <div style="display:flex; gap:10px;">
+            <button type="button" class="btn btn-primary" id="flagModalSave" onclick="saveFlagModal()" style="flex:1; padding:10px; justify-content:center;">Save Flag</button>
+            <button type="button" class="btn btn-danger" id="flagModalRemove" onclick="removeFlagModal()" style="flex:1; padding:10px; justify-content:center; display:none;">Remove</button>
+            <button type="button" class="btn btn-secondary" onclick="closeFlagModal()" style="flex:1; padding:10px; justify-content:center;">Cancel</button>
+          </div>
+        </div>
+      </div>
+
       <script>
         let flagData = {};
-        
+        let flagModalTarget = null;   // { flagName, row } for the flag being edited in the modal
+
+        // F9 (2026-08-13): the reason input is a centered modal now, not a box injected into the
+        // row. The row reference is captured on open so Save/Remove can still mark the flag
+        // button and render the saved chip in the right place. Keep this copy in step with the
+        // ISM form's copy above.
         function toggleFlagBox(btn) {
           const flagName = btn.getAttribute('data-flag');
           const row = btn.closest('.summary-row') || btn.parentElement;
-          
-          let box = row.querySelector('.flag-input-box');
-          if (!box) {
-            box = document.createElement('div');
-            box.className = 'flag-input-box';
-            box.style.gridColumn = '1 / -1';
-            box.style.background = 'var(--danger)';
-            box.style.padding = '8px 12px';
-            box.style.borderRadius = 'var(--radius)';
-            box.style.display = 'flex';
-            box.style.alignItems = 'center';
-            box.style.gap = '8px';
-            box.style.border = '1px solid rgba(220,38,38,0.2)';
-            box.style.marginTop = '4px';
-            
-            box.innerHTML = 
-              '<span style="font-size:12px; font-weight:600; color:var(--danger-text); white-space:nowrap;">Flag Reason:</span>' +
-              '<input type="text" class="flag-reason-input" maxlength="200" placeholder="Required (max 200 chars)" style="flex:1; padding:6px; border:1px solid var(--border2); border-radius:4px; font-size:12px;">' +
-              '<button type="button" class="btn btn-sm btn-primary save-flag-btn" style="padding:4px 10px;">Save</button>' +
-              '<button type="button" class="btn btn-sm btn-danger remove-flag-btn" style="padding:4px 10px; display:none;">Remove</button>' +
-              '<button type="button" class="btn btn-sm btn-secondary close-flag-btn" style="padding:4px 10px;">Close</button>';
-              
-            box.querySelector('.save-flag-btn').onclick = function() { saveFlagInline(this, flagName); };
-            box.querySelector('.remove-flag-btn').onclick = function() { removeFlagInline(this, flagName); };
-            box.querySelector('.close-flag-btn').onclick = function() { closeFlagInline(this); };
-            
-            row.appendChild(box);
-          } else {
-            box.style.display = 'flex';
-          }
-          
-          const input = box.querySelector('.flag-reason-input');
+          flagModalTarget = { flagName: flagName, row: row };
+          document.getElementById('flagModalField').textContent = flagName;
+          const input = document.getElementById('flagReasonInput');
           input.value = flagData[flagName] || '';
-          box.querySelector('.remove-flag-btn').style.display = flagData[flagName] ? 'block' : 'none';
+          document.getElementById('flagModalRemove').style.display = flagData[flagName] ? 'block' : 'none';
+          document.getElementById('flagModal').style.display = 'flex';
           input.focus();
+        }
+
+        function closeFlagModal() {
+          document.getElementById('flagModal').style.display = 'none';
+          flagModalTarget = null;
+        }
+
+        function saveFlagModal() {
+          if (!flagModalTarget) return;
+          const reason = document.getElementById('flagReasonInput').value.trim();
+          if (!reason) { showError('Please provide a reason.'); return; }
+          const flagName = flagModalTarget.flagName;
+          const row = flagModalTarget.row;
+          flagData[flagName] = reason;
+          updateFlagsInput();
+          const flagBtn = row.querySelector('.flag-btn[data-flag="' + flagName.replace(/"/g, '\\\\"') + '"]');
+          if (flagBtn) flagBtn.classList.add('active');
+          renderSavedFlagChip(row, flagName, reason);
+          closeFlagModal();
+        }
+
+        function removeFlagModal() {
+          if (!flagModalTarget) return;
+          const row = flagModalTarget.row;
+          const flagName = flagModalTarget.flagName;
+          closeFlagModal();
+          clearFlag(row, flagName);
+        }
+
+        function renderSavedFlagChip(row, flagName, reason) {
+          let savedDisplay = row.querySelector('.flag-saved-display');
+          if (!savedDisplay) {
+            savedDisplay = document.createElement('div');
+            savedDisplay.className = 'flag-saved-display';
+            savedDisplay.style.gridColumn = '1 / -1';
+            savedDisplay.style.fontSize = '12px';
+            savedDisplay.style.color = 'var(--danger-text)';
+            savedDisplay.style.background = 'rgba(220,38,38,0.05)';
+            savedDisplay.style.padding = '6px 10px';
+            savedDisplay.style.borderRadius = '4px';
+            savedDisplay.style.marginTop = '4px';
+            savedDisplay.style.display = 'flex';
+            savedDisplay.style.justifyContent = 'space-between';
+            savedDisplay.style.alignItems = 'center';
+            row.appendChild(savedDisplay);
+          }
+          savedDisplay.style.display = 'flex';
+          savedDisplay.innerHTML = '<span><strong>Flagged:</strong> ' + escapeHtmlLocal(reason) + '</span><button type="button" class="btn btn-sm btn-danger remove-saved-flag-btn" style="padding:2px 8px; font-size:11px;">Remove</button>';
+          savedDisplay.querySelector('.remove-saved-flag-btn').onclick = function() { clearFlag(row, flagName); };
+        }
+
+        function clearFlag(row, flagName) {
+          delete flagData[flagName];
+          updateFlagsInput();
+          const flagBtn = row.querySelector('.flag-btn[data-flag="' + flagName.replace(/"/g, '\\\\"') + '"]');
+          if (flagBtn) flagBtn.classList.remove('active');
+          const savedDisplay = row.querySelector('.flag-saved-display');
+          if (savedDisplay) savedDisplay.style.display = 'none';
         }
 
         function toggleQuickFlag(btn) {
@@ -3921,62 +4007,20 @@ function handleEmailAction_(params) {
           updateFlagsInput();
         }
 
-        function saveFlagInline(btn, flagName) {
-          const box = btn.closest('.flag-input-box');
-          const input = box.querySelector('.flag-reason-input');
-          const reason = input.value.trim();
-          
-          if (!reason) { showError('Please provide a reason.'); return; }
-          
-          flagData[flagName] = reason;
-          updateFlagsInput();
-          
-          const row = btn.closest('.summary-row') || btn.parentElement.parentElement;
-          const flagBtn = row.querySelector('.flag-btn[data-flag="' + flagName.replace(/"/g, '\\\\"') + '"]');
-          if (flagBtn) flagBtn.classList.add('active');
-          
-          box.style.display = 'none';
-          
-          let savedDisplay = row.querySelector('.flag-saved-display');
-          if (!savedDisplay) {
-            savedDisplay = document.createElement('div');
-            savedDisplay.className = 'flag-saved-display';
-            savedDisplay.style.gridColumn = '1 / -1';
-            savedDisplay.style.fontSize = '12px';
-            savedDisplay.style.color = 'var(--danger-text)';
-            savedDisplay.style.background = 'rgba(220,38,38,0.05)';
-            savedDisplay.style.padding = '6px 10px';
-            savedDisplay.style.borderRadius = '4px';
-            savedDisplay.style.marginTop = '4px';
-            row.appendChild(savedDisplay);
-          }
-          savedDisplay.style.display = 'block';
-          savedDisplay.innerHTML = '<strong>Flagged:</strong> ' + escapeHtmlLocal(reason);
-        }
-
-        function removeFlagInline(btn, flagName) {
-          delete flagData[flagName];
-          updateFlagsInput();
-          
-          const row = btn.closest('.summary-row') || btn.parentElement.parentElement;
-          const flagBtn = row.querySelector('.flag-btn[data-flag="' + flagName.replace(/"/g, '\\\\"') + '"]');
-          if (flagBtn) flagBtn.classList.remove('active');
-          
-          const box = btn.closest('.flag-input-box');
-          if (box) box.style.display = 'none';
-          
-          const savedDisplay = row.querySelector('.flag-saved-display');
-          if (savedDisplay) savedDisplay.style.display = 'none';
-        }
-
-        function closeFlagInline(btn) {
-          const box = btn.closest('.flag-input-box');
-          if (box) box.style.display = 'none';
-        }
-
         function updateFlagsInput() {
           const input = document.getElementById('approverFlagsInput');
           if (input) input.value = JSON.stringify(flagData);
+          // F5 (2026-08-13): flags are a correction request and only a Return carries them back
+          // to the applicant. Disable Approve while any flag is set; the server enforces the
+          // same rule, this is the courtesy half.
+          const blocked = Object.keys(flagData).length > 0;
+          const btns = document.querySelectorAll('.flag-blocks-this');
+          for (let i = 0; i < btns.length; i++) {
+            btns[i].disabled = blocked;
+            btns[i].style.opacity = blocked ? '0.5' : '';
+            btns[i].style.cursor = blocked ? 'not-allowed' : '';
+            btns[i].title = blocked ? 'You have flagged items. Remove the flags to approve, or choose Return to send them back.' : '';
+          }
         }
 
         function escapeHtmlLocal(str) {
@@ -4006,18 +4050,37 @@ function handleEmailAction_(params) {
           }
           
           document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+              const fm = document.getElementById('flagModal');
+              if (fm && fm.style.display !== 'none') closeFlagModal();
+              return;
+            }
             if (event.key === 'Enter') {
               const target = event.target;
               if (target.tagName === 'TEXTAREA' || target.isContentEditable) return;
               event.preventDefault();
-              if (target.classList.contains('flag-reason-input')) {
-                 const saveBtn = target.parentElement.querySelector('.save-flag-btn');
-                 if (saveBtn) saveBtn.click();
-              }
+              if (target.id === 'flagReasonInput') saveFlagModal();
             }
           });
+
+          // F5 (2026-08-13): Approve here is a native type="submit", so the block lives on the
+          // form's submit event. event.submitter distinguishes which button fired, so the
+          // Return-modal submit and Deny pass through untouched. The Approve onclick shows the
+          // spinner overlay BEFORE submit fires, so a refused submit must hide it again.
+          const approvalForm = document.getElementById('approvalForm');
+          if (approvalForm) {
+            approvalForm.addEventListener('submit', function(event) {
+              const submitter = event.submitter;
+              if (submitter && submitter.value === 'Approve' && Object.keys(flagData).length > 0) {
+                event.preventDefault();
+                const ov = document.getElementById('decisionOverlay');
+                if (ov) ov.style.display = 'none';
+                showError('Flagged items can only accompany a Return. Remove the flags to approve, or choose Return to send them back.');
+              }
+            });
+          }
         });
-        
+
         function showReturnOptions() {
           // Round-4: minimum lowered 2 -> 1 (one clearly flagged item is enough to justify a return).
           if (Object.keys(flagData).length < 1) {
@@ -5613,6 +5676,15 @@ function processDivHeadDecision_(sessionId, approverEmail, decision, comments, a
     return { ok: false, message: 'Access denied: you may only submit your own decision.' };
   }
   const _actedBy = _act.onBehalfOf ? _me : '';
+
+  // Plain-text policy + F5 guard (2026-08-13): see processApprovalDecision_ for the rationale.
+  // A Division Head approving over flags discards a correction request exactly the same way.
+  comments = String(comments || '').replace(/<[^>]*>/g, '').trim();
+  approverFlags = sanitizeFlagsJson_(approverFlags);
+  if (decision === 'Approve' && hasFlags_(approverFlags)) {
+    return fail_(ERR.VALIDATION, 'Flagged items can only accompany a Return. Remove the flags to approve, or choose Return to send them back.');
+  }
+
   const lock = LockService.getScriptLock();
   let lockAcquired = false;
 
@@ -5898,6 +5970,19 @@ function processApprovalDecision_(sessionId, approverEmail, decision, comments, 
     const allowedDecisions = ['Approve', 'Return', 'Deny'];
     if (allowedDecisions.indexOf(decision) === -1) {
       return { ok: false, message: 'Invalid decision value' };
+    }
+
+    // Plain-text policy (2026-08-13): comments and flag reasons store no HTML anywhere.
+    // handleEmailAction_ already strips before calling; this closes the raw RPC path
+    // (apiProcessApprovalDecision is public) and is idempotent on the form path.
+    comments = String(comments || '').replace(/<[^>]*>/g, '').trim();
+    approverFlags = sanitizeFlagsJson_(approverFlags);
+
+    // F5 guard (2026-08-13): flags are a correction request, and only a Return ever carries
+    // them back to the applicant. Approving over them silently discards the request. The
+    // review form disables Approve client-side; this is the server half of the same rule.
+    if (decision === 'Approve' && hasFlags_(approverFlags)) {
+      return fail_(ERR.VALIDATION, 'Flagged items can only accompany a Return. Remove the flags to approve, or choose Return to send them back.');
     }
 
     const lock = LockService.getScriptLock();
@@ -7141,7 +7226,10 @@ function notifyApplicant_(sessionId, status, options) {
       buttonText = 'View DCS Submission →';
     } else if (status === 'returned' || status === 'rejected') {
       if (hasDCSFlags) {
-        actionUrl = dcsWebAppUrl;
+        // F4 fix (2026-08-13): this was the ONLY branch that sent a bare URL, so the applicant
+        // landed on the DCS home screen at the exact moment they were already confused and doing
+        // rework. DCS's boot() reads ?parentID= and jumps straight to that request's details.
+        actionUrl = `${dcsWebAppUrl}?parentID=${encodeURIComponent(linkedReqId)}`;
         buttonText = 'Update DCS Request First →';
       } else {
         actionUrl = `${webAppUrl}?parentID=${encodeURIComponent(linkedReqId)}`;
@@ -7354,23 +7442,20 @@ function buildUnifiedHistoryHtml_(unified) {
       return String(raw);
     } catch (e) { return String(raw); }
   };
-  let html = '<div style="font-family: sans-serif;">';
-  rounds.forEach(function (r) {
-    let decisions = '';
-    (r.decisions || []).forEach(function (d) {
-      const routing = routingLabelFor(d.routing);
-      const routingHtml = routing ? `<div style="font-size:12px;color:#6b7280;margin-top:3px;">Routing: <strong>${escapeHtml_(routing)}</strong></div>` : '';
-      const dateStr = fmtDate(d.decisionDate);
-      const flagKeys = (d.flaggedFields && typeof d.flaggedFields === 'object') ? Object.keys(d.flaggedFields) : [];
-      let flags = '';
-      if (flagKeys.length > 0) {
-        flags = '<div style="font-size:11px;color:#92400e;margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
-          const reason = d.flaggedFields[k];
-          return escapeHtml_(k) + (reason && reason !== true ? ' (' + escapeHtml_(String(reason)) + ')' : '');
-        }).join(', ') + '</div>';
-      }
-      const showComment = !!d.comments;
-      decisions += `
+  const renderDecision = function (d) {
+    const routing = routingLabelFor(d.routing);
+    const routingHtml = routing ? `<div style="font-size:12px;color:#6b7280;margin-top:3px;">Routing: <strong>${escapeHtml_(routing)}</strong></div>` : '';
+    const dateStr = fmtDate(d.decisionDate);
+    const flagKeys = (d.flaggedFields && typeof d.flaggedFields === 'object') ? Object.keys(d.flaggedFields) : [];
+    let flags = '';
+    if (flagKeys.length > 0) {
+      flags = '<div style="font-size:11px;color:#92400e;margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
+        const reason = d.flaggedFields[k];
+        return escapeHtml_(k) + (reason && reason !== true ? ' (' + escapeHtml_(String(reason)) + ')' : '');
+      }).join(', ') + '</div>';
+    }
+    const showComment = !!d.comments;
+    return `
         <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f0f0f0;">
           <div style="font-size:13px;color:#333;"><strong>${escapeHtml_(d.approverName || d.approverEmail || 'Approver')}</strong> <span style="color:#6b7280;">(${escapeHtml_(d.role || 'Approver')})</span>: <span style="color:${colorFor(d.status, d.decision)};font-weight:600;">${escapeHtml_(labelFor(d.status))}</span></div>
           ${dateStr ? `<div style="font-size:11px;color:#999;margin-top:2px;">${escapeHtml_(dateStr)}</div>` : ''}
@@ -7378,12 +7463,38 @@ function buildUnifiedHistoryHtml_(unified) {
           ${showComment ? `<div style="font-size:12.5px;color:#666;margin-top:3px;">"${escapeHtml_(String(d.comments))}"</div>` : ''}
           ${flags}
         </div>`;
-    });
-    const headerColor = r.isCurrent ? '#1a3a5c' : '#6b7280';
+  };
+
+  // F8 (2026-08-13): within each round, decisions are grouped under body sub-headers, the same
+  // Department/ISM split the certificate roster uses, so round stays the outer unit of reasoning
+  // and body the inner one. A missing group renders nothing rather than an empty header.
+  // Email-safe on purpose: inline styles, hex colors, plain divs (this output feeds five email
+  // templates and the certificate PDF through the legacy HTML-to-PDF engine).
+  const subHeader = function (label) {
+    return '<div style="font-size:10px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:8px 0 6px;">' + escapeHtml_(label) + '</div>';
+  };
+
+  let html = '<div style="font-family: sans-serif;">';
+  rounds.forEach(function (r) {
+    const ds = r.decisions || [];
+    const headsGroup = ds.filter(function (d) { return d.stage === 'head' || d.stage === 'divhead'; });
+    const ismGroup = ds.filter(function (d) { return d.stage === 'ism'; });
+    const otherGroup = ds.filter(function (d) { return d.stage !== 'head' && d.stage !== 'divhead' && d.stage !== 'ism'; });
+
+    let decisions = '';
+    if (headsGroup.length) decisions += subHeader('Department / Division Approvals') + headsGroup.map(renderDecision).join('');
+    if (ismGroup.length) decisions += subHeader('ISM InfoSec Approvals') + ismGroup.map(renderDecision).join('');
+    if (otherGroup.length) decisions += otherGroup.map(renderDecision).join('');
+
+    // F7's email/cert half (2026-08-13): the CURRENT round header renders as a navy-tint pill,
+    // history keeps the muted underline. Inline styles only; no CSS vars here.
     const headerLabel = 'Round ' + r.round + (r.isCurrent ? ' (Current)' : '');
+    const headerHtml = r.isCurrent
+      ? `<div style="margin-bottom:6px;"><span style="display:inline-block;font-size:11px;font-weight:700;color:#0f2238;background:#f4f7fb;border:1px solid #cdd9ea;border-radius:99px;padding:3px 10px;text-transform:uppercase;letter-spacing:0.05em;">${escapeHtml_(headerLabel)}</span></div>`
+      : `<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">${escapeHtml_(headerLabel)}</div>`;
     html += `
       <div style="margin-bottom:16px;">
-        <div style="font-size:11px;font-weight:700;color:${headerColor};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">${escapeHtml_(headerLabel)}</div>
+        ${headerHtml}
         ${decisions}
       </div>`;
   });
@@ -7681,6 +7792,59 @@ function writeDecisionFlags_(sheet, rowNum1, cols, approverFlags) {
     sheet.getRange(rowNum1, cols.FLAGGED_FIELDS).setValue(payload);
   } catch (e) {
     Logger.log('writeDecisionFlags_ failed (non-blocking): ' + e.toString());
+  }
+}
+
+/*
+  Function: hasFlags_
+  LAYMAN:    Sinasagot lang kung MAY laman ba talaga ang flags ng approver, para malaman ng mga
+             decision function kung dapat nilang tanggihan ang Approve o Escalate.
+  TECHNICAL: The F5 guard predicate (2026-08-13). Flags are a CORRECTION REQUEST for the
+             applicant, and the only decision that ever carries them back to the applicant is
+             Return (Applications.APPROVER_FLAGS is mirrored only on the Return paths). An
+             Approve or Escalate submitted with flags therefore records a request nobody is
+             ever shown, which is a silent workflow failure; the three mutators refuse that
+             combination using this predicate. Normalization mirrors writeDecisionFlags_:
+             blank / '{}' / 'null' mean no flags. An unparseable non-empty string counts as
+             FLAGGED (conservative: writeDecisionFlags_ would persist it, so the guard must
+             see it).
+  PARAMS:    - rawApproverFlags: the flags payload as received (object or JSON string).
+  RETURNS:   Boolean.
+*/
+function hasFlags_(rawApproverFlags) {
+  if (rawApproverFlags && typeof rawApproverFlags === 'object') {
+    return Object.keys(rawApproverFlags).length > 0;
+  }
+  const raw = String(rawApproverFlags || '').trim();
+  if (!raw || raw === '{}' || raw === 'null') return false;
+  try { return Object.keys(JSON.parse(raw) || {}).length > 0; }
+  catch (e) { return true; }
+}
+
+/*
+  Function: sanitizeFlagsJson_
+  LAYMAN:    Nililinis ang bawat flag reason (at label) para plain text lang ang maitago, walang
+             HTML tags, kahit saan pa ito galing.
+  TECHNICAL: Plain-text policy enforcement for the flags payload (decided 2026-08-13, same
+             decision that removed sanitizeInput_'s rich-text allowlist). Parses the JSON and
+             strips <[^>]*> from every KEY and VALUE: keys matter too, because custom PIA-2
+             field labels are user-typed text. Re-stringifies compactly. On parse failure the
+             input is returned unchanged, preserving the existing tolerance downstream
+             (writeDecisionFlags_ persists raw non-empty strings; every reader JSON.parses in
+             a try/catch).
+  PARAMS:    - raw: the flags payload; object or JSON string.
+  RETURNS:   A JSON string with tag-stripped keys/values, or the input unchanged if unparseable.
+*/
+function sanitizeFlagsJson_(raw) {
+  const strip = function (s) { return String(s == null ? '' : s).replace(/<[^>]*>/g, '').trim(); };
+  try {
+    const obj = (raw && typeof raw === 'object') ? raw : JSON.parse(String(raw || '{}'));
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return typeof raw === 'string' ? raw : JSON.stringify(raw);
+    const clean = {};
+    Object.keys(obj).forEach(function (k) { clean[strip(k)] = strip(obj[k]); });
+    return JSON.stringify(clean);
+  } catch (e) {
+    return typeof raw === 'string' ? raw : '{}';
   }
 }
 
@@ -8829,12 +8993,23 @@ function validateComment_(comment, minLength = 50) {
 
 /*
   Function: sanitizeInput_
-  LAYMAN:    Recursively cleans incoming text/objects to strip dangerous HTML and control characters
-             while keeping a small set of safe formatting tags for rich-text comments.
+  LAYMAN:    Recursively cleans incoming text/objects: tinatanggal LAHAT ng HTML tags at mga
+             delikadong character. Plain text lang ang tinatanggap ng sistemang ito, kahit saan.
   TECHNICAL: Recurses arrays/objects (depth-capped at 20, returns new objects, no input mutation). For
              strings: removes javascript:/data:/vbscript:/file: protocols, on* handlers, control chars,
-             RTL override / zero-width / BOM, and strips all tags except <strong/b/em/i/u/ul/ol/li/br/p>;
-             trims and clamps to maxLength.
+             RTL override / zero-width / BOM, and strips ALL tags; trims and clamps to maxLength.
+
+             🚩 PLAIN-TEXT POLICY (decided 2026-08-13). This function used to preserve a small
+             allowlist (<strong/b/em/i/u/ul/ol/li/br/p>) "for rich text comments" while
+             handleEmailAction_ stripped every tag from the same comments: two contradictory
+             policies on one field, and nobody had chosen. The decision is plain text everywhere:
+             a decision comment is a justification in an audit trail, not a document, and every
+             allowed tag is one more thing that must be escaped correctly forever. Do not
+             re-add an allowlist without revisiting that decision by name.
+
+             Pre-existing caveat, unchanged: the <[^>]*> strip can eat legitimate text like
+             "a<b and c>d" (everything between the brackets). That behavior predates this
+             policy and applies to previously-disallowed tags exactly the same way.
   PARAMS:    - data: value to clean; maxLength, per-string cap (10000); depth, internal recursion guard.
   RETURNS:   Sanitized value of the same shape (string for scalars).
 */
@@ -8859,10 +9034,7 @@ function sanitizeInput_(data, maxLength = 10000, depth = 0) {
   }
   
   let str = String(data ?? '');
-  
-  // Define safe tags to allow for rich text comments
-  const safeTags = /<\/?(strong|b|em|i|u|ul|ol|li|br|p)>/gi;
-  
+
   str = str
     .replace(/javascript:/gi, '')
     .replace(/data:[^,]*,/gi, '')               // Remove data: URIs
@@ -8873,8 +9045,8 @@ function sanitizeInput_(data, maxLength = 10000, depth = 0) {
     .replace(/\u202E/g, '')                     // Remove RTL override
     .replace(/\u200B/g, '')                     // Remove zero-width space
     .replace(/\uFEFF/g, '')                     // Remove BOM
-    .replace(/<(?!\/?(strong|b|em|i|u|ul|ol|li|br|p)\b)[^>]*>/gi, ''); // Strip all tags EXCEPT safe ones
-  
+    .replace(/<[^>]*>/g, '');                   // Strip ALL tags: plain-text policy, see doc block
+
   return str.trim().slice(0, maxLength);
 }
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -9551,6 +9723,15 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
     const allowedDecisions = ['Approve', 'Deny', 'Return', 'EscalateToDivisionHead'];
     if (!allowedDecisions.includes(decision)) {
       return { ok: false, message: 'Invalid decision value' };
+    }
+
+    // Plain-text policy + F5 guard (2026-08-13): see processApprovalDecision_ for the
+    // rationale. Escalation is blocked too: flags on an escalated row never surface to the
+    // Division Head OR the applicant, so escalate-with-flags is the same silent loss.
+    comments = String(comments || '').replace(/<[^>]*>/g, '').trim();
+    approverFlags = sanitizeFlagsJson_(approverFlags);
+    if ((decision === 'Approve' || decision === 'EscalateToDivisionHead') && hasFlags_(approverFlags)) {
+      return fail_(ERR.VALIDATION, 'Flagged items can only accompany a Return. Remove the flags to continue, or choose Return to send them back.');
     }
 
     // CRITICAL FIX: Validate routingDestination against whitelist to prevent injection

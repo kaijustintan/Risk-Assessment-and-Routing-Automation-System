@@ -4178,7 +4178,7 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
     var headApproversHtml = '';
     var awSheet = ss.getSheetByName(SHEET_NAMES.APPROVAL_WORKFLOW);
     if (awSheet) {
-      var approvalRows = sheetToObjectsFiltered_(awSheet, 'SessionID', sessionId);
+      var approvalRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(awSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
       for (var i = 0; i < approvalRows.length; i++) {
         var a = approvalRows[i];
         // Check Status column first (authoritative), fall back to Decision
@@ -4201,7 +4201,7 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
     // Division Head approvals
     var dhSheet = ss.getSheetByName(SHEET_NAMES.DIVHEAD_APPROVAL);
     if (dhSheet) {
-      var dhRows = sheetToObjectsFiltered_(dhSheet, 'SessionID', sessionId);
+      var dhRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(dhSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
       for (var i = 0; i < dhRows.length; i++) {
         var dh = dhRows[i];
         // Check Status column first (authoritative), fall back to Decision
@@ -4229,7 +4229,7 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
     var ismApproversHtml = '';
     var ismSheet = ss.getSheetByName(SHEET_NAMES.ISM_APPROVAL);
     if (ismSheet) {
-      var ismRows = sheetToObjectsFiltered_(ismSheet, 'SessionID', sessionId);
+      var ismRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(ismSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
       for (var i = 0; i < ismRows.length; i++) {
         var im = ismRows[i];
         // Check Status column first (authoritative), fall back to Decision
@@ -4632,7 +4632,7 @@ function apiAdmin_DownloadCertificate(sessionId) {
     var headApproversHtml = '';
     var awSheet = ss.getSheetByName(SHEET_NAMES.APPROVAL_WORKFLOW);
     if (awSheet) {
-      var approvalRows = sheetToObjectsFiltered_(awSheet, 'SessionID', sessionId);
+      var approvalRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(awSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
       for (var i = 0; i < approvalRows.length; i++) {
         var a = approvalRows[i];
         // Check Status column first (authoritative), fall back to Decision
@@ -4648,7 +4648,7 @@ function apiAdmin_DownloadCertificate(sessionId) {
 
     var dhSheet = ss.getSheetByName(SHEET_NAMES.DIVHEAD_APPROVAL);
     if (dhSheet) {
-      var dhRows = sheetToObjectsFiltered_(dhSheet, 'SessionID', sessionId);
+      var dhRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(dhSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
       for (var i = 0; i < dhRows.length; i++) {
         var dh = dhRows[i];
         // Check Status column first (authoritative), fall back to Decision
@@ -4668,7 +4668,7 @@ function apiAdmin_DownloadCertificate(sessionId) {
     var ismApproversHtml = '';
     var ismSheet = ss.getSheetByName(SHEET_NAMES.ISM_APPROVAL);
     if (ismSheet) {
-      var ismRows = sheetToObjectsFiltered_(ismSheet, 'SessionID', sessionId);
+      var ismRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(ismSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
       for (var i = 0; i < ismRows.length; i++) {
         var im = ismRows[i];
         // Check Status column first (authoritative), fall back to Decision
