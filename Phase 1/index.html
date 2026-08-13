@@ -3228,12 +3228,26 @@ function renderUnifiedApprovalHistory(data) {
   LAYMAN: Makes a string safe to drop into HTML so user text can't break the page or inject markup.
   TECHNICAL: Replaces & < > " ' with their HTML entities. The primary XSS defense for all
              template-literal interpolation in this file.
+
+             The & replacement MUST stay first: escaping it after the others would
+             double-escape the entities they just produced (&lt; becomes &amp;lt;).
+
+             Do not let an editor, a docs pass, or an entity-decoding sweep "simplify"
+             the right-hand sides back to bare characters. Until 2026-08-12 this read
+             .replace(/&/g,'&').replace(/</g,'<')... , four identity no-ops, so only the
+             apostrophe was ever escaped. It is the sole XSS defense for 71 interpolation
+             sites in this file, including approver comments rendered into innerHTML.
   PARAMS:
   - str: the raw string (falsy -> '').
   RETURNS: The HTML-escaped string.
 */
 function escapeHtml(str) {
-  return String(str || '').replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"').replace(/'/g,'&#39;');
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /*
