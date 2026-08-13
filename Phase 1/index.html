@@ -4717,7 +4717,7 @@ function renderForm() {
     </div>
 
     ${state.isEditing ? `
-    <span class="step-badge" style="background:var(--warn);color:var(--warn-text);border-color:rgba(180,109,20,0.2);margin-bottom:12px;display:inline-flex;gap:6px;align-items:center;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;flex-shrink:0;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Revision Mode</span>
+    <span class="step-badge" style="background:var(--warn);color:var(--warn-text);border-color:rgba(180,109,20,0.2);margin-bottom:12px;display:inline-flex;gap:6px;align-items:center;">${icon('warn', 13)} Revision Mode</span>
     ` : ''}
     ${!state.isEditing && state.dcs._hadFiles ? `
     <div class="card" style="background:var(--danger);border-color:rgba(220,38,38,0.2);">
@@ -5977,7 +5977,14 @@ function icon(name, size) {
     x:     '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
   };
   if (!paths[name]) return '';
-  return '<svg xmlns="http://www.w3.org/2000/svg" width="' + s + '" height="' + s + '"'
+  // NO xmlns ATTRIBUTE HERE, and no double-slash anywhere in these strings.
+  // GAS truncated the served line at the double slash inside the namespace URL, dropping
+  // the rest of the line and leaving an unterminated string literal, which blanked the
+  // entire DCS page with a document.write SyntaxError. The file was valid on disk, so
+  // node --check and every offline checker passed it. The attribute is redundant anyway:
+  // an inline svg element is placed in the SVG namespace by the HTML parser on its own.
+  // See CLAUDE.md section 8. Keep this in step with the copy in Admin/adminView.html.
+  return '<svg width="' + s + '" height="' + s + '"'
        + ' viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
        + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
        + ' style="vertical-align:-2px;flex-shrink:0;">' + paths[name] + '</svg>';

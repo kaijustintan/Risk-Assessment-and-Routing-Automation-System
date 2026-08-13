@@ -3559,7 +3559,13 @@ function icon(name, size) {
     x:     '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
   };
   if (!paths[name]) return '';
-  return '<svg xmlns="http://www.w3.org/2000/svg" width="' + s + '" height="' + s + '"'
+  // NO xmlns ATTRIBUTE HERE, and no double-slash anywhere in these strings.
+  // The identical line in Phase 1/index.html was truncated by GAS at the double slash
+  // inside the namespace URL, leaving an unterminated string that blanked the whole
+  // served page. Valid on disk, so no offline checker saw it. The attribute is redundant
+  // for inline svg in HTML anyway. See CLAUDE.md section 8. Keep this copy in step with
+  // the one in Phase 1/index.html.
+  return '<svg width="' + s + '" height="' + s + '"'
        + ' viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
        + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
        + ' style="vertical-align:-2px;flex-shrink:0;">' + paths[name] + '</svg>';
