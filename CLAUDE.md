@@ -486,6 +486,28 @@ in Apps Script a trailing-underscore name is unreachable from `google.script.run
 > containing quotes and on nested template literals, and produced hundreds of false positives. A
 > checker nobody trusts gets ignored; this one answers the question that actually caused an outage.
 >
+> 🔴 **Two more checkers joined the ritual on 2026-08-12; run all four before every deploy:**
+>
+> ```
+> node docs/tools/surface.js && node docs/tools/calls.js && node docs/tools/escapers.js && node docs/tools/shared.js
+> ```
+>
+> - **`escapers.js`** exists because the production DCS frontend shipped for its entire deployed
+>   life with an `escapeHtml` whose replacements were **identity no-ops**
+>   (`.replace(/&/g,'&').replace(/</g,'<')…`): only the apostrophe was ever escaped, and that
+>   function was the sole XSS defense for 71 innerHTML interpolation sites, approver comments
+>   included. Valid JS, correct-looking shape, so it passed `node --check` and every review;
+>   `surface.js`/`calls.js` audit names, not behavior. The checker verifies every escaper in all
+>   six files actually escapes (no identity replaces, `&` first). **The generalizable lesson: a
+>   function that LOOKS like its job description proves nothing; the checkers that catch these
+>   audit what the code does, not what it is called.**
+> - **`shared.js`** compares the "one identical copy per project" helpers (`ERR`, `ERR_MESSAGES`,
+>   `fail_`, `safeError_`, `isOwnerContext_`, `readSheetValues_`, `withSheetCache_`,
+>   `invalidateSheetCache_`, `escapeHtml_`) across the three backends, comment- and
+>   `var`/`const`-insensitive, and fails on real code drift. When a doc says "edit all three
+>   together," this is what enforces it. Add an entry to its `MUST_MATCH` list at the same moment
+>   a doc declares a helper shared.
+>
 > **The rule for any NEW backend function, pick exactly one:**
 > 1. **Internal helper → give it a trailing underscore.** This is the default. Choose it unless you
 >    can name the frontend line that calls the function.
@@ -636,6 +658,15 @@ Respect these properties when editing the resubmit path:
   (DCS). Do not hand-roll another workflow scan, that is how the old union logic drifted.
 - Any **new routing scan** must pass a round to `rowMatches_`. Forgetting it reintroduces the exact
   bug the delete was hiding, and it will not show up until someone resubmits.
+- **The round is THREADED through decision executions (PERF, 2026-08-12).** `getCurrentRound_` costs
+  a 3-sheet scan, so the helpers on the decision paths (`getApplicationData_`, `notifyApprover_`,
+  `notifyISMember_`, `routeApprovedRequest_`, `apiPhase3_InitializeISMWorkflow_`, `queueEmail_`)
+  take an optional trailing `round` param with the fallback `round || getCurrentRound_(sessionId) || 1`,
+  and the locked decision functions pass their entry `__round` down. Two rules: (a) inside one locked
+  execution, pass the round, do not re-derive it; (b) **never thread a round ACROSS a lock boundary**,
+  e.g. from `handleEmailAction_` into `processApprovalDecision_`: each locked entry derives its own,
+  that derivation is the authoritative one for everything inside its lock. Omitting the param is
+  always safe (it derives), so external/test callers need no change.
 
 `Risk_Audit` (`logDCSAuditTrail_`, `Phase 1/Code.js`) *is* genuinely append-only, but it logs
 risk/action events, not the approval timeline. Don't confuse the two.
@@ -784,7 +815,18 @@ The fix resolves the delegate **at notify time, not at decision time**:
   takes it over, and fixes a real bug: Phase 1's version filtered on `ExpiresAt` only, and DCS
   and PIA **share** the `Drafts` sheet, so it would have deleted PIA drafts too.
 
-### Smaller, but don't undo them
+### 🚩 The weekly database backup (Admin, 2026-08-12) is FAIL-LOUD; keep it that way
+
+The whole system lives in one spreadsheet with no independent export, so
+`runDatabaseBackup` (Admin, weekly Sunday ~3am trigger via `setupBackupTrigger`, owner-gated
+wrapper over `runDatabaseBackup_`) copies it to the `BACKUP_FOLDER_ID` folder (auto-created and
+stored on first run), keeps the newest **8**, and trashes older ones (30-day recovery). Same
+§8b rule-3 shape as `runRetentionSweep`. Two things future edits must not break:
+- **Its catch block RETHROWS after writing the `Database Backup Failed` audit row**, the opposite
+  of the retention sweep's log-and-continue. A backup job that fails silently is discovered on the
+  day you need the backup; the trigger-failure digest email is the alarm. Do not soften it.
+- It uses only `drive` + `scriptapp`, both already in Admin's manifest, so it forces no re-auth.
+  Do not move it into Phase 1 or PIA (neither has the scopes; that was the retention lesson too).
 
 - **`sanitizeCellValue_` (Admin) guards `exportToSheet` against formula injection.** That export
   is the *only* artifact in the system a human opens in the Sheets UI, so `=IMPORTXML(...)` stops
