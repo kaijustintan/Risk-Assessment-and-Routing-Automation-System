@@ -2,7 +2,13 @@
 
 **Date:** 2026-08-12
 **Scope:** all six source files, three manifests, docs, tooling. Reviewed holistically against the architecture in CLAUDE.md, the live DB export (headers only), and the git history.
-**Method:** static review + mechanical checks (`surface.js`, `calls.js`, the new `escapers.js`, duplicate-definition scan, guard scan of every public function in all three backends). No live execution: the test suite runs editor-side and the current batch is not yet pasted.
+**Method:** static review + mechanical checks (`surface.js`, `calls.js`, the new `escapers.js`, duplicate-definition scan, guard scan of every public function in all three backends). No live execution at audit time: the test suite runs editor-side and the batch was not yet pasted.
+
+> **Post-audit addendum (2026-08-13):** the batch was subsequently deployed, all five editor test
+> suites were run against the live database, and one further Critical defect (S-06, serve-time
+> `xmlns` truncation) surfaced *during* that deploy and was fixed. See §12 items 10-11 and §12b.
+> The audit's own central claim, that the largest risk was the undeployed batch rather than
+> anything in the code, is what that outage confirmed.
 
 ---
 
@@ -28,9 +34,11 @@ Everything else found is low-to-medium: dead code, two unused public endpoints, 
 | UX / accessibility | 80 | Phase 1 polished; Phase 2/Admin thinner on mobile |
 | Ops / deployability | 65 | the undeployed batch and one prod environment drag this down |
 
-## 3. Overall Risk Rating: **MEDIUM**
+## 3. Overall Risk Rating: **MEDIUM** at audit time → **LOW-MEDIUM** now
 
-Medium until the current batch is pasted, editor-tested, and deployed (that removes the live XSS, the live schema drift, and the approval-link ReferenceError in one stroke). After that deploy and its spot checks: **LOW**.
+Medium until the batch was pasted, editor-tested, and deployed, since that removed the live XSS, the live schema drift, and the approval-link ReferenceError in one stroke. All three are now closed and verified, plus S-06.
+
+It is **not yet LOW**, and the reason is honest rather than technical: everything now running in production has passed its automated tests but has not been exercised end to end by a person. Until the hand-off checklist is worked through, the correct rating is **LOW-MEDIUM**. Automated green is evidence, not proof.
 
 ---
 
@@ -217,13 +225,29 @@ I could not do a visual pass this session (your mouse; and screens are JS-render
 7. **R-2 done:** `runDatabaseBackup` / `runDatabaseBackup_` / `setupBackupTrigger` in Admin. Weekly Sunday ~3am copy of the DB spreadsheet to an auto-created `RARS Database Backups` folder, keeps the newest 8, trashes older (30-day recovery), audits every run. **Fail-loud:** the catch writes a `Database Backup Failed` audit row and rethrows so the trigger-failure digest emails the owner. No new scopes. Requires one editor run of `setupBackupTrigger()` after deploy.
 8. **R-9 done:** `docs/tools/shared.js` compares the nine "identical copy per project" helpers across the three backends (comment- and `var`/`const`-insensitive). All nine currently identical. Validated by injecting a one-character drift into `safeError_`: caught with a pinpoint diff, exit 1. Also fixed its own first version's extractor bug (regex literals containing quotes), the same failure class calls.js documents.
 9. **R-7 (code half) done:** PIA gained a 480px block mirroring Phase 1's proven one: tighter type/padding scale, smaller check-table, and a sticky bottom action bar on the five wizard screens + summary. **The visual half still needs eyes** (mouse day): confirm the sticky bar sits right and nothing overflows at 375-480px. On empty states: PIA has no list screens (drafts auto-resume, no "my submissions" view), so the raw count gap vs Phase 1 overstated the issue; no changes forced.
-10. **Docs synced:** CLAUDE.md §8b now carries the four-tool pre-deploy ritual (`surface` + `calls` + `escapers` + `shared`), the S-01 lesson, the round-threading convention, and the fail-loud backup rule; the Admin manual documents the backup job and `BACKUP_FOLDER_ID`.
+10. **S-06 found and fixed during the deploy itself (2026-08-13), a live outage:** `icon()` in `Phase 1/index.html` and `Admin/adminView.html` carried an inline SVG with an `xmlns` attribute. GAS truncated the served line at the double slash inside that namespace URL, leaving an unterminated string literal, so both apps blanked with `Failed to execute 'write' on 'Document'`. A third hand-duplicated copy sat inline in `renderForm()`'s Revision Mode badge (now calls `icon('warn', 13)` instead). Fixed by deleting the redundant attribute. New checker **`docs/tools/serve.js`** enforces it; validated by reintroducing the bug, which it catches while **all four other checkers pass**. Severity in hindsight: Critical, but only reachable at serve time, which is exactly why nothing offline saw it.
+11. **Docs synced:** CLAUDE.md §8 gained the second confirmed serve-time trigger with its counter-examples and the "an undeployed batch is an untested batch" lesson; §8b now carries the **five**-tool pre-deploy ritual (`surface` + `calls` + `escapers` + `shared` + `serve`) and the name-vs-behaviour split that explains why the second group catches every real outage; the Admin manual documents the backup job and `BACKUP_FOLDER_ID`.
+
+## 12b. The pattern behind every defect this session
+
+Six defects surfaced across the audit and the deploy. Five of the six share one shape:
+
+| Defect | Threw? | Caught by |
+|---|---|---|
+| `escapeHtml` identity no-ops | no | reading it, then `escapers.js` |
+| `getSystemSecret_` ReferenceError | no (try/catch swallowed it) | a `FAILSAFE:` line inside a *passing* test |
+| 11 missing header cells | no | dumping the live header rows |
+| `testHeaderSchema` reporting SKIP as pass | no | reading its own control flow |
+| `xmlns` serve-time truncation | yes, but only in production | the served VM bytes |
+| `apiSaveDraft` showing "Saved" on refusal | no | tracing the new return path to its consumer |
+
+**Not one was caught by `node --check`, a successful deploy, or code review.** Every one was caught by executing the thing or reading what it actually produced. That is the argument for the whole checker suite, and for deploying in small increments rather than batching a month of work.
 
 ## 13. Remaining (not code, or deliberately deferred)
 
 | # | Item | Status |
 |---|---|---|
-| R-1 | Deploy all three apps | **Kai, tomorrow.** Now carries this whole batch too |
+| R-1 | Deploy all three apps | ✅ **Done 2026-08-13.** All three live; DCS and Admin confirmed rendering after the S-06 fix |
 | R-8 | Enable retention | **Not flipped, on purpose.** Turning it on deletes data; that is an ISM/compliance decision made in the Admin Settings UI, not a code change. The dry-run preview is the first step |
 | R-7b | Visual verify PIA mobile at 480px | Needs a mouse and eyes; CSS is in |
 | R-10 | Staging environment | Ops, not code. Recipe: copy the DB spreadsheet, create one new deployment per app pointing at the copy via `SPREADSHEET_ID`/`DB_ID`, set the §3b URL properties to the staging `/exec` URLs. Zero code changes needed. Defer until a second maintainer exists |
@@ -234,13 +258,24 @@ Superseded by implementation: everything implementable landed today. What remain
 
 ---
 
-## Final Game Plan (updated)
+## Final Game Plan (updated 2026-08-13, post-deploy)
 
-1. **Commit** (split suggested in the session notes), then **paste all six files + deploy all three apps** (R-1). Golden rule: edit the existing deployment, New version, never "New deployment".
-2. **Editor runs, owner account, in order:** `repairSheetHeaders()` once (PIA); `testAppendOnlyRounds()`, `testDelegationResolution()`, `testSheetReadCache()`, `testHeaderSchema()` (PIA); `testAdminApi()` (Admin); then `setupBackupTrigger()` (Admin) and confirm a `RARS DB Backup` file appears after running `runDatabaseBackup()` once by hand.
-3. **Post-deploy spot checks:** Flags tab non-zero, agency block renders, revision counter increments, `ActedBy` under a real header, one full approve flow end-to-end (exercises the threaded round path), and **type `<b>test</b>` into an approver comment: it must render as literal text on the applicant's request-details screen.**
-4. **Visual pass** on PIA mobile (R-7b) when the mouse is back.
-5. **Raise R-8 with ISM** (retention switch + the DPA storage-limitation question).
-6. Then stop. Further changes should be pulled by real usage, not pushed by review.
+✅ Steps 1 and 2 are **done**: all three apps deployed, all five editor test suites pass
+(`testAppendOnlyRounds` 12/12, `testDelegationResolution` 20/20, `testSheetReadCache` 10/10,
+`testHeaderSchema` 26/26, `testAdminApi` 17/23 with all 6 failures confirmed as config, not code),
+`repairSheetHeaders()` run once and verified against a live export, backup trigger installed and
+a first backup written.
+
+Remaining:
+
+1. **Functional verification of everything now live but never exercised by a human.** This is the
+   large one, and it is what the separate hand-off checklist covers, feature by feature.
+2. **Visual pass** on PIA mobile at 375-480px (R-7b).
+3. **Raise R-8 with ISM**: the retention switch, and the RA 10173 storage-limitation question that
+   sits behind it. Not a developer decision.
+4. **Deploy smaller from here.** The single most expensive thing this session was a month of work
+   reaching the serializer all at once. Three of the six defects would have been trivial to locate
+   had they shipped alone.
+5. Then stop. Further changes should be pulled by real usage, not pushed by review.
 
 **Explicitly excellent, no action needed:** the approval-ladder logic, the append-only round model, the privatization/guard discipline, the error contract, file privacy, the schema enforcement, the docs. These sections were audited, not skipped.

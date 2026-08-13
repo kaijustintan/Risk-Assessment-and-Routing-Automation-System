@@ -298,6 +298,26 @@ ask before inventing one, consistency with the navy system matters to the superv
   template literal in a string helper and switch it to concatenation. "Valid JS on disk" ≠ "GAS
   serves it intact." To get ground truth, read the served **VM** file at the console error's
   `VM##:line`, that's the actual served (corrupted) code, not your disk file.
+- **🚨 SECOND CONFIRMED TRIGGER, `xmlns` inside a `<script>` block (2026-08-13, cost an outage).**
+  Same failure shape, different cause, and this one was *proven* from the served bytes rather than
+  reasoned about. `icon()` in `Phase 1/index.html` contained an inline SVG carrying its namespace
+  attribute. On disk it was a normal concatenation; served, it came back **truncated at the double
+  slash inside the namespace URL**, leaving an unterminated string literal, so the parser died on
+  the next line and the page never rendered (`Failed to execute 'write' on 'Document': Invalid or
+  unexpected token`). The identical line sat in `Admin/adminView.html` and a third hand-duplicated
+  copy sat inline in `renderForm()`'s "Revision Mode" badge, so Admin would have blanked too.
+  - **Fix: delete the `xmlns` attribute.** It is redundant for inline SVG, the HTML parser places
+    an `<svg>` element into the SVG namespace on its own. Enforced by **`docs/tools/serve.js`**.
+  - ⚠️ **Do NOT generalize this to "no `//` inside any string."** That rule is provably wrong here:
+    `FAVICON_URL` in `Phase 1/index.html` and the three `drive.google.com` link builders in
+    `Admin/adminView.html` all carry a double slash inside a string inside a `<script>` block and
+    have served correctly for months. The exact mechanism (why `xmlns` and not `href`) was never
+    established, and the checker is anchored on the observed break, not on a theory.
+  - 🔴 **The meta-lesson, and it is the same one twice in one day: an undeployed batch is an
+    untested batch.** Both copies were written on 2026-08-12, passed every offline check, sat in
+    git for a day, and failed the instant they were first served. Two other defects that same day
+    (`getSystemSecret_`, the header drift) had the identical shape. **Deploy small and deploy
+    often; a commit that has never been served has not been tested in any meaningful sense.**
 - **Screens are rendered by JS**, not present as static HTML, search render functions.
 - **Files are NOT stored in drafts**, only text autosaves (server-side, 7-day TTL).
   Resuming a draft requires re-uploading files. Don't "fix" this as a bug; it's intended.
@@ -486,11 +506,16 @@ in Apps Script a trailing-underscore name is unreachable from `google.script.run
 > containing quotes and on nested template literals, and produced hundreds of false positives. A
 > checker nobody trusts gets ignored; this one answers the question that actually caused an outage.
 >
-> 🔴 **Two more checkers joined the ritual on 2026-08-12; run all four before every deploy:**
+> 🔴 **The ritual is now FIVE checkers. Run all of them before every deploy:**
 >
 > ```
-> node docs/tools/surface.js && node docs/tools/calls.js && node docs/tools/escapers.js && node docs/tools/shared.js
+> node docs/tools/surface.js && node docs/tools/calls.js && node docs/tools/escapers.js && node docs/tools/shared.js && node docs/tools/serve.js
 > ```
+>
+> They split cleanly in two, and the split is the point. `surface.js` and `calls.js` audit what
+> the code is **named**. `escapers.js`, `shared.js` and `serve.js` audit what the code **does**
+> when it actually runs or is actually served. Every outage this project has had was caught by
+> the second kind and missed by the first.
 >
 > - **`escapers.js`** exists because the production DCS frontend shipped for its entire deployed
 >   life with an `escapeHtml` whose replacements were **identity no-ops**
@@ -507,6 +532,12 @@ in Apps Script a trailing-underscore name is unreachable from `google.script.run
 >   `var`/`const`-insensitive, and fails on real code drift. When a doc says "edit all three
 >   together," this is what enforces it. Add an entry to its `MUST_MATCH` list at the same moment
 >   a doc declares a helper shared.
+> - **`serve.js`** (added 2026-08-13, after the outage in §8) flags an `xmlns` attribute inside a
+>   `<script>` block in any of the three frontends. GAS truncates the served line at the double
+>   slash in that attribute's URL, leaving an unterminated string that blanks the entire page,
+>   and **all four other checkers pass on that file** (verified by reintroducing the bug). The
+>   attribute is redundant for inline SVG, so the fix is always "delete it." Deliberately does not
+>   flag every `//` inside a string, see §8 for the two proven counter-examples.
 >
 > **The rule for any NEW backend function, pick exactly one:**
 > 1. **Internal helper → give it a trailing underscore.** This is the default. Choose it unless you

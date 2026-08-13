@@ -344,13 +344,34 @@ trigger. `isOwnerContext_()` compares `getEffectiveUser()` with `getActiveUser()
 only for the script owner or a trigger run.
 
 Before the sweep, **178 of 229** functions were publicly callable. After it, **82, none of them
-unguarded.** Verify any time with:
+unguarded.**
+
+### 🚩 The five pre-deploy checkers
+
+Run **all five** before every deploy. They are committed on purpose and each one exists because
+something it now catches once reached production.
 
 ```bash
-node docs/tools/surface.js
+node docs/tools/surface.js && node docs/tools/calls.js && node docs/tools/escapers.js && node docs/tools/shared.js && node docs/tools/serve.js
 ```
 
-That checker is committed on purpose; run it before every deploy.
+| Checker | Answers |
+|---|---|
+| `surface.js` | Is any backend function reachable from a browser that should not be? |
+| `calls.js` | Does anything still call a function by a name that no longer exists? |
+| `escapers.js` | Does every HTML escaper actually escape, or does it only look like it? |
+| `shared.js` | Have the "one identical copy per project" helpers drifted apart? |
+| `serve.js` | Is there anything Google Apps Script will corrupt when it serves the page? |
+
+The split matters more than the list. The first two audit what code is **named**. The last three
+audit what code **does**. Every production outage this system has had was caught by the second
+group and sailed straight past the first, including a page-blanking defect that all four of the
+others passed cleanly.
+
+> ⚠️ **Green checkers are not a substitute for deploying.** They validate the file on disk. Several
+> real defects here existed only at run time or only at serve time, and were invisible until the
+> code was actually pasted, deployed and clicked. Deploy in small increments; a commit that has
+> never been served has not been tested in any meaningful sense.
 
 ### 🚩 Uploaded documents are private
 
