@@ -593,7 +593,7 @@ untested batch.**
 
 Full detail: `docs/Security - Review Findings.md` and `docs/Security - Recommendations.md`
 (reproduced in Appendix, see `appendices.md`). Narrative version of Rounds 2 to 6:
-`docs/V2 - Difference from V1 (Old System).md` §10.
+`docs/V2 - Difference from V1 (Old System).md` §11 (batch 🅒).
 
 ---
 
