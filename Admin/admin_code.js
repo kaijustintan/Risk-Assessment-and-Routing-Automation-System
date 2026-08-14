@@ -4510,7 +4510,7 @@ function buildCertApprovalHistoryHtml_(ss, sessionId) {
       var parsed = d.FlaggedFields ? JSON.parse(d.FlaggedFields) : {};
       if (parsed && typeof parsed === 'object') flagKeys = Object.keys(parsed);
       if (flagKeys.length) {
-        flags = '<div style="font-size:11.5px;color:#92400e;margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
+        flags = '<div style="font-size:11.5px;color:#92400e;margin-top:5px;line-height:1.5;">Flagged: ' + flagKeys.map(function (k) {
           var reason = parsed[k];
           return escapeHtml_(k) + (reason && reason !== true ? ' (' + escapeHtml_(String(reason)) + ')' : '');
         }).join(', ') + '</div>';
@@ -4518,15 +4518,21 @@ function buildCertApprovalHistoryHtml_(ss, sessionId) {
     } catch (e) { flags = ''; }
     var dateStr = fmtDate(d.DecisionDate);
     var comment = String(d.Comments || '').trim();
-    return '<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f0f0f0;">' +
-      '<div style="font-size:13px;color:#111827;"><strong>' + escapeHtml_(d.__name) + '</strong> <span style="color:#4b5563;">(' + escapeHtml_(d.__role) + ')</span>: <span style="color:' + colorFor(d.Status) + ';font-weight:600;">' + escapeHtml_(labelFor(d.Status)) + '</span></div>' +
-      (dateStr ? '<div style="font-size:11px;color:#6b7280;margin-top:2px;">' + escapeHtml_(dateStr) + '</div>' : '') +
+    // H6 (2026-08-14, feedback batch 3): entry order is
+    //   Name (Role) | Decision  /  Flagged  /  Comments  /  Date
+    // Date moved from second to LAST. H4: wider margins and line-height.
+    // Keep in step with pia_code.js buildUnifiedHistoryHtml_ renderDecision, which produces
+    // the certificate this one has to match when a cert is re-issued from Admin.
+    return '<div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #f0f0f0;">' +
+      '<div style="font-size:13px;color:#111827;line-height:1.6;"><strong>' + escapeHtml_(d.__name) + '</strong> <span style="color:#4b5563;">(' + escapeHtml_(d.__role) + ')</span> <span style="color:#d1d5db;">&#124;</span> <span style="color:' + colorFor(d.Status) + ';font-weight:600;">' + escapeHtml_(labelFor(d.Status)) + '</span></div>' +
       flags +
-      (comment ? '<div style="font-size:12.5px;color:#111827;margin-top:3px;">Comments: "' + escapeHtml_(comment) + '"</div>' : '') +
+      (comment ? '<div style="font-size:12.5px;color:#111827;margin-top:5px;line-height:1.6;">Comments: "' + escapeHtml_(comment) + '"</div>' : '') +
+      (dateStr ? '<div style="font-size:11px;color:#6b7280;margin-top:7px;">' + escapeHtml_(dateStr) + '</div>' : '') +
       '</div>';
   }
+  // H4: more room above than below, so a group binds to the entries under it.
   function subHeader(label) {
-    return '<div style="font-size:10px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:8px 0 6px;">' + escapeHtml_(label) + '</div>';
+    return '<div style="font-size:10px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:18px 0 10px;">' + escapeHtml_(label) + '</div>';
   }
 
   var byRound = {};
@@ -4578,9 +4584,9 @@ function buildCertApprovalHistoryHtml_(ss, sessionId) {
     var isCur = (r === maxRound);
     var headerLabel = 'Round ' + r + (isCur ? ' (Current)' : '');
     var headerHtml = isCur
-      ? '<div style="margin-bottom:6px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:3px 12px;text-transform:uppercase;letter-spacing:0.05em;">' + escapeHtml_(headerLabel) + '</span></div>'
-      : '<div style="font-size:12px;font-weight:700;color:#4b5563;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">' + escapeHtml_(headerLabel) + '</div>';
-    html += '<div style="margin-bottom:16px;">' + headerHtml + decisions + '</div>';
+      ? '<div style="margin-bottom:12px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:4px 13px;text-transform:uppercase;letter-spacing:0.05em;">' + escapeHtml_(headerLabel) + '</span></div>'
+      : '<div style="font-size:12px;font-weight:700;color:#4b5563;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;border-bottom:1px solid #e5e7eb;padding-bottom:7px;">' + escapeHtml_(headerLabel) + '</div>';
+    html += '<div style="margin-bottom:26px;">' + headerHtml + decisions + '</div>';
   });
   return html + '</div>';
 }

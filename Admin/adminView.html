@@ -4420,8 +4420,14 @@ function renderAuditLogs(data, name) {
       return rowRound(a) === __currentRound || decisionOf(a).toUpperCase() !== 'PENDING';
     });
     if (kept.length === 0) return '';
+    // H6 (2026-08-14, feedback batch 3): this surface stays a TABLE on purpose. The stacked
+    // "Name | Decision / Flagged / Comments / Date" block used on the other four surfaces is
+    // for reading one request; this modal is for scanning many rows at once, where columns
+    // win. What DOES follow the spec: the column order now matches it, so Date is LAST rather
+    // than third, and Flagged is shown at all (it was missing here entirely, which hid the
+    // most actionable part of a Return from the only screen ISM actually audits from).
     var h = '<div class="audit-section-heading"><svg><use href="#' + icon + '"/></svg> ' + title + ' <span style="font-weight:400;color:var(--color-text-3);">(' + kept.length + ')</span></div>';
-    h += '<table class="audit-table"><thead><tr><th>Approver</th><th>Decision</th><th>Date</th><th>Comments</th></tr></thead><tbody>';
+    h += '<table class="audit-table"><thead><tr><th>Approver</th><th>Decision</th><th>Flagged</th><th>Comments</th><th>Date</th></tr></thead><tbody>';
     var byRound = {};
     kept.forEach(function(a) {
       var r = rowRound(a);
@@ -4435,7 +4441,7 @@ function renderAuditLogs(data, name) {
       var divider = isCur
         ? '<span style="display:inline-block;font-size:11px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:2px 10px;text-transform:uppercase;letter-spacing:0.05em;">Round ' + r + ' (Current)</span>'
         : '<span style="font-size:11px;font-weight:700;color:var(--color-text-3);text-transform:uppercase;letter-spacing:0.05em;">Round ' + r + '</span>';
-      h += '<tr><td colspan="4" style="padding:8px 10px;background:var(--slate-50);border-top:1px solid var(--color-border);">' + divider + '</td></tr>';
+      h += '<tr><td colspan="5" style="padding:8px 10px;background:var(--slate-50);border-top:1px solid var(--color-border);">' + divider + '</td></tr>';
       byRound[r].forEach(function(a) {
         var dec = decisionOf(a);
         var decUpper = String(dec).toUpperCase().trim();
@@ -4446,7 +4452,27 @@ function renderAuditLogs(data, name) {
         else if (decUpper === 'ESCALATEDTODIVISIONHEAD' || decUpper === 'ESCALATED') decCls = 'badge-purple';
         else decCls = 'badge-neutral';
 
-        h += '<tr><td>' + esc(nameFn(a)) + '</td><td><span class="badge ' + decCls + '">' + esc(dec) + '</span></td><td>' + formatDate(a.DecisionDate) + '</td><td>' + esc(a.Comments || '—') + '</td></tr>';
+        // Flagged items, parsed from the approver's own FlaggedFields JSON (blank on anything
+        // that was not a Return). Defensive: a malformed cell renders as a dash, never throws.
+        var flagTxt = '—';
+        try {
+          var parsedFlags = a.FlaggedFields ? JSON.parse(a.FlaggedFields) : null;
+          if (parsedFlags && typeof parsedFlags === 'object') {
+            var fk = Object.keys(parsedFlags);
+            if (fk.length) {
+              flagTxt = fk.map(function(k) {
+                var reason = parsedFlags[k];
+                return k + (reason && reason !== true ? ' (' + String(reason) + ')' : '');
+              }).join(', ');
+            }
+          }
+        } catch (e) { flagTxt = '—'; }
+
+        h += '<tr><td>' + esc(nameFn(a)) + '</td>' +
+             '<td><span class="badge ' + decCls + '">' + esc(dec) + '</span></td>' +
+             '<td style="color:var(--warn-text);font-size:12px;">' + esc(flagTxt) + '</td>' +
+             '<td>' + esc(a.Comments || '—') + '</td>' +
+             '<td>' + formatDate(a.DecisionDate) + '</td></tr>';
       });
     });
     return h + '</tbody></table>';

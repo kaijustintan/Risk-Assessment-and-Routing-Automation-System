@@ -3173,13 +3173,14 @@ function renderUnifiedApprovalHistory(data) {
   // palette as the retained-file chips (#f0fdf4 / #bbf7d0 / #15803d) and the email/cert
   // renderer in pia_code.js buildUnifiedHistoryHtml_. History keeps the muted underline.
   // Same treatment in pia_index.html renderApprovalTimeline; keep the three in step.
+  // H4 (2026-08-14): wider gaps so rounds read as separate blocks, not one dense list.
   const roundHeader = function (label, isCurrent) {
     if (isCurrent) {
-      return '<div style="margin:14px 0 10px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:3px 12px;text-transform:uppercase;letter-spacing:0.05em;">' +
+      return '<div style="margin:26px 0 12px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:4px 13px;text-transform:uppercase;letter-spacing:0.05em;">' +
         escapeHtml(label) + '</span></div>';
     }
     return '<div style="font-size:12px;font-weight:700;color:var(--text2)' +
-      ';text-transform:uppercase;letter-spacing:0.05em;margin:14px 0 10px;border-bottom:1px solid var(--border);padding-bottom:4px;">' +
+      ';text-transform:uppercase;letter-spacing:0.05em;margin:26px 0 12px;border-bottom:1px solid var(--border);padding-bottom:7px;">' +
       escapeHtml(label) + '</div>';
   };
 
@@ -3200,20 +3201,25 @@ function renderUnifiedApprovalHistory(data) {
       const comment = d.comments ? escapeHtml(String(d.comments)) : '';
       const flagKeys = (d.flaggedFields && typeof d.flaggedFields === 'object') ? Object.keys(d.flaggedFields) : [];
       const flagsHtml = flagKeys.length
-        ? '<div style="font-size:11px;color:var(--warn-text);margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
+        ? '<div style="font-size:11px;color:var(--warn-text);margin-top:5px;line-height:1.5;">Flagged: ' + flagKeys.map(function (k) {
             const reason = d.flaggedFields[k];
             const label = k.indexOf('DCS - ') === 0 ? k.slice(6) : k;
             return escapeHtml(label) + (reason && reason !== true ? ' (' + escapeHtml(String(reason)) + ')' : '');
           }).join(', ') + '</div>'
         : '';
-      // C5: flags print before the comment; C4/C7: the comment carries a "Comments:" label
-      // in near-black. Keep in step with pia_code.js renderDecision.
-      return '<div class="vertical-timeline-item">' +
+      // H6 (2026-08-14, feedback batch 3): entry order is
+      //   Name (Role) | Decision  /  Flagged  /  Comments  /  Date
+      // The date moved out of the badge sub-line and down to last.
+      // C5 still holds: flags before the comment. C4/C7: "Comments:" label, near-black.
+      // Keep in step with pia_code.js renderDecision.
+      return '<div class="vertical-timeline-item" style="padding-bottom:16px;">' +
         '<div class="' + dotCls + '" aria-hidden="true"></div>' +
-        '<div class="vertical-timeline-title">' + name + ' <span style="font-weight:400;color:var(--text3);font-size:11px;">(' + role + ')</span></div>' +
-        '<div class="vertical-timeline-sub">' + badge + (dateStr ? ' <span style="font-size:10px;color:var(--text3);margin-left:6px;">' + dateStr + '</span>' : '') + '</div>' +
+        '<div class="vertical-timeline-title" style="line-height:1.6;">' + name +
+          ' <span style="font-weight:400;color:var(--text3);font-size:11px;">(' + role + ')</span>' +
+          ' <span style="color:var(--border2);font-weight:400;">&#124;</span> ' + badge + '</div>' +
         flagsHtml +
-        (comment ? '<div class="vertical-timeline-comment" style="color:#111827;">Comments: "' + comment + '"</div>' : '') +
+        (comment ? '<div class="vertical-timeline-comment" style="color:#111827;margin-top:5px;line-height:1.6;">Comments: "' + comment + '"</div>' : '') +
+        (dateStr ? '<div style="font-size:10px;color:var(--text3);margin-top:7px;">' + dateStr + '</div>' : '') +
         '</div>';
     }).join('');
     priorHtml += roundHeader('Round ' + r.round + ' (returned and revised)', false) +
@@ -6095,7 +6101,8 @@ function renderSummary() {
           return summaryRow(endLabel, endName || 'Not attached');
         })() : ''}
         ${(state.dcs.supplementaryNames && state.dcs.supplementaryNames.length)
-          ? summaryRow('Additional Supporting Documents', state.dcs.supplementaryNames.join(', '))
+          ? summaryRowRaw('Additional Supporting Documents',
+              state.dcs.supplementaryNames.map(function (n) { return escapeHtml(n); }).join('<br>'))
           : ''}
       </div>
     </div>

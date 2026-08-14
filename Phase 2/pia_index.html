@@ -1590,6 +1590,21 @@ function escapeHtml(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+/*
+  Function Name: reqMark
+  LAYMAN: Yung maliit na pulang "*" na nagsasabing kailangan punan ang field na 'to.
+  TECHNICAL: H2 (2026-08-14, feedback batch 3). Ports Phase 1's reqMark() helper into PIA.
+    Before this, PIA had 21 hand-copied asterisk spans and no helper, which is exactly why
+    the Section 3 stakeholder Name field ended up required-but-unmarked: there was nothing
+    to forget to call, only markup to forget to paste. Use this for every new required
+    field so #22 cannot repeat the same miss. Markup is byte-identical to Phase 1's and to
+    the 21 existing hand-written copies, so nothing shifts visually.
+  PARAMS: (none)  RETURNS: HTML string.
+*/
+function reqMark() {
+  return '<span aria-hidden="true" style="color:var(--danger-text)" title="Required">*</span>';
+}
+
 // ─── Info Tooltip Helper ──────────────────────────────
 /**
  * Generates an inline info tooltip icon with hover text.
@@ -2280,12 +2295,13 @@ function renderApprovalTimeline(rounds) {
     // C6 (2026-08-13, feedback batch 2): current round pill is GREEN, same palette as the
     // email/cert renderer (pia_code.js buildUnifiedHistoryHtml_) and Phase 1's roundHeader
     // (#f0fdf4 / #bbf7d0 / #15803d); history keeps the muted underline. Keep the three in step.
+    // H4 (2026-08-14): wider gaps so rounds read as separate blocks, not one dense list.
     if (r.isCurrent) {
-      html += '<div style="margin:12px 0 10px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:3px 12px;text-transform:uppercase;letter-spacing:0.05em;">' +
+      html += '<div style="margin:26px 0 12px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:4px 13px;text-transform:uppercase;letter-spacing:0.05em;">' +
         escapeHtml(headerLabel) + '</span></div>';
     } else {
       html += '<div style="font-size:12px;font-weight:700;color:var(--text2)' +
-        ';text-transform:uppercase;letter-spacing:0.05em;margin:12px 0 10px;border-bottom:1px solid var(--border);padding-bottom:4px;">' +
+        ';text-transform:uppercase;letter-spacing:0.05em;margin:26px 0 12px;border-bottom:1px solid var(--border);padding-bottom:7px;">' +
         escapeHtml(headerLabel) + '</div>';
     }
     html += '<div class="timeline">';
@@ -2309,24 +2325,30 @@ function renderApprovalTimeline(rounds) {
       var comment = (d.comments && String(d.comments).trim() !== '' &&
         String(d.comments).trim() !== 'Approved via secure access review link.' &&
         String(d.comments).trim() !== 'No additional comments provided.') ? escapeHtml(String(d.comments)) : '';
-      // C5: flags print before the comment; C4/C7: "Comments:" label, near-black body.
+      // H6 (2026-08-14, feedback batch 3): entry order is
+      //   Name (Role) | Decision  /  Flagged  /  Comments  /  Date
+      // The date moved OUT of the sub-line and down to last; routing stays with the decision
+      // because it qualifies the decision, not the timestamp.
+      // C5 still holds: flags before the comment. C4/C7: "Comments:" label, near-black body.
       // Keep in step with pia_code.js renderDecision and Phase 1's history items.
       var flagKeys = (d.flaggedFields && typeof d.flaggedFields === 'object') ? Object.keys(d.flaggedFields) : [];
       var flagsHtml = '';
       if (flagKeys.length) {
-        flagsHtml = '<div style="font-size:11.5px;color:var(--warn-text);margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
+        flagsHtml = '<div style="font-size:11.5px;color:var(--warn-text);margin-top:5px;line-height:1.5;">Flagged: ' + flagKeys.map(function (k) {
           var reason = d.flaggedFields[k];
           return escapeHtml(k) + (reason && reason !== true ? ' (' + escapeHtml(String(reason)) + ')' : '');
         }).join(', ') + '</div>';
       }
-      html += '<div class="timeline-item">' +
+      html += '<div class="timeline-item" style="padding-bottom:16px;">' +
         '<div class="' + dotCls + '" aria-hidden="true"></div>' +
-        '<div class="timeline-title">' + name + ' <span style="font-weight:400;color:var(--text3);font-size:11px;">(' + role + ')</span></div>' +
-        '<div class="timeline-sub"><span class="status-badge ' + getStatusBadgeClass(label) + '">' + escapeHtml(label) + '</span>' +
-          (dateStr ? ' &middot; ' + dateStr : '') +
-          (routingLabel ? ' &middot; Routing: ' + escapeHtml(routingLabel) : '') + '</div>' +
+        '<div class="timeline-title" style="line-height:1.6;">' + name +
+          ' <span style="font-weight:400;color:var(--text3);font-size:11px;">(' + role + ')</span>' +
+          ' <span style="color:var(--border2);font-weight:400;">&#124;</span> ' +
+          '<span class="status-badge ' + getStatusBadgeClass(label) + '">' + escapeHtml(label) + '</span></div>' +
+        (routingLabel ? '<div style="font-size:12px;color:var(--text2);margin-top:5px;">Routing: <strong>' + escapeHtml(routingLabel) + '</strong></div>' : '') +
         flagsHtml +
-        (comment ? '<div class="timeline-comment" style="color:#111827;">Comments: "' + comment + '"</div>' : '') +
+        (comment ? '<div class="timeline-comment" style="color:#111827;margin-top:5px;line-height:1.6;">Comments: "' + comment + '"</div>' : '') +
+        (dateStr ? '<div style="font-size:11px;color:var(--text3);margin-top:7px;">' + dateStr + '</div>' : '') +
         '</div>';
     }
     html += '</div>';
@@ -3167,8 +3189,8 @@ function renderPIA3() {
     return items.map((v, idx) => `
       <div class="stakeholder-row">
         <div class="field" style="margin-bottom:0;">
-          <label for="${prefix}-name-${idx}">${labelPrefix} ${idx+1} Name</label>
-          <input id="${prefix}-name-${idx}" value="${escapeHtml(v.name)}" placeholder="Name or role" maxlength="180" oninput="state.pia3.${prefix === 'p3-int' ? 'intStakeholders' : 'extStakeholders'}[${idx}].name=sanitizeText(this.value,180); persistState();" onblur="this.value=validatePersonName(this.value, true); state.pia3.${prefix === 'p3-int' ? 'intStakeholders' : 'extStakeholders'}[${idx}].name=this.value; persistState();" />
+          <label for="${prefix}-name-${idx}">${labelPrefix} ${idx+1} Name ${reqMark()}</label>
+          <input id="${prefix}-name-${idx}" value="${escapeHtml(v.name)}" placeholder="Name or role" maxlength="180" aria-required="true" oninput="state.pia3.${prefix === 'p3-int' ? 'intStakeholders' : 'extStakeholders'}[${idx}].name=sanitizeText(this.value,180); persistState();" onblur="this.value=validatePersonName(this.value, true); state.pia3.${prefix === 'p3-int' ? 'intStakeholders' : 'extStakeholders'}[${idx}].name=this.value; persistState();" />
         </div>
         <div class="field" style="margin-bottom:0;">
           <label for="${prefix}-email-${idx}">Email (Optional)</label>

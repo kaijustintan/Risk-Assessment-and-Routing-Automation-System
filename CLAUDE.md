@@ -1060,13 +1060,30 @@ carries no personal data.
   `getUnifiedHistory_` now returns `{rounds, currentRound}`; when the current round has nothing
   to show, `buildUnifiedHistoryHtml_` appends a synthetic "(Current) ... In review" block so an
   email never ends on a bare historical round (B5).
-- **🚩 The history block format is a four-way contract (C3-C7).** `buildUnifiedHistoryHtml_`
-  (PIA server), `renderApprovalTimeline` (pia_index), `renderUnifiedApprovalHistory` + prior-round
-  items (Phase 1 index), and `buildCertApprovalHistoryHtml_` (Admin) must stay in step: round
-  header outranks group sub-headers; flags print BEFORE the comment; the comment carries a
-  literal `Comments:` label in near-black (#111827); the CURRENT round pill is GREEN
-  (`#f0fdf4` bg / `#bbf7d0` border / `#15803d` text, same palette as the retained-file chips);
-  history rounds keep a muted underline. Change one copy → change all four.
+- **🚩 The history block format is a FIVE-way contract (C3-C7, entry order revised by H6
+  2026-08-14).** `buildUnifiedHistoryHtml_` (PIA server, covers all five emails + both review
+  pages + the PIA certificate), `renderApprovalTimeline` (pia_index), `renderUnifiedApprovalHistory`
+  + prior-round items (Phase 1 index), `buildCertApprovalHistoryHtml_` (Admin certificate), and
+  `approvalTable` (adminView audit modal) must stay in step. The entry order is:
+
+  ```
+  Approver Name (Role) | Decision      ← pipe separates identity from decision
+  Flagged: ...                          ← the actionable part, so it outranks the comment
+  Comments: "..."
+  <date>                                ← LAST. Moved here from second on 2026-08-14
+  ```
+
+  Also fixed: round header outranks group sub-headers; the comment carries a literal
+  `Comments:` label in near-black (#111827); the CURRENT round pill is GREEN (`#f0fdf4` bg /
+  `#bbf7d0` border / `#15803d` text, same palette as the retained-file chips); history rounds
+  keep a muted underline. Change one copy → change all five.
+  - ⚠️ **`approvalTable` (Admin audit modal) is the deliberate exception on LAYOUT.** It stays a
+    `<table>` because that modal is for scanning many rows, not reading one request. It follows
+    the *order* (Approver, Decision, Flagged, Comments, Date) but not the stacked shape. Do not
+    "unify" it into blocks.
+  - Spacing (H4): rounds `margin-bottom:26px`, sub-headers `margin:18px 0 10px`, entries
+    `margin-bottom:16px; padding-bottom:14px`, body `line-height:1.6`. Cramped spacing was a
+    reported defect, not a preference.
 - **DCS `renderUnifiedApprovalHistory` derives the current round as MAX(revisionHistory rounds)**,
   and prior rounds = everything below it. The old code treated the whole list as "prior" and
   labelled current as max+1, which double-rendered the current round with a phantom number.
@@ -1097,13 +1114,37 @@ carries no personal data.
   a Return resolves the old round, so a new round must exist for anyone to act. The
   "Revision Ready" screen now says so when no `PIA-` prefixed flag exists ("Nothing in your
   assessment was flagged...") instead of letting the applicant think the assessment must be redone.
-- **E1: the five Return/Deny comment checks are mirrored client-side** in the standard review
-  form's submit listener (min 100 / max 4000 / repeated-char / consonant-run). The server checks
+- **E1: the Return/Deny comment checks are mirrored client-side** in the standard review
+  form's submit listener (min / max 4000 / repeated-char / consonant-run). The server checks
   in `handleEmailAction_` are the rule; the client copy is the courtesy half. Mirror, never move,
-  and keep the two lists identical. (The ISM form already had its min-50 mirror.)
+  and keep the two lists identical. (The ISM form has its own mirror.)
+- **🚩 Comment minimums live in TWO constants and NOTHING may re-type the number (H5,
+  2026-08-14).** `COMMENT_MIN_CHARS_STANDARD` (ISM remarks) and `COMMENT_MIN_CHARS_DECISION`
+  (Return/Deny), both **30** since 2026-08-14, down from 50 and 100. Before that change, four
+  of the five 50-sites and one 100-site hardcoded the number as a literal, so the hint text and
+  the actual gate could silently disagree; every site now reads its constant. If you add a
+  comment gate, read the constant. `COMMENT_MAX_CHARS` stays 4000.
+  - "Meaningful characters" is not clever counting: `comment.replace(/<[^>]*>/g,'').trim().length`,
+    i.e. tags stripped, ends trimmed, raw character count. Interior spaces count. The
+    anti-gibberish checks (6+ repeated chars, 7+ consonant run) are separate and do not affect it.
+  - ⚠️ **30 is an ISM policy number, not a technical one.** It was lowered because reviewers were
+    padding text to clear 100, which is worse than a short honest comment. If ISM wants the
+    Return reason held to a higher bar than routine ISM remarks, the two constants are already
+    separate: raise `COMMENT_MIN_CHARS_DECISION` alone.
+- **Required-field markers: use the helper, never hand-paste the asterisk.** `reqMark()` exists
+  in `Phase 1/index.html` and (since H2, 2026-08-14) in `Phase 2/pia_index.html`. PIA previously
+  had 21 hand-copied asterisk spans and no helper, which is exactly how the Section 3 stakeholder
+  Name field ended up required-but-unmarked while its sibling read "Email (Optional)". Audited
+  2026-08-14: every other required field in both apps is marked.
 - **Sheet TAB ORDER is free; sheet NAMES are load-bearing.** All 86 DB lookups are
   `getSheetByName`; the only positional calls are a debug lister and the export's own new file.
   Reordering tabs in the spreadsheet is safe; renaming one breaks every lookup.
+- **DCS Section 3 documents are static text on purpose, and cannot be links (H1).** At the
+  pre-submission review the files have not been uploaded yet: `renderSummary()` prints
+  `state.dcs.nda` etc., which are filename strings scraped off the `<input type="file">`. There
+  is no Drive ID until `submitDCS` runs `uploadProxy_`, so there is nothing to link to, and a
+  client-side `blob:` preview is the exact thing the GAS sandbox refuses (see B1 in §8c). The
+  request-details screen after submission is where the documents become clickable.
 
 ---
 

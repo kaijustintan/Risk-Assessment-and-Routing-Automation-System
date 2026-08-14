@@ -127,7 +127,6 @@
 
   CATEGORY: VALIDATION
     - validateApplicationData_(appData)       server-side submit validation
-    - validateComment_(comment, minLength)    decision-comment length/format check
     - sanitizeInput_(data, maxLength, depth)  recursive string clamp/clean
 
   CATEGORY: CLIENT API (google.script.run)
@@ -495,8 +494,18 @@ const REMINDER_CONFIG_PROP = 'PIA_REMINDER_CONFIG';
 const TOKEN_VALIDITY_MS = 14 * 24 * 60 * 60 * 1000;  // 14 days
 const SESSION_ID_MAX = 999999;
 const LOCK_TIMEOUT_MS = 30000;                        // 30 seconds
-const COMMENT_MIN_CHARS_STANDARD = 50;               // Standard comment minimum (ISM step 1)
-const COMMENT_MIN_CHARS_DECISION = 100;              // Minimum for Deny/Return decisions
+// H5 (2026-08-14, feedback batch 3): both floors lowered to 30. Previously 50 (ISM remarks)
+// and 100 (Return/Deny reason); the 100 was too long for routine feedback and reviewers were
+// padding text to clear it, which is worse than a short honest comment.
+// 🚩 CHANGING THESE CONSTANTS IS NOT ENOUGH ON ITS OWN. Before this change four of the five
+// 50-sites and one of the 100-sites hardcoded the number as a literal, so the hint text and
+// the actual gate could silently disagree. Every site now reads the constant; if you add a
+// new comment gate, read the constant there too and never re-type the number.
+// "Meaningful characters" = comment.replace(/<[^>]*>/g,'').trim().length, i.e. tags stripped
+// and ends trimmed, then raw character count. Not words, not alphanumeric-only. The separate
+// anti-gibberish checks (6+ repeated chars, 7+ consonant run) do not affect this count.
+const COMMENT_MIN_CHARS_STANDARD = 30;               // ISM remarks minimum
+const COMMENT_MIN_CHARS_DECISION = 30;               // Minimum for Deny/Return decisions
 const COMMENT_MAX_CHARS = 4000;                      // Maximum for all comments
 const MAX_USER_DRAFTS = 5;                           // Maximum concurrent drafts per user
 const DRAFT_EXPIRY_DAYS = 7;                         // Draft expiration in days
@@ -849,9 +858,13 @@ const safeIdAttr_ = (v) => String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g,
              - label: visible button text (already-composed, e.g. 'View DSA').
              - title: hover text, typically the filename.
   RETURNS:   HTML string for one download button.
+
+  H4 (2026-08-14): flex:1 + left-aligned text. Both call sites live inside the one-per-row
+  document column, where letting each button size to its own label produced five different
+  right edges and left the flag icons scattered. Filling the row lines the flags up.
 */
 const makeDocDownloadBtn_ = (sessionId, fileId, label, title) =>
-  `<button type="button" class="btn btn-sm" style="color: var(--navy-bright); border-color: var(--navy-bright);" title="${escapeHtml_(title || label)}" onclick="viewDcsFile('${safeIdAttr_(sessionId)}','${safeIdAttr_(fileId)}',this)">${escapeHtml_(label)}</button>`;
+  `<button type="button" class="btn btn-sm" style="flex:1; justify-content:flex-start; text-align:left; color: var(--navy-bright); border-color: var(--navy-bright);" title="${escapeHtml_(title || label)}" onclick="viewDcsFile('${safeIdAttr_(sessionId)}','${safeIdAttr_(fileId)}',this)">${escapeHtml_(label)}</button>`;
 
 /*
   Function: escapeHtml_
@@ -898,8 +911,8 @@ function escapeHtml_(str) {
   backends and all three frontends in one change.
 
   ⚠️ A `success` or `error` key you still see in this project is NOT this envelope.
-  `{ valid:false, error }` from validateComment_, `flags.error` inside audit JSON,
-  `Email_Queue.Last_Error`, the `result.errors` ARRAY from PIA validation, and every
+  `flags.error` inside audit JSON, `Email_Queue.Last_Error`, the `result.errors` ARRAY from
+  PIA validation, `{valid:false, error}` from any local validator, and every
   `Logger.log('... error: ' + e)` label are unrelated and must stay.
 
   🚩 The sweep that closed F-06 was incomplete on its first pass, and the reason
@@ -2909,7 +2922,7 @@ function handleEmailAction_(params) {
             if (!alreadyFound) {
               // Round-4: endorsement letter is flaggable too (same 'DCS - ' prefix contract).
               // SECURITY: was a raw Drive link. Now routed through the authorized download proxy.
-              endorsementFileHtml = `<span style="display: inline-flex; align-items: center; gap: 2px;">${makeDocDownloadBtn_(sessionId, val.id, 'View Endorsement Letter', val.name || 'Endorsement Letter')}${makeFlagBtn('DCS - Endorsement Letter')}</span>`;
+              endorsementFileHtml = `<span style="display: flex; align-items: center; gap: 6px;">${makeDocDownloadBtn_(sessionId, val.id, 'View Endorsement Letter', val.name || 'Endorsement Letter')}${makeFlagBtn('DCS - Endorsement Letter')}</span>`;
             }
             return;
           }
@@ -3035,15 +3048,19 @@ function handleEmailAction_(params) {
         // SECURITY: was a raw Drive link (f.url). Documents are private now, go through the
         // authorization-checked proxy instead. f.url is left on the object for the certificate
         // email path, which cannot use google.script.run (see getAndShareDCSFiles_'s comment).
-        return `<span style="display: inline-flex; align-items: center; gap: 2px;">${makeDocDownloadBtn_(sessionId, f.id, 'View ' + docType, f.name)}${makeFlagBtn(docFlagLabel)}</span>`;
+        return `<span style="display: flex; align-items: center; gap: 6px;">${makeDocDownloadBtn_(sessionId, f.id, 'View ' + docType, f.name)}${makeFlagBtn(docFlagLabel)}</span>`;
       }).join('');
     }
 
     // C1 (2026-08-13, feedback batch 2): one document per row. The inline-flex wrap read as a
     // jumble once a request carried 5+ documents; a column keeps each View button + flag pair
     // on its own line. Keep the DCS request-details list (Phase 1) on the same one-per-row rule.
+    // H4 (2026-08-14, feedback batch 3): the buttons still looked ragged because
+    // align-items:flex-start sized each one to its own text, so five rows had five different
+    // right edges. Each row is now a fixed-width block with the View button filling it, which
+    // lines the flag icons up in a single column. max-width keeps it sane on a wide screen.
     const documentsHtml = `
-      <div style="margin-top: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px;">
+      <div style="margin-top: 10px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; max-width: 420px;">
         ${dcsFilesHtml}
         ${endorsementFileHtml}
         ${!hasAttachedDocs && !endorsementFileHtml ? `<span style="font-size: 13px; color: var(--text3);">No external agreements or documents attached.</span>` : ''}
@@ -3591,7 +3608,7 @@ function handleEmailAction_(params) {
           const countEl = document.getElementById('charCount');
           if (countEl) {
             countEl.innerText = count;
-            countEl.style.color = count < 50 ? 'var(--danger-text)' : 'var(--success-text)';
+            countEl.style.color = count < ${COMMENT_MIN_CHARS_STANDARD} ? 'var(--danger-text)' : 'var(--success-text)';
           }
         }
         window.addEventListener('DOMContentLoaded', function() {
@@ -3676,9 +3693,10 @@ function handleEmailAction_(params) {
 
           const plainText = editor.value.trim();
 
-          // Remarks (min 50 chars) required for every decision (the modal gate that used to enforce this is gone).
-          if (plainText.length < 50) {
-            showError('Please provide at least 50 characters of remarks before submitting a decision.');
+          // Remarks required for every decision (the modal gate that used to enforce this is gone).
+          // H5: reads the constant, was a hardcoded 50 that could drift from the hint text.
+          if (plainText.length < ${COMMENT_MIN_CHARS_STANDARD}) {
+            showError('Please provide at least ${COMMENT_MIN_CHARS_STANDARD} characters of remarks before submitting a decision.');
             return;
           }
 
@@ -3704,8 +3722,8 @@ function handleEmailAction_(params) {
         function submitReturnDecision(decision) {
           const editor = document.getElementById('editor');
           const plainText = editor.value.trim();
-          if (plainText.length < 50) {
-            showError('Please provide at least 50 characters of feedback when returning an application.');
+          if (plainText.length < ${COMMENT_MIN_CHARS_DECISION}) {
+            showError('Please provide at least ${COMMENT_MIN_CHARS_DECISION} characters of feedback when returning an application.');
             return;
           }
           document.getElementById('ismDecisionInput').value = decision;
@@ -3717,8 +3735,8 @@ function handleEmailAction_(params) {
         function submitDenial() {
           const editor = document.getElementById('editor');
           const plainText = editor.value.trim();
-          if (plainText.length < 50) {
-            showError('Please provide at least 50 characters of feedback when denying an application.');
+          if (plainText.length < ${COMMENT_MIN_CHARS_DECISION}) {
+            showError('Please provide at least ${COMMENT_MIN_CHARS_DECISION} characters of feedback when denying an application.');
             return;
           }
           document.getElementById('ismDecisionInput').value = 'Deny';
@@ -3750,8 +3768,8 @@ function handleEmailAction_(params) {
       // Optional comments for approval/escalation are still capped
     } else {
       const plainTextComment = String(params.comment || '').replace(/<[^>]*>/g, '').trim();
-      if (plainTextComment.length < 50) {
-        return renderISMReviewForm(`A minimum of 50 meaningful characters is required for this decision.`, params.comment || '');
+      if (plainTextComment.length < COMMENT_MIN_CHARS_STANDARD) {
+        return renderISMReviewForm(`A minimum of ${COMMENT_MIN_CHARS_STANDARD} meaningful characters is required for this decision.`, params.comment || '');
       }
     }
     
@@ -3874,7 +3892,7 @@ function handleEmailAction_(params) {
         <div id="returnModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center; margin:0; padding:15px;">
           <div style="background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-lg); padding:1.5rem; max-width:400px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,0.2);">
             <h3 style="margin-top:0; font-size:18px; font-weight:600; color:var(--text); letter-spacing:-0.02em;">Return to Requestor</h3>
-            <p style="font-size:13.5px; color:var(--text2); line-height:1.5; margin-bottom:20px;">This application will be returned to the requestor. If DCS fields are flagged, the associated DCS request will also be returned. A comment of at least 100 characters is required. Continue?</p>
+            <p style="font-size:13.5px; color:var(--text2); line-height:1.5; margin-bottom:20px;">This application will be returned to the requestor. If DCS fields are flagged, the associated DCS request will also be returned. A comment of at least ${COMMENT_MIN_CHARS_DECISION} characters is required. Continue?</p>
             <div style="display:flex; flex-direction:column; gap:10px;">
               <button type="submit" name="action" value="Return" class="btn btn-warn" style="width:100%; justify-content:center;" onclick="document.getElementById('actionTokenInput').value='${returnToken}'; showDecisionOverlay();">Confirm Return to Requestor</button>
               <button type="button" class="btn" style="width:100%; justify-content:center; margin-top:5px;" onclick="document.getElementById('returnModal').style.display='none'">Cancel</button>
@@ -4015,7 +4033,7 @@ function handleEmailAction_(params) {
           const countEl = document.getElementById('charCount');
           if (countEl) {
             countEl.innerText = count;
-            countEl.style.color = count < 100 ? 'var(--warn-text)' : 'var(--success-text)';
+            countEl.style.color = count < ${COMMENT_MIN_CHARS_DECISION} ? 'var(--warn-text)' : 'var(--success-text)';
           }
         }
         window.addEventListener('DOMContentLoaded', function() {
@@ -7475,26 +7493,32 @@ function buildUnifiedHistoryHtml_(unified, opts) {
     const routing = routingLabelFor(d.routing);
     // C8: the certificate suppresses per-reviewer routing (one authoritative line is printed
     // there instead); every other surface keeps it as audit detail.
-    const routingHtml = (routing && !opts.hideRouting) ? `<div style="font-size:12px;color:#4b5563;margin-top:3px;">Routing: <strong>${escapeHtml_(routing)}</strong></div>` : '';
+    const routingHtml = (routing && !opts.hideRouting) ? `<div style="font-size:12px;color:#4b5563;margin-top:5px;">Routing: <strong>${escapeHtml_(routing)}</strong></div>` : '';
     const dateStr = fmtDate(d.decisionDate);
     const flagKeys = (d.flaggedFields && typeof d.flaggedFields === 'object') ? Object.keys(d.flaggedFields) : [];
     let flags = '';
     if (flagKeys.length > 0) {
-      flags = '<div style="font-size:11.5px;color:#92400e;margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
+      flags = '<div style="font-size:11.5px;color:#92400e;margin-top:5px;line-height:1.5;">Flagged: ' + flagKeys.map(function (k) {
         const reason = d.flaggedFields[k];
         return escapeHtml_(k) + (reason && reason !== true ? ' (' + escapeHtml_(String(reason)) + ')' : '');
       }).join(', ') + '</div>';
     }
     const showComment = !!d.comments;
-    // C5: flags print BEFORE the comment (a Return's flags are the actionable part).
-    // C4: the comment carries an explicit "Comments:" label. C7: body text near-black.
+    // H6 (2026-08-14, feedback batch 3): the entry order is
+    //   Name (Role) | Decision  /  Flagged  /  Comments  /  Date
+    // The DATE MOVED FROM SECOND TO LAST: it is the least actionable part of an entry, and
+    // putting it second pushed the flags and the comment (the parts a requestor must act on)
+    // below the fold of a quick scan. The pipe separates identity from decision so the two
+    // read as distinct columns even though they share a line.
+    // C5 still holds: flags print BEFORE the comment. C4: literal "Comments:" label.
+    // H4: line-height and margins widened so the block is not cramped.
     return `
-        <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f0f0f0;">
-          <div style="font-size:13px;color:#111827;"><strong>${escapeHtml_(d.approverName || d.approverEmail || 'Approver')}</strong> <span style="color:#4b5563;">(${escapeHtml_(d.role || 'Approver')})</span>: <span style="color:${colorFor(d.status, d.decision)};font-weight:600;">${escapeHtml_(labelFor(d.status))}</span></div>
-          ${dateStr ? `<div style="font-size:11px;color:#6b7280;margin-top:2px;">${escapeHtml_(dateStr)}</div>` : ''}
+        <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #f0f0f0;">
+          <div style="font-size:13px;color:#111827;line-height:1.6;"><strong>${escapeHtml_(d.approverName || d.approverEmail || 'Approver')}</strong> <span style="color:#4b5563;">(${escapeHtml_(d.role || 'Approver')})</span> <span style="color:#d1d5db;">&#124;</span> <span style="color:${colorFor(d.status, d.decision)};font-weight:600;">${escapeHtml_(labelFor(d.status))}</span></div>
           ${routingHtml}
           ${flags}
-          ${showComment ? `<div style="font-size:12.5px;color:#111827;margin-top:3px;">Comments: "${escapeHtml_(String(d.comments))}"</div>` : ''}
+          ${showComment ? `<div style="font-size:12.5px;color:#111827;margin-top:5px;line-height:1.6;">Comments: "${escapeHtml_(String(d.comments))}"</div>` : ''}
+          ${dateStr ? `<div style="font-size:11px;color:#6b7280;margin-top:7px;">${escapeHtml_(dateStr)}</div>` : ''}
         </div>`;
   };
 
@@ -7503,8 +7527,10 @@ function buildUnifiedHistoryHtml_(unified, opts) {
   // and body the inner one. A missing group renders nothing rather than an empty header.
   // Email-safe on purpose: inline styles, hex colors, plain divs (this output feeds five email
   // templates and the certificate PDF through the legacy HTML-to-PDF engine).
+  // H4 (2026-08-14): more room above the sub-header than below it, so each group visually
+  // binds to the entries underneath it instead of floating between two blocks.
   const subHeader = function (label) {
-    return '<div style="font-size:10px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:8px 0 6px;">' + escapeHtml_(label) + '</div>';
+    return '<div style="font-size:10px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:18px 0 10px;">' + escapeHtml_(label) + '</div>';
   };
 
   // C3/C6 (2026-08-13, feedback batch 2): the round header is the outermost unit of the
@@ -7515,8 +7541,8 @@ function buildUnifiedHistoryHtml_(unified, opts) {
   const roundHeaderHtml = function (roundNo, isCurrent) {
     const headerLabel = 'Round ' + roundNo + (isCurrent ? ' (Current)' : '');
     return isCurrent
-      ? `<div style="margin-bottom:6px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:3px 12px;text-transform:uppercase;letter-spacing:0.05em;">${escapeHtml_(headerLabel)}</span></div>`
-      : `<div style="font-size:12px;font-weight:700;color:#4b5563;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">${escapeHtml_(headerLabel)}</div>`;
+      ? `<div style="margin-bottom:12px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:4px 13px;text-transform:uppercase;letter-spacing:0.05em;">${escapeHtml_(headerLabel)}</span></div>`
+      : `<div style="font-size:12px;font-weight:700;color:#4b5563;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;border-bottom:1px solid #e5e7eb;padding-bottom:7px;">${escapeHtml_(headerLabel)}</div>`;
   };
 
   let html = '<div style="font-family: sans-serif;">';
@@ -7533,8 +7559,9 @@ function buildUnifiedHistoryHtml_(unified, opts) {
     if (ismGroup.length) decisions += subHeader('ISM InfoSec Approvals') + ismGroup.map(renderDecision).join('');
     if (otherGroup.length) decisions += otherGroup.map(renderDecision).join('');
 
+    // H4: rounds are the outermost unit, so they get the largest gap between them.
     html += `
-      <div style="margin-bottom:16px;">
+      <div style="margin-bottom:26px;">
         ${roundHeaderHtml(r.round, r.isCurrent)}
         ${decisions}
       </div>`;
@@ -8999,49 +9026,6 @@ function validateApplicationData_(appData) {
     isValid: errors.length === 0,
     errors: errors
   };
-}
-
-/*
-  Function: validateComment_
-  LAYMAN:    Makes sure a decision comment is a real, meaningful justification, not blank, spammy, or
-             gibberish.
-  TECHNICAL: Strips tags, then enforces min length (param), COMMENT_MAX_CHARS, no 6+ repeated chars,
-             presence of word-like sequences, and >= 3 words.
-  PARAMS:    - comment: the raw comment; minLength, minimum chars (default 50).
-  RETURNS:   { valid:true } or { valid:false, error }.
-*/
-function validateComment_(comment, minLength = 50) {
-  if (!comment || typeof comment !== 'string') {
-    return { valid: false, error: 'Comment required' };
-  }
-  
-  const text = comment.replace(/<[^>]*>/g, '').trim();
-  
-  if (text.length < minLength) {
-    return { valid: false, error: `At least ${minLength} characters required` };
-  }
-  
-  if (text.length > COMMENT_MAX_CHARS) {
-    return { valid: false, error: `Comment cannot exceed ${COMMENT_MAX_CHARS} characters` };
-  }
-  
-  // Check for spam patterns (6+ repeated characters)
-  if (/(.)(\1{5,})/.test(text)) {
-    return { valid: false, error: 'Repetitive patterns detected' };
-  }
-  
-  // Check for valid natural language (must have word-like sequences)
-  if (!/[a-z]{3,}/i.test(text)) {
-    return { valid: false, error: 'Comment must contain meaningful words' };
-  }
-  
-  // Must have at least 3 words
-  const words = text.split(/\s+/).filter(w => w.length > 0);
-  if (words.length < 3) {
-    return { valid: false, error: 'Comment must contain at least 3 words' };
-  }
-  
-  return { valid: true };
 }
 
 /*
