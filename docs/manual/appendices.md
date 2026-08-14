@@ -72,10 +72,10 @@ See [§0.6 Hardening history, Round 2](part-0-common.md#hardening-history).
 - **Export to Sheet is no longer formula-injectable.** A request whose text began with `=` used to
   execute as a spreadsheet formula the moment an admin opened the export, under the admin's own
   Google account ([Part 3](part-3-admin.md)).
-- **Approver delegation / out-of-office**, new `Delegations` tab + `ActedBy` column. ISM records
-  who covers an approver on leave; emails, reminders and the approval link all follow.
-  🚩 **ISM-managed only**, approvers cannot pick their own stand-in, and it is **not retroactive**
-  (use Email Routing → Resend for mail already sent) ([Part 3](part-3-admin.md)).
+- ~~**Approver delegation / out-of-office**~~ **(REMOVED in Wave 5, 2026-08-14.)** Built here,
+  deleted two days later after review: picking a stand-in approver was judged outside an admin's
+  scope. The `Delegations` tab and `ActedBy` columns survive but are permanently empty and inert
+  ([Part 3](part-3-admin.md)).
 - **Retention & purge, built and shipped SWITCHED OFF.** Nothing had ever deleted personal data.
   The sweep reports what *would* go and deletes nothing until ISM sets a period and turns off
   dry-run. 🚩 **A purge cannot be undone, preview it with ISM first.** It also takes over the DCS
@@ -86,9 +86,9 @@ See [§0.6 Hardening history, Round 2](part-0-common.md#hardening-history).
   cache; the database file is now opened once per run instead of up to 13 times.
 - **One canonical design-token file**, replacing six drifting copies, including two that had been
   rendering the approver-facing decision page in the wrong navy.
-- **"View" now shows the document on the page** instead of downloading it. PDFs and images open in
-  an overlay; Word/Excel still download, since browsers cannot display them. Applies everywhere
-  documents are listed, including the approver's review page.
+- ~~**"View" shows the document on the page**~~ **(SUPERSEDED in Wave 4, 2026-08-14.)** The in-page
+  overlay could not be made to work: Chrome refuses to render the document bytes inside Apps
+  Script's sandboxed frame. "View" now opens the **Google Drive viewer in a new tab** instead.
 
 Detail: [§0.6 Hardening history, Round 3](part-0-common.md#hardening-history).
 
@@ -119,14 +119,60 @@ approver's name and email, so a self-approval or a friend-approval is visible on
 
 Detail: [§0.6 Hardening history, Round 4](part-0-common.md#hardening-history).
 
+**Wave 4 (2026-08-13/14), second manual test pass.** The first round of the system being driven by
+a real reviewer end to end. Most items were presentation defects, but two were genuine workflow
+failures.
+
+- **Documents open in the Google Drive viewer.** The Wave 2 in-page overlay was abandoned after
+  being proven impossible: Chrome refuses to render the document bytes inside Apps Script's frame,
+  in an `<iframe>` and an `<object>` alike (both were tried on the deployed app). "View" now opens
+  Drive in a new tab. Files stay private at upload and are shared **only** with the company, and
+  **only** at the moment an authorised person opens one. If the browser blocks the pop-up, it falls
+  back to downloading the file.
+- **🐞 Closed rounds no longer show fake "Pending" approvers.** When a request was returned, the
+  approvers further up the ladder who were never reached still displayed as if they were actively
+  reviewing. A round that is over now shows only what was actually decided.
+- **🐞 Two reviewers could disagree on the routing destination, silently.** The last one to decide
+  simply won. The winner is unchanged (that is an ISM policy call, not a bug to fix in code), but a
+  disagreement is now written to the audit log so it is visible.
+- **One approval-history format everywhere.** The same block now renders in all five emails, both
+  review pages, both certificates, the applicant's request page and the Admin audit modal.
+- **The certificate carries one approval record**, the round-grouped history, instead of the same
+  information twice in two different shapes.
+- **Two serve-time outages fixed and permanently guarded.** An `xmlns` attribute inside a script
+  block was silently truncated by Apps Script on serve, blanking the entire page. A new checker
+  (`serve.js`) now fails the build on it. See [§0.5](part-0-common.md#05--known-gotchas).
+
+**Wave 5 (2026-08-14), third feedback pass and the delegation reversal.**
+
+- **⛔ Approver delegation deleted.** See Wave 2 above. Choosing who covers an absent approver was
+  judged to sit outside an admin's scope: file a new request naming an available approver instead.
+  One case cannot be routed around, an absent **ISM reviewer**, because those come from
+  configuration rather than from the applicant. Accepted and documented
+  ([Part 3](part-3-admin.md)).
+- **Comment minimums lowered to 30 characters**, from 50 (ISM remarks) and 100 (Return/Deny
+  reason). Reviewers were padding text to clear 100, which is worse than a short honest comment.
+  🚩 The two limits remain **separate constants**, so ISM can raise the Return/Deny bar alone
+  without touching routine remarks.
+- **Approval history reordered so the actionable part comes first**: who decided what, then the
+  items they flagged, then their comment, and the **date last** instead of second.
+- **🐞 A required field was not marked as required.** The stakeholder Name field in PIA Section 3
+  had no asterisk while the field beside it read "Email (Optional)", so people only discovered it
+  was mandatory after pressing Next. Every required field in both apps was audited.
+
+Detail: CLAUDE.md §8e.
+
 ### Recent commits (newest first)
 | Commit | Summary |
 |--------|---------|
-| `e379af1` | docs(claude): add GAS serve-time template-literal corruption to §8 gotchas |
-| `0a706fb` | minor fix part 3 |
-| `aa287ad` | minor fix again |
-| `7d5f2ea` | minor fix: DCS not displaying "kasi" |
-| `bf1df2d` | feat(pia,dcs): wave-2 feedback fixes, doc links, 5-stage timeline, reliable reviewer docs, certificate doc list |
+| `3d1e7e4` | feat(dcs,pia,admin): batch-3 fixes: date-last history format, 30-char comment floor, required markers |
+| `0731607` | refactor(admin): delete delegation write path, keep the identity guard intact |
+| `7635a82` | feat(dcs,pia,admin): batch-2 fixes: Drive-viewer documents, round-scoped history, unified format, single-record certificates |
+| `ca152b2` | docs: record the flags-only-on-return contract, plain-text policy, and cert round fix |
+| `845d740` | fix(pia): repair stakeholder buttons, supplementary-doc duplication, and status display |
+| `e449dd8` | feat(tools): add serve.js, catch GAS serve-time xmlns truncation |
+| `4a3b617` | fix(dcs,admin): drop the xmlns attribute that GAS truncated on serve |
+| `737e71c` | fix(dcs): repair the HTML escaper that never escaped anything |
 
 > Keep this table updated as new versions ship. For deeper V1→V2 differences, see
 > `docs/V2 - Difference from V1 (Old System).md`.

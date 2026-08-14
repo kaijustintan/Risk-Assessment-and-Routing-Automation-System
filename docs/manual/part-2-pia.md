@@ -70,6 +70,29 @@ you can close and resume later via the **same DCS link**.
 > the history but **never shown to the requestor**, and the request advanced anyway, so a
 > correction you asked for silently never happened. Found in live data on 2026-08-13.
 
+#### Comment length *(changed 2026-08-14)*
+Every decision needs a written comment. The minimum is **30 characters** for all of them: routine
+ISM remarks, and Return/Deny reasons alike. The maximum is 4,000.
+
+- It was previously **50** for ISM remarks and **100** for a Return or Deny reason. It was lowered
+  because reviewers were padding text to clear 100, and a padded comment is worse than a short
+  honest one.
+- "30 characters" means the comment with any formatting stripped and the ends trimmed. Spaces in
+  the middle count.
+- Separately, and unchanged: a comment is rejected if it repeats one character 6+ times or contains
+  a run of 7+ consonants. Those catch keyboard mashing, not short comments.
+
+> 🛠 **This is an ISM policy number, not a technical limit.** The two thresholds are still stored
+> as **separate settings in the code**, so if ISM later wants a Return reason held to a higher bar
+> than a routine remark, only that one needs raising. Ask a developer; it is a one-line change in
+> `Phase 2/pia_code.js` (`COMMENT_MIN_CHARS_DECISION`).
+
+#### Viewing the attached documents
+Each document has a **View** button that opens it in the **Google Drive viewer in a new tab**. If
+your browser blocks the pop-up, the file downloads instead. Documents are private by default and
+are shared with the company only at the moment you open one, so nothing is exposed by an approval
+email being forwarded.
+
 ### PIA status indicators
 | Status | Meaning |
 |--------|---------|

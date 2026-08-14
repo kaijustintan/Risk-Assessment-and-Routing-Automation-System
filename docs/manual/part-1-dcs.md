@@ -54,8 +54,20 @@ badge, submission date, and any approver remarks. Click a request for full detai
 ### Viewing request details
 A request's detail screen shows:
 - **Summary card**, everything you submitted.
-- **Uploaded documents**, shown as clickable Drive **"View"** links *(Wave 2 update, was
-  previously plain filenames)*.
+- **Uploaded documents**, one per row, each with a **"View"** button that opens the file in the
+  **Google Drive viewer in a new tab** *(Wave 4 update, 2026-08-14; was plain filenames in V1,
+  then briefly an in-page preview overlay, which had to be abandoned)*.
+  > ℹ️ **If nothing opens, your browser blocked the pop-up.** The button falls back to
+  > downloading the file instead, so you still get the document either way.
+  >
+  > 🚩 **Why not preview it on the page?** It was tried and it cannot work here. Chrome refuses
+  > to render document bytes inside the sandboxed frame Apps Script serves the app in, both in an
+  > `<iframe>` and in an `<object>`. Files stay private at upload and are shared with the company
+  > **only** at the moment an authorised person opens one.
+  >
+  > ⚠️ **Before you submit**, the Section 3 review screen shows document **names only**, not links.
+  > That is not a bug: the files have not been uploaded yet, so there is nothing to link to. They
+  > become clickable on this screen after submission.
 - **Approval Workflow tracker** and **ISM / DivHead tracker** (Phase 2 progress).
 - **Overall Progress Timeline**, the **5 stages**: DCS Request → PIA Assessment → Heads
   Approval → ISM Approval → Certification (see [§0.3](part-0-common.md#03--the-approval-ladder--progress-timeline)).

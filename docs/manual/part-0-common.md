@@ -88,7 +88,7 @@ URL.** A change in one app silently breaks another that reads the same sheet.
 | `Admin_Notification_Config` | Admin | Extra accounts granted Admin access, beyond ISM personnel | Config_ID + an email column (matched case-insensitively) |
 | `System_Configuration` | Admin/DCS | Key-value settings (template links, etc.) | Configuration_Key, Value, Description |
 | `Drafts` | DCS + PIA (shared) | Auto-saved form state, 7-day TTL | DraftID, UserEmail, SessionID, Type, StateJSON, **SavedTimestamp**, ExpiresAt |
-| `Delegations` | Admin (edits) / PIA (reads) | Out-of-office cover: who acts while an approver is away. **Empty is the normal state.** | Delegation_ID, From_Email, To_Email, Start_Date, End_Date, Reason, Is_Active, Created_By, Created_At |
+| `Delegations` | PIA (reads only) | **Retired 2026-08-14 and permanently empty.** Nothing writes to it any more. Kept because PIA's `canActAs_` identity guard reads it, and an empty table makes that guard collapse to a plain identity check. Recreates itself empty if deleted. | Delegation_ID, From_Email, To_Email, Start_Date, End_Date, Reason, Is_Active, Created_By, Created_At |
 | `Email_Queue` | PIA | Outgoing mail, incl. the **fully rendered body** of every notification | Queue_ID, SessionID, Recipient, Subject, Body_Plain, Body_HTML, Type, Status, Attempts, Last_Error, Created_At, Sent_At |
 
 > **Note on `Risk_Audit`:** the old PIA manual called this the "Paranormal event log." That
@@ -188,6 +188,37 @@ approvals, comments and flagged items stay in the workflow sheets permanently, t
 > best-effort copy in a separate `Revision_History` tab. If that copy ever failed, the round was
 > lost silently. The workflow is now append-only and `Revision_History` has been retired.
 > See §0.6 for the developer detail.
+
+#### How an approval history entry reads *(standardised 2026-08-14)*
+
+Wherever approval history appears (all five notification emails, both review pages, both
+certificates, the applicant's request screen, and the Admin audit modal) one entry reads in this
+order:
+
+```
+Round 2 (Current)                     ← green pill on the live round, muted on closed ones
+  HEAD APPROVALS
+    Ana Reyes (Immediate Head) | Approved
+    Comments: "Scope looks reasonable."
+    14 Aug 2026, 9:12 AM              ← date LAST
+```
+
+The order is deliberate and is a **five-way contract**: identity and decision first, then any
+**Flagged:** items, then the comment, then the date.
+
+- **Flagged items outrank the comment** because on a Return they are the part the requestor must
+  act on.
+- **The date moved from second to last on 2026-08-14.** It is the least actionable part of an
+  entry, and putting it high pushed the flags and comment below a quick scan.
+- 🚩 **A "Pending" row is only ever shown for the current round.** In a closed round it means an
+  approver the Return never reached, which is history, not something awaiting action. Showing it
+  as live "Pending" was a real defect fixed on 2026-08-14.
+- ⚠️ The **Admin audit modal** deliberately keeps a **table** layout rather than these stacked
+  blocks, because it is built for scanning many rows at once. It follows the same column *order*.
+
+> 👨‍💻 **Changing one copy means changing all five.** They are independent implementations, not one
+> shared component (the three apps are separate GAS projects and cannot share code). The five are
+> listed by function name in CLAUDE.md §8e.
 
 ### The 5-stage progress timeline
 The "Overall Progress Timeline" the requester sees has **5 stages** (verified in
@@ -462,10 +493,14 @@ request. See `getAndShareDCSFiles_` in `pia_code.js`.
   system where user-typed text lands in a spreadsheet a person then opens, so a value beginning
   with `=` stopped being text and ran as a formula under the admin's own Google account. Values
   are now written as plain text.
-- **Delegation / out-of-office** (`Delegations` sheet + `ActedBy`). ISM can record who covers for
-  an approver on leave; review emails, reminders and the approval link all route to the delegate,
-  and the decision is recorded as made on the original approver's behalf. Approvers **cannot** set
-  their own delegate. Regression test: `testDelegationResolution()`.
+- ~~**Delegation / out-of-office**~~ **(built 2026-08-12, REMOVED 2026-08-14).** ISM decided that
+  choosing a stand-in approver is outside an admin's scope: if an approver is unreachable, file a
+  new request naming an available one. The write path is deleted, so no delegation can be created
+  by any path. The `Delegations` sheet, the `ActedBy` columns and PIA's read-side helpers are
+  deliberately **kept but inert**, because `canActAs_` is the identity guard on all three decision
+  mutators and an empty table makes it collapse to a plain identity check. ⛔ Do not "finish the
+  job" by editing `canActAs_`. See [Part 3 → Settings](part-3-admin.md) for what to do when an
+  approver is away, including the one case that cannot be routed around (an absent ISM reviewer).
 - **Retention & purge, built, and shipped switched OFF.** Nothing in the system had ever deleted
   personal data. The sweep is complete but inert: it reports what *would* go and deletes nothing
   until ISM sets a retention period and turns off dry-run. 🚩 **A purge cannot be undone. Run the
@@ -506,8 +541,59 @@ thing and **not complaining**.
 - 🚩 **F-06 was reported closed too early and is now genuinely closed.** See the F-06 note above:
   21 further leaks survived the first sweep, including every `getAdminData` handler.
 
+**Round 5 (2026-08-13)**, the first deploy of the batched work, and what that deploy taught. This
+round is the strongest evidence in the project for a single rule: **an undeployed batch is an
+untested batch.**
+
+- 🔴 **The HTML escaper in DCS had never escaped anything.** `escapeHtml()` performed identity
+  replacements (`&` → `&`, `<` → `<`, …); only the apostrophe was ever escaped. It was the sole XSS
+  defence for **71** `innerHTML` sites, approver comments among them, and it had shipped that way
+  for the app's entire deployed life. It is valid JavaScript with a correct-looking shape, so it
+  passed every syntax check and every human review. **Lesson: a function that looks like its job
+  description proves nothing.**
+- 🔴 **An `xmlns` attribute inside a `<script>` block blanked two entire apps.** Apps Script
+  truncated the served line at the double slash inside the namespace URL, leaving an unterminated
+  string. Valid on disk, broken when served, and **all four existing checkers passed on the file.**
+  The attribute is redundant for inline SVG, so the fix is always to delete it.
+- 🔴 **A privatized function kept one old caller.** `generateAuthToken_` still called
+  `getSystemSecret()` after the definition became `getSystemSecret_()`. That call signs **every
+  approver review link**, so the deploy would have broken the entire approval workflow. In Apps
+  Script a missing function is a runtime error only on the path that reaches it, so "it parses" and
+  "it deploys" both prove nothing.
+- **The pre-deploy ritual grew to five checkers**, and they split into two kinds: `surface.js` and
+  `calls.js` audit what code is **named**; `escapers.js`, `shared.js` and `serve.js` audit what it
+  **does** when run or served. 🚩 **Every outage this project has had was caught by the second kind
+  and missed by the first.**
+- **A weekly database backup**, deliberately **fail-loud** (it rethrows after logging, unlike the
+  retention sweep). The whole system lives in one spreadsheet with no independent export; a backup
+  job that fails silently is discovered on the day you need it.
+
+**Round 6 (2026-08-14)**, two live test passes with a real reviewer, and one feature reversal.
+
+- **🐞 Closed rounds displayed approvers as "Pending"** who had never been reached. Fixed in the
+  three places that must agree; see the history-format rules in §0.3.
+- **🐞 Two ISM reviewers could disagree on the routing destination and the last one silently won.**
+  The winner is unchanged (an ISM policy call, not a bug to fix unilaterally), but a disagreement is
+  now written to `Risk_Audit` so it is at least visible.
+- **Documents now open in the Google Drive viewer.** The Round 3 in-page preview was abandoned after
+  being proven impossible rather than merely buggy: Chrome refuses to render the bytes inside Apps
+  Script's sandboxed frame, in an `<iframe>` and an `<object>` alike. Files stay owner-only at upload
+  and are shared with the company **only** when an authorised person opens one.
+- **⛔ Approver delegation deleted** (see Round 3 above for what remains and why).
+- **Comment minimums lowered to 30.** 🚩 Changing the two constants would not have been enough on
+  its own: five of the nine enforcement sites had the number **hardcoded**, so the on-screen hint
+  and the actual gate could silently disagree. Every site now reads its constant.
+- **One approval-history format** across all nine surfaces, with the date last (§0.3).
+- **🐞 A required field carried no required marker** (PIA Section 3 stakeholder Name, beside a field
+  reading "Email (Optional)"). Both apps were audited and a shared `reqMark()` helper added to each.
+
+> ℹ️ **Two reported defects in this round were false positives**, disproven from the reporter's own
+> screenshots before any code was touched. Checking a claim against the code before acting on it is
+> the convention here, and it prevented two unnecessary changes.
+
 Full detail: `docs/Security - Review Findings.md` and `docs/Security - Recommendations.md`
-(reproduced in Appendix, see `appendices.md`).
+(reproduced in Appendix, see `appendices.md`). Narrative version of Rounds 2 to 6:
+`docs/V2 - Difference from V1 (Old System).md` §10.
 
 ---
 

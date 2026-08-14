@@ -9,12 +9,27 @@
 > `xmlns` truncation) surfaced *during* that deploy and was fixed. See §12 items 10-11 and §12b.
 > The audit's own central claim, that the largest risk was the undeployed batch rather than
 > anything in the code, is what that outage confirmed.
+>
+> **Second addendum (2026-08-14). ⚠️ Two features assessed below no longer exist.** This document
+> is a point-in-time assessment and is kept as one; the affected passages are marked inline rather
+> than rewritten. Both changes came from live test passes after this audit:
+> 1. **Approver delegation was deleted** (write path removed entirely). Every statement below about
+>    delegation, delegation exclusivity, or the Admin delegation UI describes a feature that is
+>    **gone**. PIA's read-side helpers survive and are inert; `canActAs_` remains the identity guard
+>    on all three decision mutators. See CLAUDE.md §8e (D3).
+> 2. **The in-page document preview overlay was deleted**, having been proven impossible in the GAS
+>    sandbox rather than merely buggy. "View" now opens the Google Drive viewer in a new tab.
+>
+> A fresh pre-deploy audit was run on 2026-08-14 against the current tree. Results in
+> **[Addendum B](#addendum-b-pre-deploy-audit-2026-08-14)** at the end of this document.
 
 ---
 
 ## 1. Executive Summary
 
-The codebase is in genuinely strong shape. The last three hardening waves (privatization sweep, error contract, schema enforcement, append-only rounds, delegation) closed the classes of defect that matter most in a GAS system: unguarded RPC surface, silent column drift, and leaked internals. The workflow logic (approval ladder, escalation, return-restart, delegation exclusivity) is sound and regression-tested.
+The codebase is in genuinely strong shape. The last three hardening waves (privatization sweep, error contract, schema enforcement, append-only rounds, delegation<sup>†</sup>) closed the classes of defect that matter most in a GAS system: unguarded RPC surface, silent column drift, and leaked internals. The workflow logic (approval ladder, escalation, return-restart, delegation exclusivity<sup>†</sup>) is sound and regression-tested.
+
+> <sup>†</sup> **Superseded 2026-08-14:** delegation has since been removed. The approval ladder, escalation and return-restart assessments stand; the delegation-exclusivity one describes a path that no longer exists.
 
 This audit found **one critical, previously unknown defect**: the HTML escaper in the DCS frontend was a no-op. Four of its five replacements mapped each character to itself, so `escapeHtml()` escaped nothing but apostrophes. It is the sole XSS defense for 71 interpolation sites in `Phase 1/index.html`, including approver comments rendered into `innerHTML` on the applicant's request-details screen. **This defect is in the currently deployed production frontend.** It is fixed in this repo as of today, and a new mechanical check (`docs/tools/escapers.js`) verifies all 8 escapers across the six files and fails the build if any regresses.
 
@@ -277,5 +292,70 @@ Remaining:
    reaching the serializer all at once. Three of the six defects would have been trivial to locate
    had they shipped alone.
 5. Then stop. Further changes should be pulled by real usage, not pushed by review.
+
+---
+
+## Addendum B: Pre-deploy audit (2026-08-14)
+
+**Scope:** the tree at commit `3d1e7e4`, covering the two live test passes (feedback batches 2 and
+3) and the delegation removal. **Verdict: no blocking defects.**
+
+**Method note:** this audit deliberately weighted *executing and rendering* over reading, because
+§12 established that every defect this project has shipped was invisible to name-level review.
+
+### Mechanical checks
+
+| Check | Result |
+|---|---|
+| Five checkers (`surface` / `calls` / `escapers` / `shared` / `serve`) | pass |
+| `node --check`, all three backends | pass |
+| All four inline frontend `<script>` blocks parsed | pass (the one apparent failure is the single legitimate `<?!= parentID ?>` scriptlet) |
+| `getStyledHtmlWrapper_` **rendered**, emitted `<script>` parsed | pass, no template-literal corruption, both client functions present |
+| 128 derived column indices evaluated as GAS would at load | all resolve, no duplicates, no load-time throw |
+| Every inline event handler across all four surfaces | 113 targets, all resolve |
+| Em dashes in the diff | none (the three surviving `'—'` are the documented empty-state placeholders) |
+| Manifest / scope changes | none, so no forced re-authorisation |
+
+### Invariants re-verified after two batches of edits
+
+| Invariant | Result |
+|---|---|
+| No `ANYONE_WITH_LINK` anywhere | pass, all matches are comments |
+| `DOMAIN_WITH_LINK` elevation sites | 5, all documented (B1 lazy view + the certificate exception) |
+| F-06: no raw exception in a user-facing field | pass. The four `QUEUE_CRASH` sites write to `Risk_Audit`, which is explicitly exempt |
+| Cross-app headers (`Risk_Audit`, `Data_Collection`) | byte-identical between Phase 1 and PIA |
+| Retention still inert | pass (`enabled:false`, `dryRun:true`, fails safe) |
+| No schema, sheet-name or `*_COLS` change in either commit | confirmed, so **no migration and no header repair needed** |
+
+### Three findings that needed executing, not reading
+
+1. **Deleting the `Delegations` tab cannot break approvals.** This was the highest-blast-radius
+   question, since `canActAs_` guards all three decision mutators and reads that sheet. Verified:
+   `resolveDelegate_` returns null on a missing sheet or any exception, so the guard collapses to a
+   plain identity check. Also noted: the tab **recreates itself empty** if deleted, which is
+   harmless but will otherwise be rediscovered as a bug.
+2. **The new Admin "Flagged" column actually populates.** `safeRow_` stringifies every value, so
+   `RoundNumber` arrives as `"1"`. Had `rowRound()` compared strictly against a number, every row
+   would have counted as a prior round, silently hiding all pending rows and the current-round pill.
+   It coerces correctly. This is the same failure shape as the §12 `ApproverFlags` defect.
+3. **The client-side validation mirror is genuinely equivalent to the server.** The client copy is
+   emitted from inside a template literal, where the backreference must be written `\\1` to survive
+   as `\1`. Verified by building the regex from the emitted text and comparing behaviour case by
+   case, rather than by reading the source.
+
+### Open items (none blocking)
+
+| # | Item | Status |
+|---|---|---|
+| B-1 | `InfoSec_Email_Config.Member_Email` still in column 8 from testing | **Do before go-live**, live sheet edit. Otherwise the shipped two-person ISM chain is not the one that was tested |
+| B-2 | Megaworld logo hotlinked from `upload.wikimedia.org` in **7 places**, including every workflow email | Pre-existing, predates V2. Likely source of the console error seen in testing. A wiki anyone can edit hosting corporate branding is a poor dependency; fix is an inline image for pages and an attached inline image for emails. The certificate PDF is already immune |
+| B-3 | `submitDCS_` (Admin) is a stub reachable via `doPost?action=submitDCS_` returning `{ok:true}` without persisting | Dead surface, not a hole (writes nothing, domain-gated). Worth deleting |
+| B-4 | Cosmetic | duplicate line in `.gitignore`; dead `DCS_Risk_Audit` fallback and misleading log text in `Phase 1/Code.js`; `testFullSystemFlow`'s hardcoded identity still disables ~24 assertions |
+
+### Deploy note
+
+Because nothing schema-bearing changed, the three apps are deployed together for **consistency of
+the shared approval-history format**, not because a partial deploy would corrupt data. The golden
+rule still applies: edit the one deployment, choose **New version**, never "New deployment."
 
 **Explicitly excellent, no action needed:** the approval-ladder logic, the append-only round model, the privatization/guard discipline, the error contract, file privacy, the schema enforcement, the docs. These sections were audited, not skipped.

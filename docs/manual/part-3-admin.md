@@ -125,42 +125,35 @@ spreadsheet. Reminder on/off + hour here call **PIA's** cross-app reminder API
 > can fail to display/save correctly in this Settings form. Editing through this form **auto-trims**
 > on Save; pasting straight into the sheet does **not**, so sheet edits are the ones to double-check.
 
-#### Approver Delegation *(added 2026-08-12)*
-When an approver goes on leave, everything sitting with them stops. Add a delegation and the review
-email, the daily reminder and the approval link all go to the delegate instead.
-
-1. Click **Edit Configuration** to unlock the form.
-2. Fill in **Approver going away** and **Acts on their behalf** (both must be company accounts).
-3. Optionally set **Start** and **End**. Leave Start blank for "effective now", End blank for
-   "until I remove it".
-4. **Reason** is shown to the delegate in the email, so they know why they received it.
-5. **Add delegation.**
-
-The list above the form shows every delegation and whether it is **in effect** today, **outside
-window** (dated, but not now), or **paused**. **Remove** deletes it; future emails go straight back
-to the original approver.
-
-> 🚩 **Only ISM can create a delegation.** Approvers cannot set their own. That is deliberate: if
-> they could, any approver could quietly route their own approvals to a colleague of their choosing.
-
-> ⚠️ **Not retroactive.** A review link is cryptographically signed *when the email is sent*, so
-> mail already in someone's inbox still points at the original approver. For a request that is
-> already waiting, add the delegation and then use **Email Routing → Resend** to reissue it.
-
-> ℹ️ **The decision is still recorded against the original approver**, with the delegate's address
-> in the `ActedBy` column, it reads as "approved by *delegate* on behalf of *approver*."
-> Delegation does **not** chain: if A delegates to B and B delegates to C, A's requests go to B.
-
-> 🚩 **It is a real handoff, not a spare key.** While the delegation is active the original
-> approver **cannot approve** the reassigned request, and it **drops off their own list**, only
-> the delegate can act on it. This is on purpose: if both could decide, the two of them could
-> approve the same step seconds apart and the system would have no clean answer for who actually
-> decided it.
+#### ~~Approver Delegation~~ *(added 2026-08-12, **REMOVED** 2026-08-14)*
+> ⛔ **This feature no longer exists and is not coming back.** It was built, shipped, and then
+> deleted after review. There is no Delegation card in Settings, and there is no way for anyone,
+> including ISM, to appoint a stand-in approver.
 >
-> What the original approver **keeps**: everything they already decided. Requests they approved
-> before going on leave, and earlier rounds of this same request, all stay visible to them. Only
-> the specific step that was handed over disappears. Remove or pause the delegation and it comes
-> straight back to them.
+> **Why it was removed.** Deciding who covers for an absent approver is not an admin's call to
+> make. If someone is unreachable, the correct action is to **file a new request naming an
+> available approver**, not to have ISM quietly reassign an existing one.
+>
+> **What to do when an approver is away**, depending on who it is:
+>
+> | Absent approver | Can it be routed around? | How |
+> |---|---|---|
+> | Immediate Head, Dept Head, Division Head | **Yes** | These are named by the applicant in PIA Section 1. File a new request naming an available head. |
+> | InfoSec (ISM) reviewer | **No** | These come from `InfoSec_Email_Config`, so a new request reaches the same two people. The address is also copied into `ISM_Approval_Workflow` when the request is seeded, so flipping `IsActive` does **not** rescue a row that is already Pending. **The request waits for them.** |
+>
+> That second row is a known, accepted limitation. It is recorded here so it is not rediscovered
+> as a bug.
+>
+> **Leftovers you will still see, and must not "clean up":** the `Delegations` sheet, the
+> `ActedBy` columns on the three workflow sheets, and a handful of PIA helper functions. With the
+> sheet permanently empty these are inert. They are kept because one of those helpers,
+> `canActAs_`, **is** the identity guard that protects every approval decision in the system.
+> Rewriting it to remove delegation would put the system's most security-sensitive check at risk
+> to save a few unused lines. See CLAUDE.md §8e (D3).
+>
+> The `Delegations` tab also **recreates itself empty** if you delete it, because the code creates
+> the sheet on demand. That is harmless; an empty table means "no delegates", which is the
+> intended behaviour.
 
 #### Data Retention *(added 2026-08-12, ships switched OFF)*
 Nothing in the system had ever deleted personal data: not the request rows, not approver comments,

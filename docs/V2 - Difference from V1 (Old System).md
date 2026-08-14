@@ -19,6 +19,7 @@
 7. [Architecture, Deployment & Verification Notes](#7-architecture-deployment--verification-notes)
 8. [Documentation Pass (V1 vs V2 code docs)](#8-documentation-pass)
 9. [Wave 2: Latest Session Updates](#9-wave-2--latest-session-updates)
+10. [Wave 3: Hardening, Integrity & the Live Test Passes](#10-wave-3--hardening-integrity--the-live-test-passes)
 
 ---
 
@@ -60,6 +61,15 @@ script property. Each phase is deployed separately by manual copy-paste into its
 | Status badge after PIA submit | wrongly stayed "Ready for Phase 2" | correctly "PIA In Progress" |
 | Code documentation | inconsistent / Taglish / sparse | full English doc format, ~455 functions |
 | Form labeling | generic "Click to download"; static "Endorsement Letter" | audience tags per form + type-aware "School / Agency Endorsement Letter" |
+| Callable backend surface | 178 of 229 functions reachable from any employee's browser console | **82 public, none unguarded** *(see §10.1)* |
+| Uploaded NDA/DPA/DSA files | published to **anyone on the internet** with the link | owner-only; shared with the company only at the moment an authorised person opens one *(§10.2)* |
+| Resubmit after a Return | prior approval rows **deleted**, history kept as a lossy photocopy | **append-only rounds**; nothing is ever deleted *(§10.3)* |
+| Error messages | raw Google exceptions, quoting the spreadsheet and Drive folder IDs | one `{ok, code, message, ref}` shape; real exception logged, user gets a reference code *(§10.4)* |
+| Column positions | index map + header list hand-synced per sheet, silently drifting | **one header list per sheet**, indices derived, mismatch fails loudly *(§10.5)* |
+| HTML escaping (DCS) | `escapeHtml` shipped as an **identity no-op**, the sole XSS defence for 71 sites | genuinely escapes; enforced by a checker *(§10.6)* |
+| Pre-deploy verification | `node --check` only | **five checkers**, auditing behaviour as well as names *(§10.7)* |
+| Approval history | different shape on every surface | one format across 5 emails, 2 review pages, 2 certificates, 2 apps *(§10.9)* |
+| Data retention & backup | nothing ever deleted; no independent backup | retention sweep (ships **off**) + fail-loud weekly backup *(§10.4)* |
 
 ---
 
@@ -460,6 +470,10 @@ one line in `getCombinedStatusBadge` lumping `pending` with empty; one-line fix.
 - **Technical:** `renderRequestDetails` builds per-file Drive links. *(This is also the helper
   that triggered the blank-page bug, see §9.6.)*
 - **V1→V2:** V1 showed plain filenames; V2 shows working View links.
+- 🔴 **Superseded by §10.2, and this version was insecure.** These were **raw Drive links to files
+  that V1 had published to anyone on the internet**. Making them clickable did not create that
+  problem, but it did put the public URL on screen. The sharing was removed and the links replaced
+  by authorization-checked endpoints on 2026-08-11; the current behaviour is in §10.8.
 
 ### 9.4 Reliable reviewer documents + Certificate supporting-docs list
 - **Layman:** Reviewers were sometimes shown "No documents attached" for internal requests;
@@ -513,6 +527,228 @@ one line in `getCombinedStatusBadge` lumping `pending` with empty; one-line fix.
 
 ---
 
+## 10. Wave 3: Hardening, Integrity & the Live Test Passes
+
+> **What this section is.** §§1–9 took the system from V1 to a working, documented V2. Wave 3
+> (2026-08-11 → 2026-08-14) is different in character: it is what happened once the system was
+> **read adversarially** and then **driven end to end by a real reviewer**. Nearly every item here
+> is a defect that was already live in V1 and had simply never been noticed, because **none of them
+> threw an error**. They returned plausible wrong answers.
+>
+> That is the single theme of this wave, and the most useful thing to take from it: **the dangerous
+> bugs in this system were never crashes. They were things that looked like they worked.**
+
+### 10.1 🔒 The callable-surface sweep: 178 public functions → 82
+
+- **Layman:** In Google Apps Script, **every** backend function is callable from any logged-in
+  employee's browser console, whether or not the app puts a button on screen. The system was
+  written as if the on-screen buttons were the only way in. They were not.
+- **Technical:** 178 of 229 top-level functions were reachable via `google.script.run`. Among them:
+  `getSystemSecret` (returned the HMAC signing key as a string to any domain caller),
+  `getApplicationData` (full PII record for any sequential, therefore guessable, session ID), 16
+  unguarded `admin*` config mutators, and two unauthenticated ISM workflow mutators. The fix is the
+  **trailing-underscore convention**: in Apps Script a name ending in `_` is unreachable from the
+  browser. Functions that legitimately serve the frontend keep a bare name **and guard their own
+  body**. After the sweep: **82 public, none unguarded.**
+- **V1→V2:** V1's threat model was "the page gate is the gate." V2 treats **every function as its
+  own front door**.
+- **🔴 The lesson worth keeping (F-05):** the security doc had recorded the `getApplicationData`
+  leak as fixed. What had actually been fixed was `apiGetApplicationData`, the **wrapper**. The
+  primitive stayed public and unguarded. **A finding is not closed until the primitive is closed.**
+
+### 10.2 🔒 Uploaded documents were public to the entire internet
+
+- **Layman:** Every NDA, DPA, DSA, Confidentiality Undertaking and Endorsement Letter uploaded to
+  the system was published so that **anyone on the internet holding the link** could read it, and
+  the raw link was printed directly into the request page, the PIA summary and the approver's
+  review form. One forwarded screenshot leaked a signed contract publicly.
+- **Technical:** `uploadProxy_` ended with `file.setSharing(ANYONE_WITH_LINK, …)`. Removed;
+  `DriveApp.createFile()` already leaves a file owner-only. Reading is now served by two endpoints
+  per project behind identical gates (extracted into one shared `authorizeDcsFileAccess_` so they
+  cannot drift), including an **anti-confused-deputy check**: the requested file ID must actually
+  belong to that request. *Owning a request is not owning a file*, without that check a caller could
+  pass the ownership gate on their own request and then hand in any Drive ID in the script owner's
+  Drive.
+- **V1→V2:** V1 published every legal document publicly. V2 keeps them owner-only, and shares one
+  file with **the company only**, at the moment an authorised person opens it.
+
+### 10.3 🗒 The approval workflow became append-only
+
+- **Layman:** When a request was returned and resubmitted, the system **deleted** every prior
+  approval row and started over, keeping a photocopy of them in a separate tab. If the photocopy
+  failed, the round was gone with no signal. For a Privacy Impact Assessment, that is a compliance
+  gap: there was no reliable answer to "what exactly did the Department Head approve last time?"
+- **Technical:** The workflow sheets gained `RoundNumber` and `FlaggedFields` (appended at the end,
+  so no existing index shifted). A resubmit now **appends round N+1** and earlier rounds stay
+  untouched. `rowMatches_(row, cols, sessionId, round)` makes the critical distinction explicit at
+  every call site: pass a round for **routing** reads ("who acts next?"), pass `null` for
+  **history and authorisation** reads ("what happened?"). The old delete existed only because the
+  sheets had no round column, so a scan could not tell a live Pending row from an abandoned one.
+  `Revision_History` and its 256 lines of stitching logic are retired. Separately,
+  `Application_Snapshots` preserves the applicant's **answers** per round, since the `Applications`
+  row is still overwritten in place.
+- **V1→V2:** V1 destroyed approval history on every resubmit. V2 never deletes it.
+
+### 10.4 The 2026-08-12 batch: error contract, caching, retention, backup
+
+Seven items from a cross-repo review, each of which set a convention later code must respect.
+
+- **One error shape, `{ok, code, message, ref}`.** 110 catch blocks were returning Google's raw
+  exception, which quotes the spreadsheet ID and Drive folder IDs. Users now get a plain sentence
+  plus a short reference code; the real exception goes to the execution log under that code.
+  **🔴 The lesson (F-06):** the first sweep anchored on the pattern `error: e.message` and reported
+  89 sites closed. 21 leaks shaped `error: 'Loading failed: ' + e.message` slipped through, and
+  they were the highest-traffic ones. **Re-grep with a second, differently-shaped pattern before
+  writing "closed" in a findings doc.**
+- **A sheet read cache**, off by default and only ever wrapped around read-only paths, so
+  write-then-stale-read is structurally impossible rather than a thing someone has to remember.
+- **Retention and purge**, shipped deliberately **inert**: two separate switches must both be
+  thrown before a single row is deleted, and the config fails safe in every direction.
+- **A weekly database backup**, deliberately **fail-loud**: it rethrows after logging, the opposite
+  of the retention sweep. A backup job that fails silently is discovered on the day you need it.
+- **Formula-injection guard** on the Admin export, the only artifact in the system a human opens in
+  the Sheets UI, where `=IMPORTXML(...)` stops being an inert string and runs as the admin.
+- **An aging report** ("where do requests get stuck"), and one canonical design-token file replacing
+  six drifting copies, two of which were rendering the approver's decision page in the wrong navy.
+
+### 10.5 🚩 One header list per sheet, and it now checks itself
+
+- **Layman:** Each sheet had its column order written down in **two** places that nothing kept in
+  agreement. When they drifted, the system read the neighbouring column and reported the result
+  without complaint.
+- **Technical:** `PIA_SCHEMA` is now the single ordered header list per sheet; indices are
+  **derived** from it via `colsOf_()`, never hand-numbered. `assertSheetSchema_` compares the live
+  header row on first access and **throws** on mismatch. `healSheetHeaders_` repairs an existing
+  database once, automatically, and is itself derived from `PIA_SCHEMA` rather than hand-listed.
+- **Seven defects were found by doing this**, four of them user-visible: Admin's Flags tab always
+  read **zero**; agency metadata was invisible in Admin depending on which app created the sheet
+  first; every DCS revision silently **dropped the superseded-document trail** and reset the
+  revision count; and delegated decisions wrote under a blank header. **Not one of them threw.**
+- **🔴 The lesson, learned twice in one session:** both the repair function and its regression test
+  shipped **wrong**, in the same direction. Each was written against what the schema *said* rather
+  than what the live database *held*, and each failed quietly. The test printed "19 passed, 0
+  failed" against a database missing 11 header cells. **Before trusting a schema migration, dump
+  the live header rows and diff them.** Row 1 of every sheet is enough and carries no personal data.
+
+### 10.6 🐞 The escaper that never escaped anything
+
+- **Layman:** The function responsible for making user-typed text safe to display had been written
+  so that it did **nothing**. It shipped that way for the app's entire deployed life.
+- **Technical:** DCS's `escapeHtml` performed identity replacements (`.replace(/&/g,'&')`,
+  `.replace(/</g,'<')`, …). Only the apostrophe was ever escaped. That function was the sole XSS
+  defence for **71** `innerHTML` interpolation sites, approver comments included. It is valid
+  JavaScript with a correct-looking shape, so it passed `node --check` and every human review.
+- **V1→V2:** V1 had no HTML escaping in practice. V2 has real escaping, verified by a checker that
+  asserts every escaper in all six files actually escapes.
+- **🔴 The generalizable lesson, and the reason this wave exists:** **a function that looks like its
+  job description proves nothing.** Name-based review cannot catch this class of bug.
+
+### 10.7 🧰 The pre-deploy ritual grew to five checkers
+
+`node docs/tools/surface.js && calls.js && escapers.js && shared.js && serve.js`
+
+They split cleanly in two, **and the split is the point**. `surface.js` and `calls.js` audit what
+the code is **named**. `escapers.js`, `shared.js` and `serve.js` audit what the code **does** when
+it runs or is served. **Every outage this project has had was caught by the second kind and missed
+by the first.**
+
+- `calls.js` exists because privatizing a function means renaming every caller, and one was missed:
+  `generateAuthToken_` kept calling `getSystemSecret()` after the definition became
+  `getSystemSecret_()`. That call signs **every approver review link**, so the deploy would have
+  broken the entire approval workflow. It survived `node --check` (a call to a missing function is
+  syntactically perfect), `surface.js`, and three review passes.
+- `serve.js` exists because Apps Script **truncated a served line** at the double slash inside an
+  `xmlns` attribute, leaving an unterminated string that blanked the entire page. All four other
+  checkers passed on that file.
+
+> 🔴 **The meta-lesson of this whole wave, and it recurred three times in one day: an undeployed
+> batch is an untested batch.** The `xmlns` lines were written, passed every offline check, sat in
+> git for a day, and failed the instant they were first served. **Deploy small and deploy often; a
+> commit that has never been served has not been tested in any meaningful sense.**
+
+### 10.8 The second live test pass (feedback batch 2)
+
+The first time a real reviewer drove the system end to end. Most findings were presentation
+defects; two were genuine workflow failures.
+
+- **🐞 Closed rounds displayed fake "Pending" approvers.** After a Return, approvers further up the
+  ladder who were **never reached** still rendered as though actively reviewing. Root cause was a
+  documented contract that the code did not honour: the comment said "current round", the flag was
+  global. Now enforced in three places that must stay in agreement.
+- **🐞 Two ISM reviewers could disagree on the routing destination and the last one silently won.**
+  The winner is unchanged, since that is an ISM policy call and not a bug to fix unilaterally, but
+  a disagreement is now written to `Risk_Audit` so it is visible at all.
+- **Documents open in the Google Drive viewer.** The in-page preview was abandoned after being
+  proven impossible rather than merely difficult: Chrome refuses to render `blob:` document bytes
+  inside Apps Script's sandboxed frame, in an `<iframe>` **and** in an `<object>`. Both were tried
+  on the deployed app.
+- **🐞 `[object Object]` shown as a filename** when restoring a returned agency request.
+- **Certificates carry one approval record** instead of the same information twice in two shapes.
+
+### 10.9 The third live test pass (feedback batch 3) and the delegation reversal
+
+- **⛔ Approver delegation was deleted, two days after being built.** Built in §10.4, removed here.
+  The judgment: deciding who covers an absent approver is **not an admin's call**. If an approver
+  is unreachable, file a new request naming an available one.
+  - **The write path is gone entirely**, so no delegation can be created by any path.
+  - **The read path is deliberately kept and inert.** `canActAs_` **is** the identity guard on all
+    three decision mutators, and with a permanently empty table it collapses to a plain identity
+    check, exactly the pre-delegation behaviour. Rewriting the system's most security-sensitive
+    predicate to delete five unused helpers is a bad trade. ⛔ Do not "finish the job."
+  - **⚠️ One accepted gap:** heads are named by the applicant, so an absent head can be routed
+    around. **ISM reviewers cannot be**, they come from `InfoSec_Email_Config`, so a new request
+    reaches the same two people, and deactivating one does not rescue an already-Pending row.
+    A request stuck on an absent ISM reviewer waits for them.
+- **Comment minimums lowered to 30**, from 50 and 100. Reviewers were padding text to clear 100,
+  which is worse than a short honest comment. 🚩 **Changing the constants would not have been
+  enough on its own:** four of the five 50-sites and one 100-site had the number **hardcoded as a
+  literal**, so the on-screen hint and the actual gate could silently disagree. Every site now
+  reads its constant. The two limits stay separate so ISM can raise the Return/Deny bar alone.
+- **Approval history reordered** so the actionable part comes first: identity and decision, then
+  flagged items, then the comment, and the **date last** rather than second. This is now a
+  **five-way contract** across the PIA server builder, both apps' timelines, the Admin certificate
+  and the Admin audit table.
+- **🐞 A required field was not marked required.** The stakeholder Name field in PIA Section 3 had
+  no asterisk while the field next to it read "Email (Optional)". Both apps were audited; a shared
+  `reqMark()` helper now exists in each, so the asterisk is never hand-pasted again.
+
+### 10.10 Two of the reported "bugs" were false positives, and that mattered
+
+Not everything reported was real, and checking first was the difference between a fix and a
+regression. Two batch-3 items were disproven **using the reporter's own screenshots**: the document
+chips were already one per row (the complaint was about ragged widths, a different fix), and the
+"50 vs 100 discrepancy" was two genuinely different thresholds doing their jobs, not a drift bug.
+
+**V1→V2 on process, not code:** V1 had no verification story. V2's rule is that a claim (from a
+tester, a reviewer, or an earlier session) is checked against the actual code before anything is
+changed, and a false positive is reported back as such.
+
+### 10.11 📋 Final pre-deploy audit (2026-08-14)
+
+Run before the Wave 3 deploy, over and above the five checkers. All passed:
+
+| Checked | Result |
+|---|---|
+| Five checkers, `node --check` on 3 backends, all frontend script blocks | green |
+| The approver page's emitted script, **rendered** rather than eyeballed | parses; no template-literal corruption |
+| 128 derived column indices | all resolve, no load-time throw |
+| Cross-app headers (`Risk_Audit`, `Data_Collection`) | identical between DCS and PIA |
+| Document-sharing invariants | no `ANYONE_WITH_LINK`; all 5 elevation sites are the documented ones |
+| Every inline event handler across 4 surfaces | all 113 resolve |
+| Deleting the now-unused `Delegations` tab | proven it **cannot** break approvals (the guard fails safe) |
+
+Neither Wave 3 commit changed the schema, any sheet name, or any manifest, so the deploy needs
+**no migration, no header repair and no re-authorisation**. The three apps are deployed together
+for consistency of the shared history format, not because a partial deploy would corrupt anything.
+
+**Known and still open:** the Megaworld logo is hotlinked from Wikimedia in seven places, including
+every workflow email. It predates V2 and is the likely source of a console error seen in testing. A
+wiki that anyone can edit hosting corporate branding is not a good long-term dependency; the fix is
+an inline image for the pages and an attached inline image for the emails.
+
+---
+
 *Prepared as context for the official documentation session. §§1–8 reflect the first V2
-finalization pass over the previous intern's V1 build; §9 captures the later Wave 2 + security +
-manual-consolidation work.*
+finalization pass over the previous intern's V1 build; §9 captures the Wave 2 + security +
+manual-consolidation work; §10 captures Wave 3, the adversarial-read hardening and the two live
+test passes that followed it.*

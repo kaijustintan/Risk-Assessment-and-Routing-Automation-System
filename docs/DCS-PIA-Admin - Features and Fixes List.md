@@ -1,7 +1,9 @@
 # DCS / PIA / Admin (RARS): Features & Fixes List
 
 **Scope:** DCS + PIA + Admin only (COC and the campaigns excluded).
-**Total: 94 items** in feature format, covering June 8 to July 17, 2026.
+**Total: 118 items** in feature format, covering June 8 to August 14, 2026.
+(94 items to July 17, plus **24 items** from the August 11 to 14 hardening and live-test waves,
+see the final section.)
 Excluded from this list: 13 pure planning/documentation/audit entries, 2 config/deploy incidents, and 2 presentation deliverables (the user-manual flowchart and the TechServe/DCOPS PowerPoint), which do not fit a "how to test" format.
 
 Grounded in the daily logs; several backend items were also cross-checked against the live code.
@@ -491,3 +493,131 @@ Grounded in the daily logs; several backend items were also cross-checked agains
 **Brief Description:** The Section 2 sidebar icon sometimes showed a confusing **"?" instead of a green checkmark** after you moved past it.
 **How it was implemented:** In `Phase 1/index.html`, `renderSidebarTracker` dropped its Section-2-specific "?" branch and the now-dead `hasUnfilledOptionalFields()` helper, so a passed step always renders as done.
 **Where to see / How to test:** Fill Section 2 of the DCS form, advance past it, and confirm the sidebar icon shows a green check every time.
+
+---
+
+## August 11 to August 14 (24 items)
+
+> These are the hardening, data-integrity and live-test waves. Many are **security or correctness
+> fixes to defects that never produced an error message**, so the "how to test" for several of them
+> is "confirm the wrong behaviour no longer happens" rather than a new button to click.
+
+**Feature:** Approval history is never deleted (append-only rounds)
+**Brief Description:** Resubmitting a returned request used to **delete every previous approval row**, keeping only a best-effort copy in a separate tab. If that copy failed, the round vanished silently. Now nothing is ever deleted.
+**How it was implemented:** `RoundNumber` and `FlaggedFields` were appended to all three workflow sheets. A resubmit appends round N+1; `rowMatches_(row, cols, sessionId, round)` distinguishes routing reads (scoped to the current round) from history reads (all rounds). `Revision_History` and ~256 lines of stitching code were retired. Regression test: `testAppendOnlyRounds()`.
+**Where to see / How to test:** Return a request, resubmit it, then open the approval history. Round 1's decisions, comments and flags must all still be there, under a "Round 1" heading, alongside the new "Round 2 (Current)".
+
+**Feature:** ⚠️ Supersedes the earlier "Revision_History sheet" item above
+**Brief Description:** The Revision_History feature listed in the July section was **retired** on 2026-08-11 and replaced by the append-only round model.
+**How it was implemented:** `writeRevisionHistorySnapshot_`, `getRevisionHistory_`, `REVISION_HISTORY_COLS` and DCS's mirrored reader were all deleted. The tab may still exist in the spreadsheet; nothing reads it.
+**Where to see / How to test:** Nothing to test. Recorded so the earlier entry is not mistaken for current behaviour.
+
+**Feature:** 🔒 Uploaded legal documents are no longer public to the internet
+**Brief Description:** Every NDA, DPA, DSA, Confidentiality Undertaking and Endorsement Letter uploaded to the system was shared so that **anyone on the internet with the link** could open it, and the raw link was printed straight into the request page and the approver's review form.
+**How it was implemented:** Removed the `setSharing(ANYONE_WITH_LINK, …)` call at the end of `uploadProxy_`; `DriveApp.createFile()` already leaves a file owner-only. Reads go through authorization-checked endpoints that also verify the requested file actually belongs to that request.
+**Where to see / How to test:** Upload a document, copy its Drive URL, and open it in a browser signed in to a **non-company** account. It must be denied.
+
+**Feature:** Documents open in the Google Drive viewer
+**Brief Description:** "View" on a document now opens it in the **Drive viewer in a new tab**, instead of downloading it or trying to preview it in the page.
+**How it was implemented:** New `apiGetDcsFileViewUrl` (one copy in DCS, one in PIA) runs the same authorization gates as the download endpoint, then elevates that **one** file to company-wide-with-link and returns its Drive URL. The click opens a placeholder tab synchronously to preserve the user gesture. An in-page preview was attempted and abandoned: Chrome refuses to render the bytes inside the Apps Script sandbox in both an `<iframe>` and an `<object>`.
+**Where to see / How to test:** Open a submitted request's details, click **View** on any document: a new tab opens the file in Drive. Block pop-ups and click again: it downloads instead.
+
+**Feature:** 🐞 Closed rounds no longer show approvers as "Pending"
+**Brief Description:** After a Return, approvers further up the ladder who were **never reached** still displayed as though they were actively reviewing.
+**How it was implemented:** `collectAllRoundDecisions_` (PIA), `getApprovalHistoryRounds_` (DCS) and `approvalTable` (Admin) now apply "include pending" to the **current round only**. A Pending row in a closed round is an abandoned ladder slot and is dropped.
+**Where to see / How to test:** Have the Immediate Head return a request before the Dept Head acts, then resubmit. In the Round 1 history the Dept Head must **not** appear as "Pending".
+
+**Feature:** One approval-history format everywhere
+**Brief Description:** Approval history looked different on every screen and email. It now reads identically across all of them.
+**How it was implemented:** Five independent builders were brought into step (they cannot share code, as the three apps are separate GAS projects): the PIA server builder covering five emails, both review pages and the PIA certificate; both apps' timelines; the Admin certificate; and the Admin audit table.
+**Where to see / How to test:** Compare the same request's history in an approver email, on the DCS request page, in the PIA timeline and on the certificate. Entry order everywhere: **Name (Role) | Decision**, then Flagged, then Comments, then the date.
+
+**Feature:** The date moved to the end of each history entry
+**Brief Description:** Each entry used to show the date second, pushing the flagged items and the comment (the parts you must act on) below a quick scan.
+**How it was implemented:** Entry order changed to Name/Decision, Flagged, Comments, Date across all five builders; spacing and line height widened at the same time, since cramped spacing was a reported defect.
+**Where to see / How to test:** Open any approval history: the timestamp is the last line of each entry, in small grey text.
+
+**Feature:** Current round is marked with a green "CURRENT" pill
+**Brief Description:** It was not obvious which round was the live one, especially in emails after a resubmit.
+**How it was implemented:** The current round header renders as a green pill; closed rounds keep a muted underlined label. When the current round has nothing in it yet, a synthetic "(Current) ... In review" block is appended so an email never ends on a historical round.
+**Where to see / How to test:** Resubmit a returned request and open the approver email: the newest round must carry a green "Round 2 (Current)" pill.
+
+**Feature:** The certificate carries one approval record instead of two
+**Brief Description:** The Certificate of Approval printed the same approver information twice, in two different shapes (two summary tables plus a history).
+**How it was implemented:** Both certificate builders dropped the two per-stage summary tables in favour of the single round-grouped history. Admin gained its own port, `buildCertApprovalHistoryHtml_`, which reads **all** rounds (a certificate is history, not routing). Per-reviewer routing is suppressed; the one authoritative destination prints in the Implementation Routing block.
+**Where to see / How to test:** Fully approve a request and open the certificate PDF: exactly one approval history section, no duplicate tables.
+
+**Feature:** 🐞 Two ISM reviewers disagreeing on routing is now recorded
+**Brief Description:** Each ISM reviewer picks a routing destination (DCOPS / TechServe / Both). If they disagreed, the last one to decide silently won and nobody could tell.
+**How it was implemented:** The winner is deliberately unchanged, since that is an ISM policy decision. The finalize path now writes a `Routing Disagreement` row to `Risk_Audit` when the reviewers' picks differ.
+**Where to see / How to test:** Have ISM reviewer 1 pick DCOPS and reviewer 2 pick TechServe. Check `Risk_Audit` for a `Routing Disagreement` row.
+
+**Feature:** Flags can only be sent with a Return
+**Brief Description:** An approver could flag fields and then **Approve**. The flags were stored but never shown to the requestor, and the request advanced anyway, so a requested correction silently never happened. Found in live data.
+**How it was implemented:** All three decision functions refuse Approve (and ISM Escalate) while any flag is set; both review forms disable those buttons client-side. Return still requires at least one flag. Deny with flags stays allowed, since a denial is terminal.
+**Where to see / How to test:** On a review form, set a flag: **Approve** and **Escalate** must become disabled. Remove the flag and they re-enable.
+
+**Feature:** Comment minimum lowered to 30 characters
+**Brief Description:** The minimum decision comment was **50** characters for ISM remarks and **100** for a Return or Deny reason. Reviewers were padding text to clear 100, which is worse than a short honest comment. Both are now **30**.
+**How it was implemented:** `COMMENT_MIN_CHARS_STANDARD` and `COMMENT_MIN_CHARS_DECISION` both set to 30. Critically, five of the nine enforcement sites had the number **hardcoded**, so the on-screen hint and the real gate could disagree; every site now reads its constant. The dead `validateComment_` helper was deleted. The two constants stay separate so ISM can raise the Return/Deny bar alone.
+**Where to see / How to test:** On a review form, type a 30-character comment and submit: it must be accepted, and the character counter must turn green at exactly 30.
+
+**Feature:** 🐞 Required stakeholder Name field had no required marker
+**Brief Description:** In PIA Section 3, the stakeholder **Name** field was mandatory but carried no asterisk, while the field beside it read "Email (Optional)". People only discovered it was required after pressing Next.
+**How it was implemented:** Added a `reqMark()` helper to `Phase 2/pia_index.html` (DCS already had one), applied it to the Name label along with `aria-required`. PIA previously had 21 hand-pasted asterisk spans and no helper, which is how this one was missed. Every other required field in both apps was audited.
+**Where to see / How to test:** Open PIA Section 3 and add a stakeholder: the Name label shows a red asterisk.
+
+**Feature:** 🐞 "[object Object]" shown instead of a filename
+**Brief Description:** When editing a returned **agency** request, the endorsement letter's filename displayed as `[object Object]`.
+**How it was implemented:** In `Phase 1/index.html`, the agency metadata was assigned wholesale on restore, so `endorsementLetter` stayed an `{id, name}` object where a filename string was expected. Normalized on restore, with a second normalization for older drafts.
+**Where to see / How to test:** Return an agency request, click Edit and Resubmit, and confirm the endorsement letter shows its real filename.
+
+**Feature:** Supporting documents list one per row with aligned buttons
+**Brief Description:** With five or more documents the list read as a jumble, and each button sized to its own label so the flag icons scattered across five different positions.
+**How it was implemented:** The document column stretches each row to a fixed maximum width with the View button filling it, lining the flag icons into a single column. Multiple supplementary filenames now list one per line instead of comma-joined.
+**Where to see / How to test:** Submit a request with several documents and open the approver review page: one document per row, all View buttons the same width, flag icons in a straight vertical line.
+
+**Feature:** Admin audit table gains a Flagged column and round grouping
+**Brief Description:** The Admin audit modal, the screen ISM actually audits from, **never showed flagged items at all**, which is the most actionable part of a Return.
+**How it was implemented:** `approvalTable` in `Admin/adminView.html` gained a Flagged column (parsed defensively from each row's `FlaggedFields`), reordered its columns to match the standard entry order, and now groups rows by round with the same green current-round pill. It deliberately stays a table, since that modal is for scanning many rows.
+**Where to see / How to test:** In Admin, open a returned request's audit modal: a Flagged column appears, populated for the returning approver, and rows are grouped under round headings.
+
+**Feature:** ⛔ Approver delegation removed
+**Brief Description:** The out-of-office cover feature, which let ISM appoint a stand-in approver, was **built on August 12 and deleted on August 14**. Choosing who covers an absent approver was judged to sit outside an admin's scope.
+**How it was implemented:** The entire write path was deleted: three Admin API functions, a sheet helper, the header constant, and the Settings card with its three client functions. PIA's read-side helpers are deliberately **kept and inert**, because `canActAs_` is the identity guard on all three decision mutators; with a permanently empty sheet it collapses to a plain identity check.
+**Where to see / How to test:** Admin → Settings has no Delegation card. If an approver is away: file a new request naming an available one. ⚠️ This does **not** work for an absent **ISM reviewer**, who comes from configuration rather than the applicant, so a new request reaches the same person. That gap is known and accepted.
+
+**Feature:** A DCS-only Return now explains that the PIA must still be resubmitted
+**Brief Description:** When only DCS fields were flagged, the "Revision Ready" screen left applicants thinking they had to redo the whole assessment.
+**How it was implemented:** The screen now states that nothing in the assessment was flagged when no `PIA-` prefixed flag exists. The resubmit itself is still required by design: the approval ladder lives in PIA, and a Return closes the old round, so a new round must exist for anyone to act.
+**Where to see / How to test:** Return a request flagging only DCS fields, then open it: the explanation appears.
+
+**Feature:** 🔒 Backend functions are no longer callable by any employee
+**Brief Description:** In Apps Script **every** backend function is reachable from any logged-in employee's browser console, regardless of what the interface exposes. 178 of 229 were reachable, including one that returned the system's cryptographic signing key and one that returned every request in the system with all personal data.
+**How it was implemented:** Internal functions were renamed with a trailing underscore, which makes them unreachable from the browser; the ones that legitimately serve the interface keep their name and authorize inside their own body. Result: 82 public, none unguarded. Two mechanical checkers now enforce it.
+**Where to see / How to test:** Not user-visible. Verified by `node docs/tools/surface.js` and `calls.js`.
+
+**Feature:** 🔒 Error messages no longer leak internal identifiers
+**Brief Description:** 110 error paths were handing the user Google's raw error text, which quotes the spreadsheet ID and the Drive folder ID.
+**How it was implemented:** All responses now use one shape carrying a plain message and a short **reference code**; the real exception goes to the execution log under that code. A first sweep reported 89 closed and missed 21 more of a slightly different shape, including every Admin dashboard handler.
+**Where to see / How to test:** Trigger any failure: the message is a plain sentence plus a short reference. Give that reference to a developer to find the real error.
+
+**Feature:** 🐞 The HTML escaper in DCS never escaped anything
+**Brief Description:** The function that makes user-typed text safe to display had been written so that it did **nothing**, and had shipped that way for the app's entire deployed life. It was the only such protection for 71 places where text is injected into the page, approver comments included.
+**How it was implemented:** Four of its five replacements mapped each character to itself. Rewritten correctly, and a new checker (`escapers.js`) now verifies every escaper in all six files and fails the build if one regresses.
+**Where to see / How to test:** Submit a request with `<b>test</b>` in a text field and view it: it must display as literal text, not bold.
+
+**Feature:** 🐞 Two apps went blank because of a hidden serve-time truncation
+**Brief Description:** The DCS request form and the Admin dashboard both failed to render at all after a deploy, despite the files being valid.
+**How it was implemented:** An `xmlns` attribute inside a script block was truncated by Apps Script at the double slash in its URL when serving the page, leaving an unterminated string. The attribute is redundant for inline SVG, so it was deleted. A fifth checker (`serve.js`) now fails the build on it.
+**Where to see / How to test:** Open the DCS form and the Admin dashboard: both render. There is no way to see this except by serving the page, which is the point.
+
+**Feature:** The spreadsheet's column layout now checks itself
+**Brief Description:** Each sheet's column order was written down in **two** places that nothing kept in agreement. When they drifted, the system read the neighbouring column and reported the result without complaint. Six live defects came from this, including Admin's Flags tab permanently reading zero.
+**How it was implemented:** One ordered header list per sheet (`PIA_SCHEMA`), with column positions **derived** from it. A sheet whose live headers disagree now fails loudly on first access. Existing databases repair their own headers once, automatically, on first load after deploy.
+**Where to see / How to test:** In Admin, open the Flags tab on a request with flags: the count and list are populated. (They previously always showed zero.)
+
+**Feature:** Data retention sweep and weekly database backup
+**Brief Description:** Nothing in the system had ever deleted personal data, and the whole system lived in one spreadsheet with no independent backup.
+**How it was implemented:** A retention sweep that removes closed requests older than a set period, shipped **inert**: two separate switches must both be thrown before one row is deleted, and the configuration fails safe in every direction. Separately, a weekly backup copies the spreadsheet and keeps the newest 8; it is deliberately **fail-loud**, rethrowing after logging, because a backup that fails silently is discovered on the day you need it.
+**Where to see / How to test:** Admin → Settings shows retention as disabled with dry-run on. Use the dry-run button to preview what would be removed; it can never delete regardless of configuration. 🚩 **A real purge cannot be undone. Review the preview with ISM first.**
