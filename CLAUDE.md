@@ -214,14 +214,18 @@ screen, the PIA summary and the approver review form. One forwarded screenshot l
 contract publicly. `DriveApp.createFile()` leaves a file owner-only, so the fix is that the function
 now sets **no sharing at all**.
 
-Read access is served only by **`apiDownloadDcsFile`** (one copy per project, different signatures:
+Read access is served by two endpoints per project, both behind the SAME gates (extracted into
+**`authorizeDcsFileAccess_`** per project on 2026-08-13 so they can never drift):
+**`apiDownloadDcsFile`** streams bytes (8 MB cap: base64 inflates ~33%, and `google.script.run`
+payloads get unreliable past ~10 MB), and **`apiGetDcsFileViewUrl`** (B1, 2026-08-13) lazily
+elevates the one requested file to `DOMAIN_WITH_LINK` and returns its Drive viewer URL, because
+in-page preview of blob: bytes is impossible in the GAS sandbox (see §8c). Signatures differ:
 Phase 1 takes `(reqId, fileId)` and gates on request ownership; PIA takes `(sessionId, fileId)` and
-reuses `isAuthorizedForApplication_`). Both then apply the **anti-confused-deputy check**: the
+reuses `isAuthorizedForApplication_`. Both apply the **anti-confused-deputy check**: the
 requested `fileId` must actually appear in that request's `FILE_ID` JSON / `supersededFiles` /
 agency `endorsementLetter`. *Owning a request is not owning a file*, without that check, a caller
 who passes the ownership gate on their own request could hand in any Drive ID in the script owner's
-Drive and have it served back under the owner's full `drive` scope. Both cap the response at 8 MB
-(base64 inflates ~33%, and `google.script.run` payloads get unreliable past ~10 MB).
+Drive and have it served back under the owner's full `drive` scope.
 
 **The ONE deliberate exception:** `getAndShareDCSFiles_` and `getDCSSupersededFiles_` in
 `pia_code.js` still elevate to `DOMAIN_WITH_LINK`, never `ANYONE_WITH_LINK`, because their only
@@ -361,10 +365,15 @@ ask before inventing one, consistency with the navy system matters to the superv
   browser; line numbers drift, anchor on the function names). No Google Docs template, no
   `DriveApp.makeCopy`, no `DocumentApp`, no `{{token}}` replacement, data is interpolated inline
   as `${escapeHtml(...)}` across the ~200-line cert body. ⚠️ **The Admin copy
-  (`buildCertificateHtml_`) is a genuinely different layout** (3 columns not 4, no comments, no
-  history section, different agency fields), not a paste of PIA's; both gatherers are round-scoped
-  via `keepCurrentRoundRows_` since 2026-08-13 (they used to flatten every round's Approved rows
-  into one roster). **Consequences to respect when editing it:**
+  (`buildCertificateHtml_`) is still a separate builder with different agency fields**, not a
+  paste of PIA's, but since C8 (2026-08-13, feedback batch 2) **both certificates carry ONE
+  approver record: the round-grouped "Complete Approval History"** (PIA via
+  `buildUnifiedHistoryHtml_` with `{hideRouting:true}`; Admin via its port
+  `buildCertApprovalHistoryHtml_`, which reads ALL rounds, decided rows only, and is
+  deliberately NOT `keepCurrentRoundRows_`-scoped: a cert is history, not routing). The two
+  per-stage summary tables that duplicated it are DELETED from both; do not re-add them.
+  Per-reviewer routing is suppressed on the cert; the one authoritative destination prints in
+  the Implementation Routing block. **Consequences to respect when editing it:**
   (a) the layout IS the source, so redesigns are normal code edits (good: diffable, no template-ID SPOF);
   (b) the converter is Google's **legacy HTML→PDF engine**, table-based HTML + inline CSS only. No
   flexbox/grid, no page-break control, no headers/footers/page numbers. Don't "modernize" the cert CSS;
@@ -901,20 +910,26 @@ stored on first run), keeps the newest **8**, and trashes older ones (30-day rec
   to 4/9 (PIA was 6/12, Admin 10/14), PIA's hardcoded `--danger-text: #dc2626` back to the
   passthrough. ⚠️ The ~60 inline `#1a3a5c` hexes in email/certificate HTML were left alone on
   purpose, emails can't use CSS variables, and the cert goes through the legacy HTML→PDF engine.
-- **Documents PREVIEW inline instead of force-downloading.** `downloadDcsFile` → **`viewDcsFile`**,
-  which hands the bytes to `showFilePreview`, an in-page overlay. PDFs render in an `<iframe>`,
-  images in an `<img>`, everything else (docx/xlsx) shows a "cannot be displayed" notice; a
-  Download button is always present as the escape hatch. The server endpoint keeps the name
-  `apiDownloadDcsFile`, it genuinely returns bytes, only the presentation changed.
-  - ⛔ **Never `window.open(blobUrl)` here.** The apps are served inside Apps Script's sandboxed
-    iframe: popups are blocked and a blob URL minted in that frame is not reliably navigable as a
-    top-level document. Rendering into the *current* document is the only thing that works.
-  - 🚩 **The blob URL is revoked in `closeFilePreview`, not after creation.** The old download-only
-    path could revoke immediately; a preview cannot, because the `<iframe>`/`<img>` reads the URL
-    for as long as it is on screen. Every exit route (X, backdrop, Esc, opening another file)
-    funnels through `closeFilePreview`, miss one and the blob leaks for the life of the page.
-  - The filename goes in via `textContent`, never `innerHTML`: it is user-supplied and the local
-    escape helper differs between the three copies, so `textContent` is the portable safe choice.
+- **🚩 Documents open in the GOOGLE DRIVE VIEWER (B1, 2026-08-13, supersedes the in-page
+  preview).** The in-page preview overlay (`showFilePreview`/`closeFilePreview`) is DELETED from
+  all three copies. In-page rendering of `blob:` bytes is impossible inside Apps Script's
+  sandboxed iframe: Chrome refuses blob: PDFs in an `<iframe>` AND in an `<object>` (both were
+  tried on the deployed app; the `<object>` experiment ran on 2026-08-13 and lost). What exists
+  now:
+  - **`viewDcsFile` calls `apiGetDcsFileViewUrl`** (one copy per project: Phase 1 takes
+    `(reqId, fileId)`, PIA takes `(sessionId, fileId)`), which runs the SAME four gates as the
+    download endpoint via the shared **`authorizeDcsFileAccess_`** (extracted so the two
+    endpoints can never drift), then **lazily elevates that ONE file to `DOMAIN_WITH_LINK`**
+    (never `ANYONE_WITH_LINK`) and returns `https://drive.google.com/file/d/<id>/view`.
+  - **This NARROWS the 2026-08-11 "documents are PRIVATE" rule, it does not revert it.** Files
+    stay owner-only at upload; a file is elevated only when an authorized viewer actually opens
+    it, same level as the certificate's `getAndShareDCSFiles_` precedent. Do not "optimize" by
+    elevating at upload.
+  - **The popup keeps the user gesture**: `viewDcsFile` opens a placeholder `window.open('',
+    '_blank')` SYNCHRONOUSLY inside the click, then steers the Drive URL into it. If the popup
+    is blocked, it falls back to **`downloadDcsFileBytes`** (base64 → Blob → `a[download]`
+    click), which is the sole remaining client of `apiDownloadDcsFile`. A blob URL used for
+    DOWNLOAD works in the sandbox; it was blob NAVIGATION that was blocked.
   - **Three copies** (`Phase 1/index.html`, `Phase 2/pia_index.html`, and `getStyledHtmlWrapper_`
     in `pia_code.js`), edit together. The third sits inside a backtick template literal, so it
     must stay free of backticks and dollar-brace sequences. Verify a change there by *rendering*
@@ -1028,6 +1043,54 @@ carries no personal data.
   pattern keyed on. A capital letter after a dash takes a **colon**, not a comma, or you get a comma
   splice in a user-visible string (`Request submitted, Proceed to Phase 2`).
 - `migration-context/reference-docs/` is an **archive** of snapshots. Do not rewrite it in a sweep.
+
+---
+
+## 8e. Feedback batch 2 (2026-08-13): rounds-display contracts & decisions
+
+> Shipped as one batch after the second manual test pass (PIA-000027 / DCS-000007). Full findings:
+> `docs/Feedback Batch 2 - Findings and Gameplan.md`. The rules below are the ones later edits
+> must not break.
+
+- **🚩 `includePending` applies to the CURRENT round only (B4).** A Pending row in a closed round
+  is an abandoned ladder slot (the approver a round-1 Return never reached), never "awaiting
+  action." Enforced in three places, keep them agreeing: `collectAllRoundDecisions_` (PIA, takes
+  `currentRound` from `getUnifiedHistory_`), `getApprovalHistoryRounds_` (DCS, drops pendings
+  below the max round), and `renderAuditLogs`/`approvalTable` (Admin, filters + groups by round).
+  `getUnifiedHistory_` now returns `{rounds, currentRound}`; when the current round has nothing
+  to show, `buildUnifiedHistoryHtml_` appends a synthetic "(Current) ... In review" block so an
+  email never ends on a bare historical round (B5).
+- **🚩 The history block format is a four-way contract (C3-C7).** `buildUnifiedHistoryHtml_`
+  (PIA server), `renderApprovalTimeline` (pia_index), `renderUnifiedApprovalHistory` + prior-round
+  items (Phase 1 index), and `buildCertApprovalHistoryHtml_` (Admin) must stay in step: round
+  header outranks group sub-headers; flags print BEFORE the comment; the comment carries a
+  literal `Comments:` label in near-black (#111827); the CURRENT round pill is GREEN
+  (`#f0fdf4` bg / `#bbf7d0` border / `#15803d` text, same palette as the retained-file chips);
+  history rounds keep a muted underline. Change one copy → change all four.
+- **DCS `renderUnifiedApprovalHistory` derives the current round as MAX(revisionHistory rounds)**,
+  and prior rounds = everything below it. The old code treated the whole list as "prior" and
+  labelled current as max+1, which double-rendered the current round with a phantom number.
+- **Routing disagreement is LOGGED, not blocked.** Each ISM reviewer records a destination on
+  their own row; the final reviewer's pick routes the request. If reviewers disagreed, the
+  finalize path writes a `Routing Disagreement` row to `Risk_Audit`. Whether to block instead is
+  an open ISM policy call, do not silently change the winner.
+- **Delegation is HIDDEN, not removed (D3).** The Admin settings card has `display:none` and
+  `loadDelegations()` is commented out (both marked D3). The entire backend (resolveDelegate_,
+  canActAs_, recipientFor_, ACTED_BY, adminApi_*Delegation*) is intact; with an empty
+  `Delegations` sheet it degrades to plain identity checks. Removing it for real would re-open
+  the F-02 guard and the token path across two independently-deployed apps; decision recorded as
+  reversible instead.
+- **A DCS-only Return still requires a PIA resubmit, by design (D1).** The ladder lives in PIA;
+  a Return resolves the old round, so a new round must exist for anyone to act. The
+  "Revision Ready" screen now says so when no `PIA-` prefixed flag exists ("Nothing in your
+  assessment was flagged...") instead of letting the applicant think the assessment must be redone.
+- **E1: the five Return/Deny comment checks are mirrored client-side** in the standard review
+  form's submit listener (min 100 / max 4000 / repeated-char / consonant-run). The server checks
+  in `handleEmailAction_` are the rule; the client copy is the courtesy half. Mirror, never move,
+  and keep the two lists identical. (The ISM form already had its min-50 mirror.)
+- **Sheet TAB ORDER is free; sheet NAMES are load-bearing.** All 86 DB lookups are
+  `getSheetByName`; the only positional calls are a debug lister and the export's own new file.
+  Reordering tabs in the spreadsheet is safe; renaming one breaks every lookup.
 
 ---
 

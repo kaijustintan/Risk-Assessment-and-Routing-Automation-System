@@ -375,10 +375,37 @@ The request stalls silently. It is only visible via the aging report.
 
 ---
 
-# Addendum: the F1-F9 fixes (added 2026-08-13)
+# Addendum: the F1-F9 fixes
 
-Verify these after the F-fix waves deploy. They ship in three independent waves, so each block can
-be checked as soon as its wave is live.
+**Deployed 2026-08-13 (second deploy of the day), all three apps at once.** The wave grouping below
+is kept only because it tells you which app each check exercises; everything is live now, so work
+straight down the order in "Run these first".
+
+## What the machine already proved, and what it did not
+
+`testAppendOnlyRounds` passed 12/12 with no `FAILSAFE:` line, and because it runs as your real
+identity (`Session.getActiveUser().getEmail()`) it genuinely reached the new code. Confirmed working:
+the comment tag-strip, `sanitizeFlagsJson_`, and `hasFlags_` correctly **not** blocking a Return.
+
+`testFullSystemFlow` scored 40%, and **all 26 failures are pre-existing, none from this change**:
+24 are the F-02 identity guard rejecting the test's hardcoded `E = 'test-flow@domain.com'` (broken
+since commit `2f886a1`, ~50 commits ago, never adapted), and 2 are reminder assertions that expect
+25 reminders from rows created seconds earlier, which `REMINDER_FIRST_DAYS = 7` makes impossible.
+That test never reaches the new code at all, so it is evidence of nothing here either way.
+
+> 🔴 **The single biggest gap: no automated test ever attempts an Approve while flags are set.**
+> The refusal, which is the entire point of F5, has zero machine coverage. **A1 below is the most
+> important check in this document.**
+
+## Run these first (in this order)
+
+| Order | Check | Why first |
+|---|---|---|
+| 1 | **A1** flags block Approve/Escalate | The headline fix, zero machine coverage |
+| 2 | **B1** PDF preview | This is the experiment. Its result **decides** whether we keep the private-document design or fall back to Drive links |
+| 3 | **A4** return email deep-link | Hits an applicant at their most confused moment |
+| 4 | A5, A3, A2 | Rest of Wave 1 |
+| 5 | B2, C1, C2 | Presentation and the certificate roster |
 
 ## Wave 1 (PIA only)
 
@@ -439,3 +466,137 @@ For anything that fails, capture:
 3. The **reference code** if an error message showed one (`Reference: 7f3a91`), which maps to the
    real exception in the Apps Script Executions log.
 4. A browser console screenshot if a page misbehaved.
+
+---
+
+# Known open items (not defects to find, decisions to make)
+
+These are already understood. Listed so a failed check is not confused with one of them.
+
+| Item | State |
+|---|---|
+| **`InfoSec_Email_Config` test rig** | Four rows still carry the ISM coordinator's address in `Member_Email`, real addresses in an unheadered column 8. Deliberate, so test mail lands in one inbox. **Consequence: the two-person ISM control is not being tested; you are testing one person approving twice. Revert before go-live.** |
+| **Escalation with a blank Division Head** | Creates a Pending row nobody is notified about, pauses the ISM chain, and still reports success. Only visible via the aging report. The fix is making the PIA-1 field required, which is an ISM policy call, not a code decision |
+| **Retention** | Ships inert (Disabled + Dry run). Enabling it is an ISM decision, and carries the RA 10173 storage-limitation question |
+| **`testFullSystemFlow`** | 40%, broken by a hardcoded fake email since `2f886a1`. One line fixes it (`var E = Session.getActiveUser().getEmail();`, matching `testAppendOnlyRounds`) and would restore ~24 assertions **including coverage of the new F5 guard**. Deliberately not done mid-deploy; worth its own small commit |
+| **Duplicate SUPPLEMENTARY uploads** | Confirmed a test artifact, uploaded twice on purpose. No action |
+
+---
+
+# BATCH 2 ADDENDUM (2026-08-13, second feedback pass): checks D1-D10
+
+All three apps must be redeployed (Phase 1, PIA, Admin all changed). Run D1 and D2 first: D1 is
+the new document flow, D2 is the cross-app round fix, and everything else assumes those two hold.
+
+## Run these first (in this order)
+
+| # | Check | Why first |
+|---|---|---|
+| D1 | Drive viewer opens documents | New flow, replaces the failed preview experiment |
+| D2 | No phantom "Pending" in closed rounds | Cross-app; DCS, PIA and Admin must agree |
+| D3 | Resubmit email labels the current round | The third round-labelling complaint |
+
+## D1: View opens the Google Drive viewer
+
+**What changed:** The in-page preview (which could only say "could not be previewed") is gone.
+View now opens the document in the Google Drive viewer in a new tab. The file is shared to the
+Megaworld domain lazily, only at the moment an authorized person views it. Download survives as
+an automatic fallback when the browser blocks the pop-up.
+
+**Why:** Your B1 decision. Chrome refuses blob PDFs inside the GAS sandbox in both an iframe and
+an object tag; the Drive viewer is the only in-browser rendering that works, and it handles DOCX
+too.
+
+**Steps:**
+1. As the requestor, open a request's details in DCS and click **View** on a PDF. Expect: new tab
+   with the Drive viewer showing the PDF. No login wall, no access-request page.
+2. Click View on a **DOCX**. Expect: Drive renders it too (this used to be "cannot be displayed").
+3. From an approver review link (PIA), click a **View ...** document button. Same expectation.
+4. Pop-up blocked case: block pop-ups for the site, click View. Expect: a toast saying it will
+   download instead, and the file downloads. (This is the only remaining download path.)
+5. Security spot-check: signed in as a DIFFERENT account (not the requestor, not an approver),
+   call the endpoint from the console:
+   `google.script.run.withSuccessHandler(console.log).apiGetDcsFileViewUrl('DCS-000007','<fileId>')`
+   Expect: `{ok:false, message:'Document not available.'}` and NO sharing change.
+
+## D2: Closed rounds show no phantom "Pending"
+
+**What changed:** A Pending row in a closed round (the approver a Return never reached) no longer
+renders as "Pending review" inside history. Fixed in the same way in PIA review pages, the
+applicant timeline, the DCS request details, and the Admin audit modal.
+
+**Steps:**
+1. Open PIA-000027 (round 1 ended in a Return; Miss tine 2 was never reached).
+2. Approver review page: Round 1 must show ONLY the Return decision. No "Miss tine 2: Pending".
+3. DCS request details, Approval History card: same. Also confirm the current round number is
+   the real one (before this fix, a returned-not-yet-resubmitted request showed a phantom
+   "Round 2 (Current)" duplicating round 1's rows).
+4. Admin - open the request's Audit Trail: workflow tables now group by round, phantom pendings
+   gone, current round marked with a green pill.
+5. Current round's genuine pendings must STILL show (whoever is actually next in line).
+
+## D3: Resubmit email carries the current round
+
+**Steps:** Return a request, resubmit it, read the "SUBMITTED and is now being reviewed" email.
+Expect: after the historical rounds, a green "ROUND N (CURRENT)" pill with "In review. No
+decisions have been recorded in this round yet." The email must never end on a bare "ROUND 1".
+
+## D4: History block format, everywhere the same
+
+**What changed (C3-C7):** flags print BEFORE the comment; comments carry a literal "Comments:"
+label in near-black; the current round pill is green in app, email and certificate alike;
+round headers outrank the group sub-headers.
+
+**Steps:** Compare one request's history in four places: an email, the approver review page, the
+DCS request details, and the Admin audit modal. Same order, same labels, same green pill.
+
+## D5: Certificate has ONE approver section
+
+**What changed (C8):** both certificates (PIA's emailed original and Admin's re-issue/download)
+dropped the two summary tables and keep only the round-grouped Complete Approval History. Admin's
+certificate gains the history section it never had. Per-approver "Routing:" lines are gone from
+the cert; one "Routed to: X" line remains at the bottom.
+
+**Steps:**
+1. Fully approve a request. Open the DCOPS/TechServe certificate email + PDF attachment. Expect:
+   Application Brief, documents, then Complete Approval History (rounds), then Implementation
+   Routing. No "Department / Division Approvals" table, no repeated per-row routing.
+2. Admin - Email Routing - download the same request's certificate. Expect: the same history
+   section (this is new; Admin's cert used to list only Approved rows in two tables).
+
+## D6: [object Object] is gone
+
+**Steps:** On an agency/OJT request with an endorsement letter, get it returned, then start the
+revision. The retained-attachments list must show the real filename, never `[object Object]`.
+(Legacy drafts saved before this fix are also normalized on restore.)
+
+## D7: Flagged-file message format
+
+**Steps:** Return a request flagging the NDA with comment "MEMA E". In revision mode the flagged
+upload card must read, on three lines: **Approver flagged this file** / Comment: MEMA E /
+Please re-upload a corrected version.
+
+## D8: Return/Deny reason fails fast (E1)
+
+**Steps:** On an approver review link, click Return, confirm with a 10-character reason. Expect:
+the error toast appears INSTANTLY, no loading spinner, no page reload. The 100-minimum, the
+4000-maximum, repeated characters ("aaaaaaa...") and consonant-run gibberish all refuse
+client-side. Server still enforces the same rules (the client is a mirror, not the gate).
+
+## D9: Delegation is hidden
+
+**Steps:** Admin - Settings. The "Approver Delegation" card must be absent. Nothing else in
+Settings changed. (The feature is hidden, not removed; the decision is recorded in CLAUDE.md 8e.)
+
+## D10: Supporting documents stack one per row
+
+**Steps:** Open the approver review page of a request with 5+ documents. The View buttons must
+list vertically, one per row, instead of wrapping into a jumble.
+
+## Batch-2 known open items
+
+| Item | State |
+|---|---|
+| **Routing disagreement** | Two ISM reviewers choosing different destinations now writes a `Routing Disagreement` row to Risk_Audit; the FINAL reviewer's choice still wins. Whether to block instead is an ISM policy call. Needs the two-person rig to test |
+| **DCS-only flags still force a PIA resubmit** | By design (the ladder lives in PIA). The Revision Ready screen now explains it. Removing the step would need a re-architecture of where rounds live |
+| **B2 (HTML in comments)** | Write path closed on the previous deploy; old rows still render their stored tags as text. Retest with ONE fresh tagged comment and read the sheet cell |

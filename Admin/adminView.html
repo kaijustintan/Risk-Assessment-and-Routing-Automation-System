@@ -2133,8 +2133,16 @@
           </div>
 
           <!-- Delegation / Out-of-office. ISM-managed only: an approver cannot appoint their
-               own stand-in. The routing half lives in Phase 2/pia_code.js (resolveDelegate_). -->
-          <div class="settings-card">
+               own stand-in. The routing half lives in Phase 2/pia_code.js (resolveDelegate_).
+               D3 DECISION (2026-08-13, feedback batch 2): the entry point is HIDDEN, not
+               removed. With an empty Delegations sheet, resolveDelegate_ fails open to "no
+               delegate" and canActAs_ collapses to a plain identity check, so the system
+               behaves as if the feature does not exist. The backend (resolveDelegate_,
+               canActAs_, recipientFor_, ACTED_BY, adminApi_*Delegation*) stays intact because
+               removing it would re-open the F-02 guard and the token path across two
+               independently-deployed apps. To re-enable: delete display:none below and
+               restore the loadDelegations() call (search for D3). -->
+          <div class="settings-card" style="display:none;">
             <div class="settings-card-header">
               <svg><use href="#ic-users"/></svg> Approver Delegation
             </div>
@@ -4424,31 +4432,68 @@ function renderAuditLogs(data, name) {
     html += '<p style="color:var(--color-text-3);font-size:13px;">No audit logs found for this entry.</p>';
   }
 
+  // B4 + C9 (2026-08-13, feedback batch 2): the workflow tables now segregate by round like
+  // the applicant-facing history, and a Pending row in a CLOSED round (an abandoned ladder
+  // slot the round's Return never reached) is dropped instead of rendering as a live
+  // "Pending" badge inside history. Current round = highest RoundNumber across all three
+  // tables (blank = round 1, pre-append-only rows).
+  function rowRound(a) {
+    var n = Number(a && a.RoundNumber);
+    return (isFinite(n) && n >= 1) ? Math.floor(n) : 1;
+  }
+  var __allWorkflowRows = [].concat(data.approvals || [], data.ismApprovals || [], data.dhApprovals || []);
+  var __currentRound = 1;
+  __allWorkflowRows.forEach(function(a) { var r = rowRound(a); if (r > __currentRound) __currentRound = r; });
+
+  function decisionOf(a) {
+    // Get decision value: try Decision column, then Status column, then fallback
+    var rawDec = a.Decision || '';
+    var rawSta = a.Status || '';
+    var dec = '';
+    if (rawDec && rawDec !== 'null' && rawDec !== 'undefined' && rawDec !== '—') {
+      dec = rawDec;
+    } else if (rawSta && rawSta !== 'null' && rawSta !== 'undefined' && rawSta !== '—') {
+      dec = rawSta;
+    }
+    if (!dec || dec === 'null' || dec === 'undefined') dec = 'Pending';
+    return dec;
+  }
+
   function approvalTable(rows, title, icon, nameFn) {
     if (!rows || rows.length === 0) return '';
-    var h = '<div class="audit-section-heading"><svg><use href="#' + icon + '"/></svg> ' + title + ' <span style="font-weight:400;color:var(--color-text-3);">(' + rows.length + ')</span></div>';
+    // Drop phantom pendings from closed rounds before counting, so the heading count agrees.
+    var kept = rows.filter(function(a) {
+      return rowRound(a) === __currentRound || decisionOf(a).toUpperCase() !== 'PENDING';
+    });
+    if (kept.length === 0) return '';
+    var h = '<div class="audit-section-heading"><svg><use href="#' + icon + '"/></svg> ' + title + ' <span style="font-weight:400;color:var(--color-text-3);">(' + kept.length + ')</span></div>';
     h += '<table class="audit-table"><thead><tr><th>Approver</th><th>Decision</th><th>Date</th><th>Comments</th></tr></thead><tbody>';
-    rows.forEach(function(a) {
-      // Get decision value: try Decision column, then Status column, then fallback
-      var rawDec = a.Decision || '';
-      var rawSta = a.Status || '';
-      var dec = '';
-      if (rawDec && rawDec !== 'null' && rawDec !== 'undefined' && rawDec !== '—') {
-        dec = rawDec;
-      } else if (rawSta && rawSta !== 'null' && rawSta !== 'undefined' && rawSta !== '—') {
-        dec = rawSta;
-      }
-      if (!dec || dec === 'null' || dec === 'undefined') dec = 'Pending';
+    var byRound = {};
+    kept.forEach(function(a) {
+      var r = rowRound(a);
+      if (!byRound[r]) byRound[r] = [];
+      byRound[r].push(a);
+    });
+    Object.keys(byRound).map(Number).sort(function(x, y) { return x - y; }).forEach(function(r) {
+      // C6: current round divider is a green pill (same palette as the PIA/DCS renderers:
+      // #f0fdf4 / #bbf7d0 / #15803d); prior rounds keep a muted label.
+      var isCur = (r === __currentRound);
+      var divider = isCur
+        ? '<span style="display:inline-block;font-size:11px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:2px 10px;text-transform:uppercase;letter-spacing:0.05em;">Round ' + r + ' (Current)</span>'
+        : '<span style="font-size:11px;font-weight:700;color:var(--color-text-3);text-transform:uppercase;letter-spacing:0.05em;">Round ' + r + '</span>';
+      h += '<tr><td colspan="4" style="padding:8px 10px;background:var(--slate-50);border-top:1px solid var(--color-border);">' + divider + '</td></tr>';
+      byRound[r].forEach(function(a) {
+        var dec = decisionOf(a);
+        var decUpper = String(dec).toUpperCase().trim();
+        var decCls;
+        if (decUpper === 'APPROVED') decCls = 'badge-success';
+        else if (decUpper === 'DENIED' || decUpper === 'REJECTED' || decUpper === 'DENY' || decUpper === 'REJECT' || decUpper === 'RETURN' || decUpper === 'RETURNED') decCls = 'badge-danger';
+        else if (decUpper === 'PENDING' || !decUpper) decCls = 'badge-warning';
+        else if (decUpper === 'ESCALATEDTODIVISIONHEAD' || decUpper === 'ESCALATED') decCls = 'badge-purple';
+        else decCls = 'badge-neutral';
 
-      var decUpper = String(dec).toUpperCase().trim();
-      var decCls;
-      if (decUpper === 'APPROVED') decCls = 'badge-success';
-      else if (decUpper === 'DENIED' || decUpper === 'REJECTED' || decUpper === 'DENY' || decUpper === 'REJECT' || decUpper === 'RETURN' || decUpper === 'RETURNED') decCls = 'badge-danger';
-      else if (decUpper === 'PENDING' || !decUpper) decCls = 'badge-warning';
-      else if (decUpper === 'ESCALATEDTODIVISIONHEAD' || decUpper === 'ESCALATED') decCls = 'badge-purple';
-      else decCls = 'badge-neutral';
-
-      h += '<tr><td>' + esc(nameFn(a)) + '</td><td><span class="badge ' + decCls + '">' + esc(dec) + '</span></td><td>' + formatDate(a.DecisionDate) + '</td><td>' + esc(a.Comments || '—') + '</td></tr>';
+        h += '<tr><td>' + esc(nameFn(a)) + '</td><td><span class="badge ' + decCls + '">' + esc(dec) + '</span></td><td>' + formatDate(a.DecisionDate) + '</td><td>' + esc(a.Comments || '—') + '</td></tr>';
+      });
     });
     return h + '</tbody></table>';
   }
@@ -6754,7 +6799,9 @@ function loadSettings(force) {
       if (!result.ok) { showToast('Error loading settings: ' + result.message, 'error'); return; }
       settingsLoaded = true;
       disableSettingsFields();
-      loadDelegations();   // its own endpoint, the Delegations tab is not part of getConfigData
+      // D3 (2026-08-13, feedback batch 2): the Delegation card is hidden (see the settings-card
+      // comment), so its loader is skipped too. Restore this call together with the card.
+      // loadDelegations();
       if (result.sys) result.sys.forEach(function(r) { var el = document.getElementById('cfg-' + r.Configuration_Key); if (el) el.value = r.Value || ''; });
       if (result.info) result.info.forEach(function(r) {
         var nameEl = document.getElementById('info-name-' + r.Member_ID);

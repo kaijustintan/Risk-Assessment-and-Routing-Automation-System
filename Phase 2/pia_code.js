@@ -1612,51 +1612,73 @@ function collectDcsFileIds_(row) {
     apiDownloadDcsFile('PIA-000075', '<a file from another request>')
       -> { ok: false, message: 'Document not available.' }
 */
-function apiDownloadDcsFile(sessionId, fileId) {
-  const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024; // 8 MB decoded; ~10.7 MB once base64-encoded
+/*
+  Function: authorizeDcsFileAccess_
+  LAYMAN:    Yung apat na security gate na dating nasa loob mismo ng apiDownloadDcsFile, hinugot
+             para magamit din ng apiGetDcsFileViewUrl. Parehong tanong pa rin: corporate account
+             ka ba, may karapatan ka ba sa application na ito, at kabilang ba talaga yung file.
+  TECHNICAL: Shared authorization front-end of both document endpoints (extracted 2026-08-13,
+             feedback batch 2, B1, verbatim from apiDownloadDcsFile so the two can never drift):
+             (1) corporate domain, (2) per-application authority (owner / head / ISM / DivHead
+             via isAuthorizedForApplication_), (3) resolve the linked DCS row (LAST match =
+             newest revision), (4) file membership via collectDcsFileIds_ (anti-confused-deputy).
+  PARAMS:    - sessionId: the PIA application id.  - fileId: the Drive file ID being requested.
+  RETURNS:   { ok:true, fileId:'<trimmed id>' } or the opaque DENIED shape.
+*/
+function authorizeDcsFileAccess_(sessionId, fileId) {
   // One opaque message for every authorization failure, never reveal which gate rejected.
   const DENIED = { ok: false, message: 'Document not available.' };
 
+  /* Step 1: Domain + argument gate. */
+  const me = Session.getActiveUser().getEmail();
+  if (!isAuthorizedDomain_(me)) return DENIED;
+  if (!sessionId || !fileId) return DENIED;
+
+  /* Step 2: Per-application authority (owner / head / ISM / DivHead). */
+  const appData = getApplicationData_(sessionId);
+  if (!appData) return DENIED;
+  if (!isAuthorizedForApplication_(sessionId, appData)) {
+    Logger.log('SECURITY ALERT: ' + me + ' attempted document access on ' + sessionId);
+    return DENIED;
+  }
+
+  /* Step 3: Resolve the linked DCS row that actually holds the file list. */
+  const linkedReqId = String(appData.linkedReqId || '').trim();
+  if (!linkedReqId) return DENIED;
+
+  const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, false);
+  if (!dcsSheet) return DENIED;
+
+  const vals = readSheetValues_(dcsSheet);
+  let dcsRow = null;
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][DCS_COLS.REQ_ID - 1] || '').trim() === linkedReqId) {
+      dcsRow = vals[i];   // keep scanning: the LAST match is the newest revision
+    }
+  }
+  if (!dcsRow) return DENIED;
+
+  /* Step 4: File-membership gate: the fileId must belong to THIS request. */
+  const allowed = collectDcsFileIds_(dcsRow);
+  if (!allowed[String(fileId).trim()]) {
+    Logger.log('SECURITY ALERT: ' + me + ' requested file ' + fileId +
+               ' which does not belong to ' + linkedReqId);
+    return DENIED;
+  }
+
+  return { ok: true, fileId: String(fileId).trim() };
+}
+
+function apiDownloadDcsFile(sessionId, fileId) {
+  const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024; // 8 MB decoded; ~10.7 MB once base64-encoded
+
   try {
-    /* Step 1: Domain + argument gate. */
-    const me = Session.getActiveUser().getEmail();
-    if (!isAuthorizedDomain_(me)) return DENIED;
-    if (!sessionId || !fileId) return DENIED;
-
-    /* Step 2: Per-application authority (owner / head / ISM / DivHead). */
-    const appData = getApplicationData_(sessionId);
-    if (!appData) return DENIED;
-    if (!isAuthorizedForApplication_(sessionId, appData)) {
-      Logger.log('SECURITY ALERT: ' + me + ' attempted document access on ' + sessionId);
-      return DENIED;
-    }
-
-    /* Step 3: Resolve the linked DCS row that actually holds the file list. */
-    const linkedReqId = String(appData.linkedReqId || '').trim();
-    if (!linkedReqId) return DENIED;
-
-    const dcsSheet = getDatabaseSheet_(DB_SHEET_NAMES.DATA_COLLECTION, false);
-    if (!dcsSheet) return DENIED;
-
-    const vals = readSheetValues_(dcsSheet);
-    let dcsRow = null;
-    for (let i = 1; i < vals.length; i++) {
-      if (String(vals[i][DCS_COLS.REQ_ID - 1] || '').trim() === linkedReqId) {
-        dcsRow = vals[i];   // keep scanning: the LAST match is the newest revision
-      }
-    }
-    if (!dcsRow) return DENIED;
-
-    /* Step 4: File-membership gate: the fileId must belong to THIS request. */
-    const allowed = collectDcsFileIds_(dcsRow);
-    if (!allowed[String(fileId).trim()]) {
-      Logger.log('SECURITY ALERT: ' + me + ' requested file ' + fileId +
-                 ' which does not belong to ' + linkedReqId);
-      return DENIED;
-    }
+    /* Steps 1-4: the shared authorization gates (see authorizeDcsFileAccess_). */
+    const authz = authorizeDcsFileAccess_(sessionId, fileId);
+    if (!authz.ok) return authz;
 
     /* Step 5: Size gate, then read and encode. */
-    const file  = DriveApp.getFileById(String(fileId).trim());
+    const file  = DriveApp.getFileById(authz.fileId);
     const blob  = file.getBlob();
     const bytes = blob.getBytes();
     if (bytes.length > MAX_DOWNLOAD_BYTES) {
@@ -1680,6 +1702,44 @@ function apiDownloadDcsFile(sessionId, fileId) {
   } catch (e) {
     // Generic to the caller, specific to the log: Drive errors echo resource IDs.
     Logger.log('apiDownloadDcsFile failed for ' + sessionId + '/' + fileId + ': ' + e.toString());
+    return { ok: false, message: 'Could not open this document. Please try again or contact ISM.' };
+  }
+}
+
+/*
+  Function: apiGetDcsFileViewUrl
+  LAYMAN:    Kapag pinindot ang "View" sa isang dokumento sa review page o sa wizard, ito ang
+             tinatawag: parehong apat na gate ng download, tapos ibinabalik ang Google Drive
+             link ng file para buksan sa Drive viewer sa bagong tab.
+  TECHNICAL: DELIBERATE DECISION (2026-08-13, feedback batch 2, B1): in-browser preview of
+             blob: bytes is impossible inside Apps Script's sandboxed iframe (Chrome refuses
+             blob: PDFs in <iframe> AND <object>; both were tried on the deployed app). The
+             agreed fallback is the Drive viewer. This NARROWS the 2026-08-11 "documents are
+             PRIVATE" rule rather than reverting it: files stay owner-only at upload; the one
+             requested file is elevated to DOMAIN_WITH_LINK (never ANYONE_WITH_LINK) lazily,
+             only when an authorized viewer opens it, behind the same gates as the download.
+             Same elevation level as the certificate's getAndShareDCSFiles_ precedent.
+             Phase 1 carries a sibling endpoint keyed by reqId; keep the two aligned.
+  PARAMS:    - sessionId: the PIA application id.  - fileId: the Drive file ID being requested.
+  RETURNS:   { ok:true, url:'https://drive.google.com/file/d/<id>/view' } or an opaque failure.
+*/
+function apiGetDcsFileViewUrl(sessionId, fileId) {
+  try {
+    const authz = authorizeDcsFileAccess_(sessionId, fileId);
+    if (!authz.ok) return authz;
+
+    const file = DriveApp.getFileById(authz.fileId);
+    try {
+      file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {
+      // Elevation can fail on Drive propagation hiccups; the URL may still work for the
+      // owner, so log and continue rather than blocking the view.
+      Logger.log('apiGetDcsFileViewUrl: could not domain-share ' + authz.fileId + ': ' + shareErr.toString());
+    }
+    return { ok: true, url: 'https://drive.google.com/file/d/' + authz.fileId + '/view' };
+  } catch (e) {
+    // Generic to the caller, specific to the log: Drive errors echo resource IDs.
+    Logger.log('apiGetDcsFileViewUrl failed for ' + sessionId + '/' + fileId + ': ' + e.toString());
     return { ok: false, message: 'Could not open this document. Please try again or contact ISM.' };
   }
 }
@@ -2032,141 +2092,40 @@ function getStyledHtmlWrapper_(header, content) {
         function showError(msg) { _showToast(msg, 'error'); }
         function showSuccess(msg) { _showToast(msg, 'success'); }
 
-        // ── Secure document viewer ──────────────────────────────────────────────────
-        // DCS attachments used to render as raw https://drive.google.com/file/d/<id>/view links,
-        // which only worked because uploads were published with ANYONE_WITH_LINK. Documents are
-        // now PRIVATE in Drive; apiDownloadDcsFile re-checks that the caller is party to this
-        // request AND that the fileId belongs to it, then returns the bytes as base64.
+        // ── Secure document viewing ─────────────────────────────────────────────────
+        // B1 (2026-08-13, feedback batch 2): the in-page preview overlay is DELETED. In-page
+        // rendering of blob: bytes is impossible inside Apps Script's sandboxed iframe
+        // (Chrome refuses blob: PDFs in iframe AND object; both were tried on the deployed
+        // app). "View" opens the Google Drive viewer in a new tab via apiGetDcsFileViewUrl,
+        // which re-authorizes and lazily elevates the one file to DOMAIN_WITH_LINK. The byte
+        // path (apiDownloadDcsFile) survives as the pop-up-blocked fallback below.
         //
         // This is the APPROVER-FACING copy, the page reached from an email link. It is a
-        // deliberate triplicate of the viewer in Phase 1/index.html and Phase 2/pia_index.html;
-        // three separate GAS projects, and this page is not even the same document as the PIA
-        // app. Edit all three together.
+        // deliberate triplicate with Phase 1/index.html and Phase 2/pia_index.html; three
+        // separate GAS projects. Edit all three together.
         //
         // NOTE: plain string concatenation only, and NO backticks, this whole block sits inside
         // a backtick template literal in pia_code.js. A dollar-brace sequence here would be
         // interpolated server-side, and a stray backtick would terminate the template early.
         // (Both failure modes pass node --check on the file and only break the SERVED page.)
-        var __filePreviewUrl = null;
 
-        function filePreviewEscHandler(e) {
-          if (e.key === 'Escape') closeFilePreview();
-        }
-
-        // Revokes the blob. The preview cannot revoke right after creation the way the old
-        // download-only path did, because the iframe/img reads the URL for as long as it is on
-        // screen, so every exit route (X, backdrop, Esc, opening another file) lands here.
-        function closeFilePreview() {
-          var host = document.getElementById('filePreviewOverlay');
-          if (host && host.parentNode) host.parentNode.removeChild(host);
-          if (__filePreviewUrl) { URL.revokeObjectURL(__filePreviewUrl); __filePreviewUrl = null; }
-          document.removeEventListener('keydown', filePreviewEscHandler);
-        }
-
-        // Renders into the CURRENT document rather than window.open(blobUrl): this page is served
-        // inside Apps Script's sandboxed iframe, where popups are blocked and a blob: URL is not
-        // reliably navigable as a top-level document. Filename goes in via textContent, never
-        // innerHTML, it is user-supplied and there is no escape helper in scope here.
-        function showFilePreview(data) {
-          closeFilePreview();
-
+        // Pop-up-blocked fallback: base64 -> Blob -> object URL -> a[download] click. A blob
+        // URL used for DOWNLOAD works in the GAS sandbox; it was blob NAVIGATION that was
+        // blocked. URL revoked after the click; filename set via property, never HTML.
+        function downloadDcsFileBytes(data) {
           var mime = String((data && data.mimeType) || 'application/octet-stream');
           var name = String((data && data.filename) || 'document');
-
           var byteChars = atob(data.base64);
           var byteNums = new Array(byteChars.length);
           for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
-          __filePreviewUrl = URL.createObjectURL(new Blob([new Uint8Array(byteNums)], { type: mime }));
-
-          var isPdf = mime.indexOf('pdf') !== -1;
-          var isImg = mime.indexOf('image/') === 0;
-
-          var ov = document.createElement('div');
-          ov.id = 'filePreviewOverlay';
-          ov.setAttribute('role', 'dialog');
-          ov.setAttribute('aria-modal', 'true');
-          ov.setAttribute('aria-label', 'Document preview');
-          ov.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(17,24,39,0.6);' +
-            'z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:16px;';
-
-          var box = document.createElement('div');
-          box.style.cssText = 'background:#fff;border-radius:9px;width:100%;max-width:900px;height:90vh;' +
-            'display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25);';
-
-          var head = document.createElement('div');
-          head.style.cssText = 'display:flex;align-items:center;gap:10px;padding:11px 14px;' +
-            'border-bottom:1px solid #e5e7eb;flex-shrink:0;';
-
-          var title = document.createElement('div');
-          title.textContent = name;
-          title.style.cssText = 'font-weight:600;font-size:13.5px;color:#111827;flex:1;min-width:0;' +
-            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-
-          var dl = document.createElement('button');
-          dl.type = 'button';
-          dl.textContent = 'Download';
-          dl.style.cssText = 'padding:6px 14px;font-size:12.5px;font-weight:500;cursor:pointer;' +
-            'border:1px solid #d1d5db;border-radius:4px;background:#fff;color:#111827;flex-shrink:0;';
-          dl.onclick = function () {
-            var a = document.createElement('a');
-            a.href = __filePreviewUrl;
-            a.download = name;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-          };
-
-          var x = document.createElement('button');
-          x.type = 'button';
-          x.setAttribute('aria-label', 'Close preview');
-          x.innerHTML = '&times;';
-          x.style.cssText = 'border:none;background:none;font-size:22px;line-height:1;cursor:pointer;' +
-            'color:#6b7280;padding:0 4px;flex-shrink:0;';
-          x.onclick = closeFilePreview;
-
-          head.appendChild(title);
-          head.appendChild(dl);
-          head.appendChild(x);
-
-          var pane = document.createElement('div');
-          pane.style.cssText = 'flex:1;min-height:0;background:#f7f8fa;' +
-            (isImg ? 'display:flex;align-items:center;justify-content:center;padding:12px;' : '');
-
-          if (isPdf) {
-            // F2 (2026-08-13): <object> instead of <iframe>; blob: PDFs blanked in an iframe
-            // inside the GAS sandbox. Fallback child shows when the browser cannot render.
-            // Three copies exist (Phase 1/index.html, pia_index.html, here); edit together.
-            // This copy lives inside a template literal: NO backticks, NO dollar-brace.
-            var obj = document.createElement('object');
-            obj.data = __filePreviewUrl;
-            obj.type = mime;
-            obj.setAttribute('aria-label', name);
-            obj.style.cssText = 'width:100%;height:100%;border:0;display:block;';
-            var fb = document.createElement('div');
-            fb.style.cssText = 'padding:36px 24px;text-align:center;color:#4b5563;font-size:13px;line-height:1.7;';
-            fb.textContent = 'This document could not be previewed in the browser. Use Download to open it.';
-            obj.appendChild(fb);
-            pane.appendChild(obj);
-          } else if (isImg) {
-            var img = document.createElement('img');
-            img.src = __filePreviewUrl;
-            img.alt = name;
-            img.style.cssText = 'max-width:100%;max-height:100%;display:block;';
-            pane.appendChild(img);
-          } else {
-            var note = document.createElement('div');
-            note.style.cssText = 'padding:36px 24px;text-align:center;color:#4b5563;font-size:13px;line-height:1.7;';
-            note.textContent = 'This file type cannot be displayed in the browser. ' +
-              'Use Download to open it in the right application.';
-            pane.appendChild(note);
-          }
-
-          box.appendChild(head);
-          box.appendChild(pane);
-          ov.appendChild(box);
-          ov.addEventListener('click', function (e) { if (e.target === ov) closeFilePreview(); });
-          document.body.appendChild(ov);
-          document.addEventListener('keydown', filePreviewEscHandler);
+          var url = URL.createObjectURL(new Blob([new Uint8Array(byteNums)], { type: mime }));
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
         }
 
         function viewDcsFile(sessionId, fileId, btn) {
@@ -2175,24 +2134,42 @@ function getStyledHtmlWrapper_(header, content) {
           function restore() {
             if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.innerHTML = originalHtml; }
           }
+          // B1 (2026-08-13): View opens the Drive viewer in a new tab; in-page preview of
+          // blob: bytes is impossible in the GAS sandbox (iframe AND object both refused).
+          // Placeholder window opens synchronously to keep the click's user gesture.
+          // This copy lives inside a template literal: NO backticks, NO dollar-brace.
+          var w = null;
+          try { w = window.open('', '_blank'); } catch (e) { w = null; }
           google.script.run
             .withSuccessHandler(function (res) {
               restore();
-              if (!res || !res.ok) {
+              if (!res || !res.ok || !res.url) {
+                if (w) { try { w.close(); } catch (e) {} }
                 showError((res && res.message) ? res.message : 'Could not open this document.');
                 return;
               }
-              try {
-                showFilePreview(res.data);
-              } catch (err) {
-                showError('Could not display this document. Please try again.');
+              if (w) {
+                w.location.href = res.url;
+              } else {
+                // Pop-up blocked: fall back to downloading the bytes instead of failing.
+                showError('Your browser blocked the document tab, downloading the file instead.');
+                google.script.run
+                  .withSuccessHandler(function (dres) {
+                    if (dres && dres.ok && dres.data) { downloadDcsFileBytes(dres.data); }
+                    else { showError((dres && dres.message) ? dres.message : 'Could not open this document.'); }
+                  })
+                  .withFailureHandler(function () {
+                    showError('Could not open this document. Please try again or contact ISM.');
+                  })
+                  .apiDownloadDcsFile(sessionId, fileId);
               }
             })
             .withFailureHandler(function () {
               restore();
+              if (w) { try { w.close(); } catch (e) {} }
               showError('Could not open this document. Please try again or contact ISM.');
             })
-            .apiDownloadDcsFile(sessionId, fileId);
+            .apiGetDcsFileViewUrl(sessionId, fileId);
         }
       </script>
     </body>
@@ -3062,8 +3039,11 @@ function handleEmailAction_(params) {
       }).join('');
     }
 
+    // C1 (2026-08-13, feedback batch 2): one document per row. The inline-flex wrap read as a
+    // jumble once a request carried 5+ documents; a column keeps each View button + flag pair
+    // on its own line. Keep the DCS request-details list (Phase 1) on the same one-per-row rule.
     const documentsHtml = `
-      <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
+      <div style="margin-top: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px;">
         ${dcsFilesHtml}
         ${endorsementFileHtml}
         ${!hasAttachedDocs && !endorsementFileHtml ? `<span style="font-size: 13px; color: var(--text3);">No external agreements or documents attached.</span>` : ''}
@@ -4071,11 +4051,38 @@ function handleEmailAction_(params) {
           if (approvalForm) {
             approvalForm.addEventListener('submit', function(event) {
               const submitter = event.submitter;
+              const ov = document.getElementById('decisionOverlay');
               if (submitter && submitter.value === 'Approve' && Object.keys(flagData).length > 0) {
                 event.preventDefault();
-                const ov = document.getElementById('decisionOverlay');
                 if (ov) ov.style.display = 'none';
                 showError('Flagged items can only accompany a Return. Remove the flags to approve, or choose Return to send them back.');
+                return;
+              }
+              // E1 (2026-08-13, feedback batch 2): client-side MIRROR of the server's
+              // Return/Deny comment checks, so a comment that was never going to be accepted
+              // fails instantly instead of after a full round-trip. The server checks in
+              // handleEmailAction_ are untouched and remain the rule; this is the courtesy
+              // half. Keep the two lists identical.
+              if (submitter && (submitter.value === 'Return' || submitter.value === 'Deny')) {
+                const raw = (document.getElementById('editor') || {}).value || '';
+                const plain = raw.replace(/<[^>]*>/g, '').trim();
+                let msg = '';
+                if (plain.length < ${COMMENT_MIN_CHARS_DECISION}) {
+                  msg = 'A minimum of ${COMMENT_MIN_CHARS_DECISION} meaningful characters is required for a ' + (submitter.value === 'Deny' ? 'Denial' : 'Return') + ' reason.';
+                } else if (plain.length > ${COMMENT_MAX_CHARS}) {
+                  msg = 'Comments cannot exceed ${COMMENT_MAX_CHARS} characters.';
+                } else if (/(.)\\1{5,}/.test(raw)) {
+                  msg = 'Spam or repetitive characters detected. Please provide a meaningful comment.';
+                } else if (/[bcdfghjklmnpqrstvwxyz]{7,}/i.test(raw)) {
+                  msg = 'Gibberish detected. Please provide a clear and legible comment.';
+                }
+                if (msg) {
+                  event.preventDefault();
+                  if (ov) ov.style.display = 'none';
+                  const rm = document.getElementById('returnModal');
+                  if (rm) rm.style.display = 'none';
+                  showError(msg);
+                }
               }
             });
           }
@@ -4500,10 +4507,15 @@ function writeApplicationSnapshot_(sessionId, row) {
   PARAMS:    - sessionId: application id.  - includePending: keep Pending rows too.
   RETURNS:   Array of decision objects (possibly empty). Never throws.
 */
-function collectAllRoundDecisions_(sessionId, includePending) {
+function collectAllRoundDecisions_(sessionId, includePending, currentRound) {
   const sid = String(sessionId || '').trim();
   const byRound = {};   // roundNumber -> [decision, ...]
   if (!sid) return byRound;
+  // B4 fix (2026-08-13, feedback batch 2): includePending applies to the CURRENT round only.
+  // A Pending row in a closed round is an abandoned ladder slot (e.g. the Dept Head who was
+  // never reached before a round-1 Return); rendering it as "Pending review" inside history
+  // misrepresents what happened. currentRound is passed in by getUnifiedHistory_ (it already
+  // derives it); when absent, pending rows are treated as current-round to stay fail-open.
 
   const push = function (round, entry) {
     if (!byRound[round]) byRound[round] = [];
@@ -4520,7 +4532,8 @@ function collectAllRoundDecisions_(sessionId, includePending) {
         if (String(row[cols.SESSION_ID - 1] || '').trim() !== sid) continue;
         const status = String(row[cols.STATUS - 1] || '');
         const isPending = status === 'Pending' || status === '';
-        if (isPending && !includePending) continue;
+        const rnd = roundOf_(row, cols);
+        if (isPending && (!includePending || (currentRound && rnd !== currentRound))) continue;
 
         // Per-round flags now live on the approver's own row (FLAGGED_FIELDS), which is what
         // replaced Revision_History.FlaggedFields. Blank on anything that was not a Return.
@@ -4530,7 +4543,7 @@ function collectAllRoundDecisions_(sessionId, includePending) {
           if (rawFlags) flagged = JSON.parse(rawFlags) || {};
         } catch (e) { flagged = {}; }
 
-        push(roundOf_(row, cols), {
+        push(rnd, {
           stage: stage,
           approverName: nameCol ? (row[nameCol - 1] || '') : '',
           approverEmail: row[emailCol - 1] || '',
@@ -4573,15 +4586,18 @@ function collectAllRoundDecisions_(sessionId, includePending) {
              the round matching getCurrentRound_. Previously unioned Revision_History with a separate
              current-round scan; the append-only workflow made that union unnecessary.
   PARAMS:    - sessionId: application id.  - includePending: include Pending rows in the current round.
-  RETURNS:   { rounds: [{round, isCurrent, decisions:[...]}] } (rounds may be empty).
+  RETURNS:   { rounds: [{round, isCurrent, decisions:[...]}], currentRound } (rounds may be empty).
+             currentRound lets renderers label the live round even when it has no rows to show
+             (B5 fix: the resubmit email used to end on a bare historical round).
 */
 function getUnifiedHistory_(sessionId, includePending) {
   // Append-only (2026-08-11): this used to union Revision_History (prior rounds, from a
   // best-effort photocopy taken before the rows were deleted) with a separate scan of the live
   // current round. Nothing is deleted any more, so every round is right here in the workflow
   // sheets and the union, plus the entire Revision_History sheet: is gone.
-  const byRound = collectAllRoundDecisions_(sessionId, includePending);
+  // B4: derive the current round FIRST so the collector can scope pending rows to it.
   const currentRound = getCurrentRound_(sessionId);
+  const byRound = collectAllRoundDecisions_(sessionId, includePending, currentRound);
 
   const rounds = Object.keys(byRound)
     .map(Number)
@@ -4590,7 +4606,7 @@ function getUnifiedHistory_(sessionId, includePending) {
       return { round: r, isCurrent: (r === currentRound), decisions: byRound[r] };
     });
 
-  return { rounds: rounds };
+  return { rounds: rounds, currentRound: currentRound };
 }
 
 /*
@@ -7402,12 +7418,25 @@ function buildPriorReviewChipHtml_(sessionId, email) {
   TECHNICAL: Consumes getUnifiedHistory_ output. Email-safe: inline styles, hex colors only.
              Status colors follow the unified matrix (approved green #065f46, returned amber
              #92400e, denied red #991b1b, escalated/pending blue #1e40af). Legacy boilerplate
-  PARAMS:    - unified: { rounds } from getUnifiedHistory_.
+             Batch-2 format contract (2026-08-13), keep the client twins in step
+             (pia_index.html renderApprovalTimeline, Phase 1 renderUnifiedApprovalHistory):
+             round header outranks group headers (C3), flags print BEFORE the comment (C5),
+             the comment carries a "Comments:" label and near-black body text (C4/C7), the
+             CURRENT round pill is green (C6), and when the current round has no rows to show
+             a synthetic "awaiting review" block is appended so the story never ends on a bare
+             historical round (B5).
+  PARAMS:    - unified: { rounds, currentRound } from getUnifiedHistory_.
+             - opts: optional { hideRouting: true } used by the certificate (C8): routing is
+               one destination for the whole request there, printed once as its own line, so
+               the per-reviewer repetition is suppressed. Everywhere else it stays, it is
+               genuine audit detail of what each reviewer chose.
   RETURNS:   HTML string ('' when there are no rounds).
 */
-function buildUnifiedHistoryHtml_(unified) {
+function buildUnifiedHistoryHtml_(unified, opts) {
+  opts = opts || {};
   const rounds = (unified && unified.rounds) || [];
-  if (!rounds.length) return '';
+  const currentRound = (unified && unified.currentRound) || 0;
+  if (!rounds.length && !currentRound) return '';
   const colorFor = function (status, decision) {
     const s = String(status || '') + ' ' + String(decision || '');
     if (/Approved/i.test(String(status || ''))) return '#065f46';
@@ -7444,24 +7473,28 @@ function buildUnifiedHistoryHtml_(unified) {
   };
   const renderDecision = function (d) {
     const routing = routingLabelFor(d.routing);
-    const routingHtml = routing ? `<div style="font-size:12px;color:#6b7280;margin-top:3px;">Routing: <strong>${escapeHtml_(routing)}</strong></div>` : '';
+    // C8: the certificate suppresses per-reviewer routing (one authoritative line is printed
+    // there instead); every other surface keeps it as audit detail.
+    const routingHtml = (routing && !opts.hideRouting) ? `<div style="font-size:12px;color:#4b5563;margin-top:3px;">Routing: <strong>${escapeHtml_(routing)}</strong></div>` : '';
     const dateStr = fmtDate(d.decisionDate);
     const flagKeys = (d.flaggedFields && typeof d.flaggedFields === 'object') ? Object.keys(d.flaggedFields) : [];
     let flags = '';
     if (flagKeys.length > 0) {
-      flags = '<div style="font-size:11px;color:#92400e;margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
+      flags = '<div style="font-size:11.5px;color:#92400e;margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
         const reason = d.flaggedFields[k];
         return escapeHtml_(k) + (reason && reason !== true ? ' (' + escapeHtml_(String(reason)) + ')' : '');
       }).join(', ') + '</div>';
     }
     const showComment = !!d.comments;
+    // C5: flags print BEFORE the comment (a Return's flags are the actionable part).
+    // C4: the comment carries an explicit "Comments:" label. C7: body text near-black.
     return `
         <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f0f0f0;">
-          <div style="font-size:13px;color:#333;"><strong>${escapeHtml_(d.approverName || d.approverEmail || 'Approver')}</strong> <span style="color:#6b7280;">(${escapeHtml_(d.role || 'Approver')})</span>: <span style="color:${colorFor(d.status, d.decision)};font-weight:600;">${escapeHtml_(labelFor(d.status))}</span></div>
-          ${dateStr ? `<div style="font-size:11px;color:#999;margin-top:2px;">${escapeHtml_(dateStr)}</div>` : ''}
+          <div style="font-size:13px;color:#111827;"><strong>${escapeHtml_(d.approverName || d.approverEmail || 'Approver')}</strong> <span style="color:#4b5563;">(${escapeHtml_(d.role || 'Approver')})</span>: <span style="color:${colorFor(d.status, d.decision)};font-weight:600;">${escapeHtml_(labelFor(d.status))}</span></div>
+          ${dateStr ? `<div style="font-size:11px;color:#6b7280;margin-top:2px;">${escapeHtml_(dateStr)}</div>` : ''}
           ${routingHtml}
-          ${showComment ? `<div style="font-size:12.5px;color:#666;margin-top:3px;">"${escapeHtml_(String(d.comments))}"</div>` : ''}
           ${flags}
+          ${showComment ? `<div style="font-size:12.5px;color:#111827;margin-top:3px;">Comments: "${escapeHtml_(String(d.comments))}"</div>` : ''}
         </div>`;
   };
 
@@ -7474,8 +7507,22 @@ function buildUnifiedHistoryHtml_(unified) {
     return '<div style="font-size:10px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:8px 0 6px;">' + escapeHtml_(label) + '</div>';
   };
 
+  // C3/C6 (2026-08-13, feedback batch 2): the round header is the outermost unit of the
+  // hierarchy, so it renders one size up from the group sub-headers. The CURRENT round pill
+  // is GREEN (same palette as the retained-file success chips: #f0fdf4 / #bbf7d0 / #15803d)
+  // so "current" reads identically across app, email and certificate. History keeps the
+  // muted underline. Inline styles only; no CSS vars here.
+  const roundHeaderHtml = function (roundNo, isCurrent) {
+    const headerLabel = 'Round ' + roundNo + (isCurrent ? ' (Current)' : '');
+    return isCurrent
+      ? `<div style="margin-bottom:6px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:3px 12px;text-transform:uppercase;letter-spacing:0.05em;">${escapeHtml_(headerLabel)}</span></div>`
+      : `<div style="font-size:12px;font-weight:700;color:#4b5563;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">${escapeHtml_(headerLabel)}</div>`;
+  };
+
   let html = '<div style="font-family: sans-serif;">';
+  let currentRendered = false;
   rounds.forEach(function (r) {
+    if (r.isCurrent) currentRendered = true;
     const ds = r.decisions || [];
     const headsGroup = ds.filter(function (d) { return d.stage === 'head' || d.stage === 'divhead'; });
     const ismGroup = ds.filter(function (d) { return d.stage === 'ism'; });
@@ -7486,18 +7533,24 @@ function buildUnifiedHistoryHtml_(unified) {
     if (ismGroup.length) decisions += subHeader('ISM InfoSec Approvals') + ismGroup.map(renderDecision).join('');
     if (otherGroup.length) decisions += otherGroup.map(renderDecision).join('');
 
-    // F7's email/cert half (2026-08-13): the CURRENT round header renders as a navy-tint pill,
-    // history keeps the muted underline. Inline styles only; no CSS vars here.
-    const headerLabel = 'Round ' + r.round + (r.isCurrent ? ' (Current)' : '');
-    const headerHtml = r.isCurrent
-      ? `<div style="margin-bottom:6px;"><span style="display:inline-block;font-size:11px;font-weight:700;color:#0f2238;background:#f4f7fb;border:1px solid #cdd9ea;border-radius:99px;padding:3px 10px;text-transform:uppercase;letter-spacing:0.05em;">${escapeHtml_(headerLabel)}</span></div>`
-      : `<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">${escapeHtml_(headerLabel)}</div>`;
     html += `
       <div style="margin-bottom:16px;">
-        ${headerHtml}
+        ${roundHeaderHtml(r.round, r.isCurrent)}
         ${decisions}
       </div>`;
   });
+
+  // B5 (2026-08-13, feedback batch 2): when the current round exists but has nothing to show
+  // (a fresh resubmit renders with includePending=false and the new round is all Pending),
+  // still print its header with an awaiting note, so the reader is never left believing a
+  // historical round is the current state.
+  if (currentRound && !currentRendered) {
+    html += `
+      <div style="margin-bottom:16px;">
+        ${roundHeaderHtml(currentRound, true)}
+        <div style="font-size:12.5px;color:#4b5563;font-style:italic;">In review. No decisions have been recorded in this round yet.</div>
+      </div>`;
+  }
   return html + '</div>';
 }
 
@@ -9806,6 +9859,7 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
       const freshData = readSheetValues_(ismWorkflowSheet);
       let allApproved = true;
       let totalMembers = 0;
+      const distinctRoutings = {};
 
       for (let i = 1; i < freshData.length; i++) {
         if (rowMatches_(freshData[i], ISM_WORKFLOW_COLS, sessionId, __round)) {
@@ -9813,7 +9867,21 @@ function apiPhase3_ProcessISMDecision(sessionId, ismMemberEmail, decision, comme
           if (freshData[i][ISM_WORKFLOW_COLS.STATUS - 1] !== 'Approved') {
             allApproved = false;
           }
+          const rd = String(freshData[i][ISM_WORKFLOW_COLS.ROUTING_DESTINATION - 1] || '').trim().toUpperCase();
+          if (rd) distinctRoutings[rd] = true;
         }
+      }
+
+      // Routing disagreement (2026-08-13, feedback batch 2): each reviewer records a routing
+      // destination on their own row, and the FINAL reviewer's choice is what routes the
+      // request (routingDestination below is this reviewer's pick). Two reviewers choosing
+      // differently used to resolve silently; policy on whether to block is an ISM call, so
+      // for now the disagreement is made visible: a Risk_Audit row records both choices.
+      if (allApproved && Object.keys(distinctRoutings).length > 1) {
+        logAuditTrail_(sessionId, 'Routing Disagreement: reviewers chose ' +
+          Object.keys(distinctRoutings).join(' vs ') + '; final routing = ' +
+          String(routingDestination || '').toUpperCase(),
+          JSON.stringify({ riskLevel: 'MEDIUM', reasons: ['ISM reviewers selected different routing destinations'] }));
       }
 
       if (allApproved && totalMembers > 0) {
@@ -10232,116 +10300,13 @@ function routeApprovedRequest_(sessionId, destination, round = null) {
       }
     }
 
-    // Gather Approvers Information
-    
-    // 1. Main Approvers (Heads)
-    let headsApproversHtml = '';
-    (appData.approvers || []).forEach(a => {
-      if (a.status === 'Approved') {
-        const dateStr = a.decisionDate ? new Date(a.decisionDate).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
-        const roleToDisplay = a.role;
-        headsApproversHtml += `
-          <tr>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb;">
-              <div style="font-weight: 600; color: #1a3a5c;">${escapeHtml_(a.name)}</div>
-              <div style="font-size: 11px; color: #6b7280; text-transform: uppercase;">${escapeHtml_(roleToDisplay)}</div>
-            </td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: center;">
-              <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
-            </td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
-              ${escapeHtml_(a.comment || '—')}
-            </td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
-              ${escapeHtml_(dateStr)}
-            </td>
-          </tr>
-        `;
-      }
-    });
-
-    // 2. Division Head (if escalated)
-    const divHeadSheet = getDatabaseSheet_(DB_SHEET_NAMES.DIV_HEAD_CONFIG, true);
-    const divHeadData = readSheetValues_(divHeadSheet);
-    for (let i = 1; i < divHeadData.length; i++) {
-      if (rowMatches_(divHeadData[i], DIV_HEAD_CONFIG_COLS, sessionId, __round) && divHeadData[i][DIV_HEAD_CONFIG_COLS.STATUS - 1] === 'Approved') {
-        const divHeadEmailFromSheet = divHeadData[i][DIV_HEAD_CONFIG_COLS.DIV_HEAD_EMAIL - 1];
-        const divHeadName = (appData.pia1 && getNormalizedEmail_(appData.pia1.divHeadEmail) === getNormalizedEmail_(divHeadEmailFromSheet))
-          ? (appData.pia1.divHead || divHeadEmailFromSheet)
-          : divHeadEmailFromSheet;
-        const roleToDisplay = 'Division Head';
-        const dateStr = divHeadData[i][DIV_HEAD_CONFIG_COLS.DECISION_DATE - 1] ? new Date(divHeadData[i][DIV_HEAD_CONFIG_COLS.DECISION_DATE - 1]).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
-        headsApproversHtml += `
-          <tr>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb;">
-              <div style="font-weight: 600; color: #1a3a5c;">${escapeHtml_(divHeadName)}</div>
-              <div style="font-size: 11px; color: #6b7280; text-transform: uppercase;">${escapeHtml_(roleToDisplay)}</div>
-            </td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: center;">
-              <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
-            </td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
-              ${escapeHtml_(divHeadData[i][DIV_HEAD_CONFIG_COLS.COMMENTS - 1] || '—')}
-            </td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
-              ${escapeHtml_(dateStr)}
-            </td>
-          </tr>
-        `;
-      }
-    }
-
-    if (!headsApproversHtml) {
-        headsApproversHtml = `<tr><td colspan="4" style="padding: 10px 0; color: #6b7280; font-style: italic; border-bottom: 1px solid #e5e7eb;">No head approvers found.</td></tr>`;
-    }
-
-    // 3. ISM Members
-    let ismApproversHtml = '';
-    const ismWorkflowSheet = getDatabaseSheet_(DB_SHEET_NAMES.ISM_WORKFLOW, true);
-    const ismData = readSheetValues_(ismWorkflowSheet);
-    
-    // Look up JobPos from InfoSec_Email_Config for ISM members
-    const infosecSheet = getDatabaseSheet_(DB_SHEET_NAMES.INFOSEC_CONFIG, true);
-    const infosecData = readSheetValues_(infosecSheet);
-    const getJobPosForMember = (memberName) => {
-      const normalizedName = String(memberName || '').trim().toLowerCase();
-      for (let j = 1; j < infosecData.length; j++) {
-        const configName = String(infosecData[j][INFOSEC_CONFIG_COLS.MEMBER_NAME - 1] || '').trim().toLowerCase();
-        if (configName === normalizedName) {
-          return infosecData[j][INFOSEC_CONFIG_COLS.JOB_POS - 1] || null;
-        }
-      }
-      return null;
-    };
-    
-    for (let i = 1; i < ismData.length; i++) {
-      if (rowMatches_(ismData[i], ISM_WORKFLOW_COLS, sessionId, __round) && ismData[i][ISM_WORKFLOW_COLS.STATUS - 1] === 'Approved') {
-        const dateStr = ismData[i][ISM_WORKFLOW_COLS.DECISION_DATE - 1] ? new Date(ismData[i][ISM_WORKFLOW_COLS.DECISION_DATE - 1]).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
-        const memberName = ismData[i][ISM_WORKFLOW_COLS.ISM_MEMBER_NAME - 1];
-        const jobPos = getJobPosForMember(memberName) || 'ISM InfoSec Member';
-        ismApproversHtml += `
-          <tr>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb;">
-              <div style="font-weight: 600; color: #1a3a5c;">${escapeHtml_(ismData[i][ISM_WORKFLOW_COLS.ISM_MEMBER_NAME - 1])}</div>
-              <div style="font-size: 11px; color: #6b7280; text-transform: uppercase;">${escapeHtml_(jobPos)}</div>
-            </td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: center;">
-              <span style="display: inline-flex; align-items: center; background: #ecfdf5; color: #065f46; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;">Approved</span>
-            </td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563;">
-              ${escapeHtml_(ismData[i][ISM_WORKFLOW_COLS.COMMENTS - 1] || '—')}
-            </td>
-            <td style="padding: 10px 0; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #4b5563;">
-              ${escapeHtml_(dateStr)}
-            </td>
-          </tr>
-        `;
-      }
-    }
-    
-    if (!ismApproversHtml) {
-        ismApproversHtml = `<tr><td colspan="4" style="padding: 10px 0; color: #6b7280; font-style: italic; border-bottom: 1px solid #e5e7eb;">No ISM approvers found.</td></tr>`;
-    }
+    // C8 (2026-08-13, feedback batch 2): the two per-stage summary tables ("Department /
+    // Division Approvals" and "ISM InfoSec Approvals") are DELETED from the certificate. They
+    // duplicated the round-grouped Complete Approval History below, and on multi-round
+    // requests the reader saw the same decisions twice. The history section is now the single
+    // approver record; per-reviewer routing is suppressed there (hideRouting) because routing
+    // is one destination for the whole request, printed once in the Implementation Routing
+    // block at the bottom.
 
     const nowStr = new Date().toLocaleString('en-PH', { dateStyle: 'long', timeStyle: 'short' });
 
@@ -10388,11 +10353,13 @@ function routeApprovedRequest_(sessionId, destination, round = null) {
       }
     } catch (e) { Logger.log('Cert supporting-docs build failed: ' + e.toString()); }
 
-    // Round-4 (was Commit 3/Q1): the certificate now records the COMPLETE approval story, start to
-    // finish in one grouped-by-round list (not just the prior "revision" rounds). Rendered always:
-    // a never-returned request shows its single round.
+    // Round-4 (was Commit 3/Q1): the certificate records the COMPLETE approval story, start to
+    // finish in one grouped-by-round list. Rendered always: a never-returned request shows its
+    // single round. Since C8 this is the certificate's ONLY approver record (the two summary
+    // tables it duplicated are gone), with per-reviewer routing suppressed; see the
+    // Implementation Routing block for the one authoritative destination.
     const certRevisionHistory = (function () {
-      try { return buildUnifiedHistoryHtml_(getUnifiedHistory_(sessionId, false)); } catch (e) { return ''; }
+      try { return buildUnifiedHistoryHtml_(getUnifiedHistory_(sessionId, false), { hideRouting: true }); } catch (e) { return ''; }
     })();
     const certRevisionSection = certRevisionHistory
       ? `<div style="margin-bottom: 30px;"><h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Complete Approval History</h2>${certRevisionHistory}</div>`
@@ -10527,43 +10494,7 @@ function routeApprovedRequest_(sessionId, destination, round = null) {
           </div>
           ` : ''}
 
-          <!-- Head Approvers -->
-          <div style="margin-bottom: 30px;">
-            <h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Department / Division Approvals</h2>
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-              <thead>
-                <tr>
-                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 30%;">Approver</th>
-                  <th style="text-align: center; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 15%;">Status</th>
-                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 35%;">Comments / Feedback</th>
-                  <th style="text-align: right; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 20%;">Date & Time of Approval</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${headsApproversHtml}
-              </tbody>
-            </table>
-          </div>
-
-          <!-- ISM Approvers -->
-          <div style="margin-bottom: 30px;">
-            <h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">ISM InfoSec Approvals</h2>
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-              <thead>
-                <tr>
-                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 30%;">Approver</th>
-                  <th style="text-align: center; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 15%;">Status</th>
-                  <th style="text-align: left; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 35%;">Comments / Feedback</th>
-                  <th style="text-align: right; padding: 8px 0; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; width: 20%;">Date & Time of Approval</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${ismApproversHtml}
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Revision History (Q1) -->
+          <!-- Complete Approval History: the single, round-grouped approver record (C8) -->
           ${certRevisionSection}
 
           <!-- Routing Information -->

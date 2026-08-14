@@ -3157,18 +3157,28 @@ function renderApprovalTracker(data, innerOnly) {
 function renderUnifiedApprovalHistory(data) {
   const headsInner = renderApprovalTracker(data, true);
   const ismInner = renderISMAndDivHeadTracker(data, true);
-  const priorRounds = data.revisionHistory || [];
+  // B4 fix (2026-08-13, feedback batch 2): revisionHistory carries EVERY round, including the
+  // current one (its decided rows). The trackers below already render the current round live,
+  // so treating the whole list as "prior rounds" double-rendered the current round AND
+  // computed the current round number as max+1 (a request returned once showed a phantom
+  // "Round 2 (Current)" before any resubmit happened). Split: prior = rounds below the max,
+  // current number = the max itself.
+  const allRounds = data.revisionHistory || [];
+  let currentRoundNo = 1;
+  allRounds.forEach(function (r) { if (r.round > currentRoundNo) currentRoundNo = r.round; });
+  const priorRounds = allRounds.filter(function (r) { return r.round < currentRoundNo; });
   if (!headsInner && !ismInner && priorRounds.length === 0) return '';
 
-  // F7 (2026-08-13): the current round renders as a .step-badge pill so it visually outranks
-  // the muted underline the historical rounds keep. Same treatment in pia_index.html's
-  // renderApprovalTimeline; keep the two in step.
+  // C6 (2026-08-13, feedback batch 2): the CURRENT round pill is GREEN, everywhere, same
+  // palette as the retained-file chips (#f0fdf4 / #bbf7d0 / #15803d) and the email/cert
+  // renderer in pia_code.js buildUnifiedHistoryHtml_. History keeps the muted underline.
+  // Same treatment in pia_index.html renderApprovalTimeline; keep the three in step.
   const roundHeader = function (label, isCurrent) {
     if (isCurrent) {
-      return '<div style="margin:14px 0 10px;"><span class="step-badge" style="margin-bottom:0;">' +
+      return '<div style="margin:14px 0 10px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:3px 12px;text-transform:uppercase;letter-spacing:0.05em;">' +
         escapeHtml(label) + '</span></div>';
     }
-    return '<div style="font-size:11px;font-weight:700;color:var(--text3)' +
+    return '<div style="font-size:12px;font-weight:700;color:var(--text2)' +
       ';text-transform:uppercase;letter-spacing:0.05em;margin:14px 0 10px;border-bottom:1px solid var(--border);padding-bottom:4px;">' +
       escapeHtml(label) + '</div>';
   };
@@ -3196,19 +3206,20 @@ function renderUnifiedApprovalHistory(data) {
             return escapeHtml(label) + (reason && reason !== true ? ' (' + escapeHtml(String(reason)) + ')' : '');
           }).join(', ') + '</div>'
         : '';
+      // C5: flags print before the comment; C4/C7: the comment carries a "Comments:" label
+      // in near-black. Keep in step with pia_code.js renderDecision.
       return '<div class="vertical-timeline-item">' +
         '<div class="' + dotCls + '" aria-hidden="true"></div>' +
         '<div class="vertical-timeline-title">' + name + ' <span style="font-weight:400;color:var(--text3);font-size:11px;">(' + role + ')</span></div>' +
         '<div class="vertical-timeline-sub">' + badge + (dateStr ? ' <span style="font-size:10px;color:var(--text3);margin-left:6px;">' + dateStr + '</span>' : '') + '</div>' +
-        (comment ? '<div class="vertical-timeline-comment">"' + comment + '"</div>' : '') +
         flagsHtml +
+        (comment ? '<div class="vertical-timeline-comment" style="color:#111827;">Comments: "' + comment + '"</div>' : '') +
         '</div>';
     }).join('');
     priorHtml += roundHeader('Round ' + r.round + ' (returned and revised)', false) +
       '<div class="vertical-timeline" role="list" style="margin-top:0;opacity:0.85;">' + items + '</div>';
   });
 
-  const currentRoundNo = priorRounds.length ? (priorRounds[priorRounds.length - 1].round + 1) : 1;
   const currentHeaderHtml = priorRounds.length ? roundHeader('Round ' + currentRoundNo + ' (Current)', true) : '';
   const dcsTimestamp = data.timestamp ? formatTimestampDisplay(data.timestamp) : '';
 
@@ -3322,185 +3333,59 @@ function safeIdAttr(v) {
   return String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '');
 }
 
-/* ── Secure document viewer ──────────────────────────────────────────────────────────
-   Files live PRIVATELY in the company Drive vault (they used to be shared with anyone
-   holding the link, so one forwarded link leaked a signed NDA publicly). Nothing here
-   ever exposes a Drive URL: the server hands back the raw bytes, and we render them
-   from a same-document blob.
-
-   🚩 WHY A MODAL AND NOT window.open(blobUrl). This app is served inside Apps Script's
-   sandboxed iframe. Popups are blocked there, and a blob: URL minted inside that frame
-   is not reliably navigable as a top-level document. Rendering into the CURRENT document
-   is the only approach that works consistently, so the preview is an in-page overlay.
-
-   🚩 THE BLOB URL MUST OUTLIVE THE CALL. The old download-only path revoked immediately
-   after the synthetic click; a preview cannot, because the <iframe>/<img> reads the URL
-   for as long as it is on screen. It is revoked in closeFilePreview() instead, which is
-   why every exit route (X, backdrop, Esc, opening a second file) funnels through there.
-   Miss one and the blob leaks for the life of the page.
+/* ── Secure document viewing ─────────────────────────────────────────────────────────
+   B1 (2026-08-13, feedback batch 2): the in-page preview overlay is DELETED. In-page
+   rendering of blob: bytes is impossible inside Apps Script's sandboxed iframe (Chrome
+   refuses blob: PDFs in <iframe> AND <object>; both were tried on the deployed app).
+   "View" now opens the Google Drive viewer in a new tab via apiGetDcsFileViewUrl, which
+   re-authorizes and lazily elevates the one file to DOMAIN_WITH_LINK. The byte path
+   (apiDownloadDcsFile) survives as the pop-up-blocked fallback below.
+   Deliberate triplicate with pia_index.html and pia_code.js getStyledHtmlWrapper_;
+   the three GAS projects cannot share code. 🚩 Edit all three together.
 ────────────────────────────────────────────────────────────────────────────────────── */
 
-// Live blob URL while the preview is open. Exactly one at a time; see closeFilePreview.
-var __filePreviewUrl = null;
-
 /*
-  Function Name: filePreviewEscHandler
-  LAYMAN: Closes the document preview when you press Esc.
-  TECHNICAL: Named (not anonymous) so removeEventListener can actually detach it, an
-             anonymous handler here would stack one listener per preview opened.
-  PARAMS: - e: the keydown event.   RETURNS: Nothing.
-*/
-function filePreviewEscHandler(e) {
-  if (e.key === 'Escape') closeFilePreview();
-}
-
-/*
-  Function Name: closeFilePreview
-  LAYMAN: Closes the preview window and frees the memory the document was using.
-  TECHNICAL: Removes the overlay, revokes the object URL, and detaches the Esc listener.
-             Safe to call when nothing is open, which is why showFilePreview calls it first
-             to guarantee only one preview (and one live blob) exists at a time.
-  PARAMS: (none)   RETURNS: Nothing.
-*/
-function closeFilePreview() {
-  var host = document.getElementById('filePreviewOverlay');
-  if (host && host.parentNode) host.parentNode.removeChild(host);
-  if (__filePreviewUrl) { URL.revokeObjectURL(__filePreviewUrl); __filePreviewUrl = null; }
-  document.removeEventListener('keydown', filePreviewEscHandler);
-}
-
-/*
-  Function Name: showFilePreview
-  LAYMAN: Shows the document right here on the page instead of downloading it, because the
-          point of "View" is to check what was submitted, not to collect files on your laptop.
-          PDFs and images show inline; anything else (Word, Excel) can't be displayed by a
-          browser, so those get a Download button and an honest explanation.
-  TECHNICAL: Decodes base64 -> Blob -> object URL, then builds the overlay with createElement
-             and sets the filename via textContent. Deliberately NOT innerHTML with the name
-             interpolated: the filename is user-supplied and this file's escapeHtml is not in
-             scope inside every copy of this block, so textContent is the portable safe choice.
-             A Download button is ALWAYS offered even when the inline render succeeds, as the
-             escape hatch if a given browser refuses to display the type.
+  Function Name: downloadDcsFileBytes
+  LAYMAN: Fallback na paraan para makuha ang dokumento kapag hindi mabuksa ang Drive tab
+          (halimbawa, naka-block ang pop-ups): dina-download na lang ang file mismo.
+  TECHNICAL: B1 (2026-08-13, feedback batch 2): the in-page preview overlay is deleted; View
+             now opens the Drive viewer (see viewDcsFile). This is the pop-up-blocked fallback
+             and the sole remaining client of apiDownloadDcsFile: base64 -> Blob -> object URL
+             -> a[download] click (a blob URL used for DOWNLOAD works fine in the GAS sandbox;
+             it was blob NAVIGATION that was blocked). URL revoked after the click.
   PARAMS:
   - data: { base64, mimeType, filename } exactly as apiDownloadDcsFile returns it.
-  RETURNS: Nothing (mutates the DOM).
+  RETURNS: Nothing (triggers a browser download).
 */
-function showFilePreview(data) {
-  closeFilePreview();   // never stack two previews, never leak the previous blob
-
+function downloadDcsFileBytes(data) {
   var mime = String((data && data.mimeType) || 'application/octet-stream');
   var name = String((data && data.filename) || 'document');
-
   var byteChars = atob(data.base64);
   var byteNums = new Array(byteChars.length);
   for (var i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
-  __filePreviewUrl = URL.createObjectURL(new Blob([new Uint8Array(byteNums)], { type: mime }));
-
-  var isPdf = mime.indexOf('pdf') !== -1;
-  var isImg = mime.indexOf('image/') === 0;
-
-  var ov = document.createElement('div');
-  ov.id = 'filePreviewOverlay';
-  ov.setAttribute('role', 'dialog');
-  ov.setAttribute('aria-modal', 'true');
-  ov.setAttribute('aria-label', 'Document preview');
-  ov.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(17,24,39,0.6);' +
-    'z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:16px;';
-
-  var box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:9px;width:100%;max-width:900px;height:90vh;' +
-    'display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25);';
-
-  var head = document.createElement('div');
-  head.style.cssText = 'display:flex;align-items:center;gap:10px;padding:11px 14px;' +
-    'border-bottom:1px solid #e5e7eb;flex-shrink:0;';
-
-  var title = document.createElement('div');
-  title.textContent = name;   // user-supplied, never parsed as HTML
-  title.style.cssText = 'font-weight:600;font-size:13.5px;color:#111827;flex:1;min-width:0;' +
-    'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-
-  var dl = document.createElement('button');
-  dl.type = 'button';
-  dl.textContent = 'Download';
-  dl.style.cssText = 'padding:6px 14px;font-size:12.5px;font-weight:500;cursor:pointer;' +
-    'border:1px solid #d1d5db;border-radius:4px;background:#fff;color:#111827;flex-shrink:0;';
-  dl.onclick = function () {
-    var a = document.createElement('a');
-    a.href = __filePreviewUrl;      // reuse the open blob, no second server round trip
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  var x = document.createElement('button');
-  x.type = 'button';
-  x.setAttribute('aria-label', 'Close preview');
-  x.innerHTML = '&times;';
-  x.style.cssText = 'border:none;background:none;font-size:22px;line-height:1;cursor:pointer;' +
-    'color:#6b7280;padding:0 4px;flex-shrink:0;';
-  x.onclick = closeFilePreview;
-
-  head.appendChild(title);
-  head.appendChild(dl);
-  head.appendChild(x);
-
-  var pane = document.createElement('div');
-  pane.style.cssText = 'flex:1;min-height:0;background:#f7f8fa;' +
-    (isImg ? 'display:flex;align-items:center;justify-content:center;padding:12px;' : '');
-
-  if (isPdf) {
-    // F2 (2026-08-13): <object> instead of <iframe>. Chrome refused to render a blob: PDF in an
-    // iframe inside Apps Script's sandboxed frame (blank panel plus a sandbox warning in the
-    // console). <object> also carries built-in fallback content: if the browser cannot render
-    // the PDF, the child message shows instead of a silent blank pane. Three copies of this
-    // function exist (here, pia_index.html, getStyledHtmlWrapper_); edit together.
-    var obj = document.createElement('object');
-    obj.data = __filePreviewUrl;
-    obj.type = mime;
-    obj.setAttribute('aria-label', name);
-    obj.style.cssText = 'width:100%;height:100%;border:0;display:block;';
-    var fb = document.createElement('div');
-    fb.style.cssText = 'padding:36px 24px;text-align:center;color:#4b5563;font-size:13px;line-height:1.7;';
-    fb.textContent = 'This document could not be previewed in the browser. Use Download to open it.';
-    obj.appendChild(fb);
-    pane.appendChild(obj);
-  } else if (isImg) {
-    var img = document.createElement('img');
-    img.src = __filePreviewUrl;
-    img.alt = name;
-    img.style.cssText = 'max-width:100%;max-height:100%;display:block;';
-    pane.appendChild(img);
-  } else {
-    var note = document.createElement('div');
-    note.style.cssText = 'padding:36px 24px;text-align:center;color:#4b5563;font-size:13px;line-height:1.7;';
-    note.textContent = 'This file type cannot be displayed in the browser. ' +
-      'Use Download to open it in the right application.';
-    pane.appendChild(note);
-  }
-
-  box.appendChild(head);
-  box.appendChild(pane);
-  ov.appendChild(box);
-  ov.addEventListener('click', function (e) { if (e.target === ov) closeFilePreview(); });
-  document.body.appendChild(ov);
-  document.addEventListener('keydown', filePreviewEscHandler);
+  var url = URL.createObjectURL(new Blob([new Uint8Array(byteNums)], { type: mime }));
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = name;   // filename set via property, never parsed as HTML
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
 }
 
 /*
   Function Name: viewDcsFile
-  LAYMAN: Opens one of the uploaded documents so you can look at it. The server first checks
-          the document really belongs to this request before handing anything over.
-  TECHNICAL: Calls apiDownloadDcsFile(reqId, fileId), the server endpoint keeps its name, it
-             genuinely returns the bytes; only the client presentation changed from a forced
-             download to an inline preview. Disables the button for the round trip and restores
-             it on every branch.
+  LAYMAN: Opens one of the uploaded documents in the Google Drive viewer (new tab). The server
+          first checks the document really belongs to this request before handing anything over.
+  TECHNICAL: B1 (2026-08-13): calls apiGetDcsFileViewUrl(reqId, fileId), which re-authorizes,
+             lazily elevates the file to DOMAIN_WITH_LINK and returns its Drive viewer URL.
+             Falls back to downloadDcsFileBytes via apiDownloadDcsFile when the pop-up is
+             blocked. Disables the button for the round trip and restores it on every branch.
   PARAMS:
   - reqId: the DCS Request ID that owns the document.
   - fileId: the Drive file ID (validated server-side against reqId).
   - btn: the clicked element, so we can show a per-button loading state.
-  RETURNS: Nothing (async; opens the preview overlay or shows an alert).
+  RETURNS: Nothing (async; opens the Drive tab, or downloads, or shows an alert).
 */
 function viewDcsFile(reqId, fileId, btn) {
   var originalHtml = btn ? btn.innerHTML : '';
@@ -3510,24 +3395,44 @@ function viewDcsFile(reqId, fileId, btn) {
     if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.innerHTML = originalHtml; }
   };
 
+  // B1 (2026-08-13, feedback batch 2): View opens the Google Drive viewer in a new tab.
+  // In-page preview of blob: bytes is impossible in the GAS sandbox (Chrome refuses blob:
+  // PDFs in <iframe> AND <object>, both tried on the deployed app). The placeholder window
+  // is opened SYNCHRONOUSLY inside the click so the popup keeps the user gesture; the Drive
+  // URL arrives async and is steered into it.
+  var w = null;
+  try { w = window.open('', '_blank'); } catch (e) { w = null; }
+
   google.script.run
     .withSuccessHandler(function (res) {
       restore();
-      if (!res || !res.ok) {
+      if (!res || !res.ok || !res.url) {
+        if (w) { try { w.close(); } catch (e) {} }
         showCustomAlert((res && res.message) ? res.message : 'Could not open this document.', 'danger');
         return;
       }
-      try {
-        showFilePreview(res.data);
-      } catch (err) {
-        showCustomAlert('Could not display this document. Please try again.', 'danger');
+      if (w) {
+        w.location.href = res.url;
+      } else {
+        // Pop-up blocked: fall back to downloading the bytes instead of failing.
+        showCustomAlert('Your browser blocked the document tab, downloading the file instead.', 'warn');
+        google.script.run
+          .withSuccessHandler(function (dres) {
+            if (dres && dres.ok && dres.data) { downloadDcsFileBytes(dres.data); }
+            else { showCustomAlert((dres && dres.message) ? dres.message : 'Could not open this document.', 'danger'); }
+          })
+          .withFailureHandler(function () {
+            showCustomAlert('Could not open this document. Please try again or contact ISM.', 'danger');
+          })
+          .apiDownloadDcsFile(reqId, fileId);
       }
     })
     .withFailureHandler(function (err) {
       restore();
+      if (w) { try { w.close(); } catch (e) {} }
       showCustomAlert('Could not open this document. Please try again or contact ISM.', 'danger');
     })
-    .apiDownloadDcsFile(reqId, fileId);
+    .apiGetDcsFileViewUrl(reqId, fileId);
 }
 
 /*
@@ -4910,7 +4815,12 @@ function renderForm() {
             </div>
             <div class="upload-text">
               <strong id="dcs-main-upload-label">${mainUploadLabel} (Required)</strong>
-              <span style="color:var(--danger-text);font-weight:600;">Approver flagged this file: ${escapeHtml(getFileFlagMessage('dcs-nda'))}. Please re-upload a corrected version.</span>
+              <!-- C2 (2026-08-13, feedback batch 2): standardized flagged-file message, three
+                   stacked lines (what happened / the approver's comment / what to do). Same
+                   format on all three flaggable cards; keep them identical. -->
+              <span style="display:block;color:var(--danger-text);font-weight:600;">Approver flagged this file</span>
+              <span style="display:block;color:var(--navy-text);">Comment: ${escapeHtml(getFileFlagMessage('dcs-nda'))}</span>
+              <span style="display:block;color:var(--danger-text);">Please re-upload a corrected version.</span>
             </div>
             <div class="upload-action">Browse</div>
             ${getFlagIconHtml('dcs-nda')}
@@ -4962,7 +4872,10 @@ function renderForm() {
             </div>
             <div class="upload-text">
               <strong>Upload Data Sharing Agreement (DSA) (Required)</strong>
-              <span style="color:var(--danger-text);font-weight:600;">Approver flagged this file: ${escapeHtml(getFileFlagMessage('dcs-dsa'))}. Please re-upload a corrected version.</span>
+              <!-- C2: standardized flagged-file message; keep identical to the NDA card. -->
+              <span style="display:block;color:var(--danger-text);font-weight:600;">Approver flagged this file</span>
+              <span style="display:block;color:var(--navy-text);">Comment: ${escapeHtml(getFileFlagMessage('dcs-dsa'))}</span>
+              <span style="display:block;color:var(--danger-text);">Please re-upload a corrected version.</span>
             </div>
             <div class="upload-action">Browse</div>
             ${getFlagIconHtml('dcs-dsa')}
@@ -5017,7 +4930,10 @@ function renderForm() {
             </div>
             <div class="upload-text">
               <strong>Upload <span id="endorse-scope-word" style="display:inline;font-size:inherit;color:inherit;margin:0;">${isOJT ? 'School' : 'Agency'}</span> Endorsement Letter (Required) ${infoTip('An official letter from the agency endorsing the personnel for access. Must be signed and on agency letterhead.')}</strong>
-              <span style="color:var(--danger-text);font-weight:600;">Approver flagged this file: ${escapeHtml(getFileFlagMessage('dcs-agency-endorsement'))}. Please re-upload a corrected version.</span>
+              <!-- C2: standardized flagged-file message; keep identical to the NDA card. -->
+              <span style="display:block;color:var(--danger-text);font-weight:600;">Approver flagged this file</span>
+              <span style="display:block;color:var(--navy-text);">Comment: ${escapeHtml(getFileFlagMessage('dcs-agency-endorsement'))}</span>
+              <span style="display:block;color:var(--danger-text);">Please re-upload a corrected version.</span>
             </div>
             <div class="upload-action">Browse</div>
           </div>
@@ -6976,6 +6892,11 @@ function editReturnedApplication(reqId) {
           if (!state.dcs.agency) state.dcs.agency = { agencyName: '', agencyPersonnel: '', contractStartDate: '', endorsementLetter: '', networkDrive: '', immHeadRecoveryEmail: '', immHeadRecoveryNumber: '' };
           if (state.dcs.isAgency === undefined) state.dcs.isAgency = !!(state.dcs.agency && state.dcs.agency.agencyName);
           if (state.dcs.isOJT === undefined) state.dcs.isOJT = !!(state.dcs.agency && state.dcs.agency.type === 'OJT');
+          // B3 fix (2026-08-13): a draft saved before the fix may carry the {id, name} object
+          // from Metadata_Agency; the form expects a filename string ("[object Object]" bug).
+          if (state.dcs.agency.endorsementLetter && typeof state.dcs.agency.endorsementLetter === 'object') {
+            state.dcs.agency.endorsementLetter = state.dcs.agency.endorsementLetter.name || '';
+          }
           
           // Load approver flags FIRST: needed for per-file revision checks below
           state.approverFlags = draftRes.state.approverFlags || {};
@@ -7119,6 +7040,15 @@ function fetchReturnedApplicationFromDB(reqId) {
             immHeadRecoveryEmail: '', immHeadRecoveryNumber: ''
           }
         };
+
+        // B3 fix (2026-08-13, feedback batch 2): Metadata_Agency stores endorsementLetter as an
+        // OBJECT ({id, name}, written by Code.js submitDCS ~1782; PIA reads .id/.name from it).
+        // The form state expects a plain filename string, and rendering the object printed
+        // "[object Object]" as the retained-attachment name on the resubmit screen. Normalize
+        // to the filename derived from the files list (fallback: the object's own .name).
+        if (state.dcs.agency && state.dcs.agency.endorsementLetter && typeof state.dcs.agency.endorsementLetter === 'object') {
+          state.dcs.agency.endorsementLetter = endorseFileName || state.dcs.agency.endorsementLetter.name || '';
+        }
 
         // In revision mode, only clear filenames for files that are flagged by the approver.
         // Non-flagged files are retained, the backend will keep the existing Drive file.

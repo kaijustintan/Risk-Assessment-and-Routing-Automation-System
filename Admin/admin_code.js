@@ -4175,83 +4175,10 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
     var recipients = validEmails.join(',');
 
     // ── Step 5: Gather Approval Data from sheets ──
-    var headApproversHtml = '';
-    var awSheet = ss.getSheetByName(SHEET_NAMES.APPROVAL_WORKFLOW);
-    if (awSheet) {
-      var approvalRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(awSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
-      for (var i = 0; i < approvalRows.length; i++) {
-        var a = approvalRows[i];
-        // Check Status column first (authoritative), fall back to Decision
-        if (String(a.Status || a.Decision || '').toUpperCase() === 'APPROVED') {
-          var dateStr = a.DecisionDate ? new Date(a.DecisionDate).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
-          headApproversHtml += '<tr>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;">' +
-              '<div style="font-weight:600;color:#1e3a5f;">' + escapeHtml_(a.ApproverName || a.ApproverEmail || '—') + '</div>' +
-              '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;">' + escapeHtml_(a.ApproverRole || 'Approver') + '</div>' +
-            '</td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:center;">' +
-              '<span style="display:inline-flex;align-items:center;background:#ecfdf5;color:#065f46;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;">Approved</span>' +
-            '</td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:right;font-size:12px;color:#4b5563;">' + escapeHtml_(dateStr) + '</td>' +
-          '</tr>';
-        }
-      }
-    }
-
-    // Division Head approvals
-    var dhSheet = ss.getSheetByName(SHEET_NAMES.DIVHEAD_APPROVAL);
-    if (dhSheet) {
-      var dhRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(dhSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
-      for (var i = 0; i < dhRows.length; i++) {
-        var dh = dhRows[i];
-        // Check Status column first (authoritative), fall back to Decision
-        if (String(dh.Status || dh.Decision || '').toUpperCase() === 'APPROVED') {
-          var dateStr = dh.DecisionDate ? new Date(dh.DecisionDate).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
-          headApproversHtml += '<tr>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;">' +
-              '<div style="font-weight:600;color:#1a3a5c;">' + escapeHtml_(dh.DivHead_Email || '—') + '</div>' +
-              '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;">Division Head</div>' +
-            '</td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:center;">' +
-              '<span style="display:inline-flex;align-items:center;background:#ecfdf5;color:#065f46;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;">Approved</span>' +
-            '</td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:right;font-size:12px;color:#4b5563;">' + escapeHtml_(dateStr) + '</td>' +
-          '</tr>';
-        }
-      }
-    }
-
-    if (!headApproversHtml) {
-      headApproversHtml = '<tr><td colspan="3" style="padding:10px 0;color:#6b7280;font-style:italic;border-bottom:1px solid #e5e7eb;">No head approvers found.</td></tr>';
-    }
-
-    // ISM Approvals
-    var ismApproversHtml = '';
-    var ismSheet = ss.getSheetByName(SHEET_NAMES.ISM_APPROVAL);
-    if (ismSheet) {
-      var ismRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(ismSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
-      for (var i = 0; i < ismRows.length; i++) {
-        var im = ismRows[i];
-        // Check Status column first (authoritative), fall back to Decision
-        if (String(im.Status || im.Decision || '').toUpperCase() === 'APPROVED') {
-          var dateStr = im.DecisionDate ? new Date(im.DecisionDate).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
-          ismApproversHtml += '<tr>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;">' +
-              '<div style="font-weight:600;color:#1a3a5c;">' + escapeHtml_(im.ISM_Member_Name || im.ISM_Member_Email || '—') + '</div>' +
-              '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;">ISM InfoSec Member</div>' +
-            '</td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:center;">' +
-              '<span style="display:inline-flex;align-items:center;background:#ecfdf5;color:#065f46;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;">Approved</span>' +
-            '</td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:right;font-size:12px;color:#4b5563;">' + escapeHtml_(dateStr) + '</td>' +
-          '</tr>';
-        }
-      }
-    }
-
-    if (!ismApproversHtml) {
-      ismApproversHtml = '<tr><td colspan="3" style="padding:10px 0;color:#6b7280;font-style:italic;border-bottom:1px solid #e5e7eb;">No ISM approvers found.</td></tr>';
-    }
+    // C8 (2026-08-13, feedback batch 2): the two per-stage summary tables are gone; the cert
+    // carries ONE round-grouped Complete Approval History (all rounds, decided rows only),
+    // built by buildCertApprovalHistoryHtml_. History is deliberately NOT round-scoped.
+    var approvalHistoryHtml = buildCertApprovalHistoryHtml_(ss, sessionId);
 
     // Accountable Persons HTML
     var accountableRowsHtml = '';
@@ -4276,7 +4203,7 @@ function apiAdmin_RerouteApprovedRequest(sessionId, destination, force) {
 
     var htmlBody = buildCertificateHtml_(sessionId, pia1, linkedReqId, applicantEmail,
       requestorName, department, accessNeeded, iHelpReference, accountableRowsHtml,
-      dcsData.metadataAgency, headApproversHtml, ismApproversHtml, nowStr);
+      dcsData.metadataAgency, approvalHistoryHtml, nowStr);
 
     // ── Step 7: Generate PDF Certificate ──
     var pdfBlob = Utilities.newBlob(htmlBody, MimeType.HTML, 'Certificate_' + sessionId + '.html')
@@ -4629,61 +4556,10 @@ function apiAdmin_DownloadCertificate(sessionId) {
     var accountable = dcsData.metadata ? (dcsData.metadata.accountable || null) : null;
 
     // ── Gather Approvals ──
-    var headApproversHtml = '';
-    var awSheet = ss.getSheetByName(SHEET_NAMES.APPROVAL_WORKFLOW);
-    if (awSheet) {
-      var approvalRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(awSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
-      for (var i = 0; i < approvalRows.length; i++) {
-        var a = approvalRows[i];
-        // Check Status column first (authoritative), fall back to Decision
-        if (String(a.Status || a.Decision || '').toUpperCase() === 'APPROVED') {
-          var dateStr = a.DecisionDate ? new Date(a.DecisionDate).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
-          headApproversHtml += '<tr>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;"><div style="font-weight:600;color:#1a3a5c;">' + escapeHtml_(a.ApproverName || a.ApproverEmail || '—') + '</div><div style="font-size:11px;color:#6b7280;text-transform:uppercase;">' + escapeHtml_(a.ApproverRole || 'Approver') + '</div></td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:center;"><span style="display:inline-flex;align-items:center;background:#ecfdf5;color:#065f46;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;">Approved</span></td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:right;font-size:12px;color:#4b5563;">' + escapeHtml_(dateStr) + '</td></tr>';
-        }
-      }
-    }
-
-    var dhSheet = ss.getSheetByName(SHEET_NAMES.DIVHEAD_APPROVAL);
-    if (dhSheet) {
-      var dhRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(dhSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
-      for (var i = 0; i < dhRows.length; i++) {
-        var dh = dhRows[i];
-        // Check Status column first (authoritative), fall back to Decision
-        if (String(dh.Status || dh.Decision || '').toUpperCase() === 'APPROVED') {
-          var dateStr = dh.DecisionDate ? new Date(dh.DecisionDate).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
-          headApproversHtml += '<tr>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;"><div style="font-weight:600;color:#1a3a5c;">' + escapeHtml_(dh.DivHead_Email || '—') + '</div><div style="font-size:11px;color:#6b7280;text-transform:uppercase;">Division Head</div></td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:center;"><span style="display:inline-flex;align-items:center;background:#ecfdf5;color:#065f46;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;">Approved</span></td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:right;font-size:12px;color:#4b5563;">' + escapeHtml_(dateStr) + '</td></tr>';
-        }
-      }
-    }
-    if (!headApproversHtml) {
-      headApproversHtml = '<tr><td colspan="3" style="padding:10px 0;color:#6b7280;font-style:italic;">No head approvers found.</td></tr>';
-    }
-
-    var ismApproversHtml = '';
-    var ismSheet = ss.getSheetByName(SHEET_NAMES.ISM_APPROVAL);
-    if (ismSheet) {
-      var ismRows = keepCurrentRoundRows_(sheetToObjectsFiltered_(ismSheet, 'SessionID', sessionId)); // cert roster = current round only (F8 fix 2026-08-13: multi-round requests flattened every round into the table)
-      for (var i = 0; i < ismRows.length; i++) {
-        var im = ismRows[i];
-        // Check Status column first (authoritative), fall back to Decision
-        if (String(im.Status || im.Decision || '').toUpperCase() === 'APPROVED') {
-          var dateStr = im.DecisionDate ? new Date(im.DecisionDate).toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}) : '—';
-          ismApproversHtml += '<tr>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;"><div style="font-weight:600;color:#1a3a5c;">' + escapeHtml_(im.ISM_Member_Name || im.ISM_Member_Email || '—') + '</div><div style="font-size:11px;color:#6b7280;text-transform:uppercase;">ISM InfoSec Member</div></td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:center;"><span style="display:inline-flex;align-items:center;background:#ecfdf5;color:#065f46;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;">Approved</span></td>' +
-            '<td style="padding:10px 0;border-bottom:1px solid #e5e7eb;text-align:right;font-size:12px;color:#4b5563;">' + escapeHtml_(dateStr) + '</td></tr>';
-        }
-      }
-    }
-    if (!ismApproversHtml) {
-      ismApproversHtml = '<tr><td colspan="3" style="padding:10px 0;color:#6b7280;font-style:italic;">No ISM approvers found.</td></tr>';
-    }
+    // C8 (2026-08-13, feedback batch 2): one round-grouped Complete Approval History replaces
+    // the two per-stage summary tables (all rounds, decided rows only). History is
+    // deliberately NOT round-scoped.
+    var approvalHistoryHtml = buildCertApprovalHistoryHtml_(ss, sessionId);
 
     var accountableRowsHtml = '';
     if (accountable) {
@@ -4700,7 +4576,7 @@ function apiAdmin_DownloadCertificate(sessionId) {
     var nowStr = new Date().toLocaleString('en-PH', { dateStyle: 'long', timeStyle: 'short' });
     var htmlBody = buildCertificateHtml_(sessionId, pia1, linkedReqId, applicantEmail,
       requestorName, department, accessNeeded, iHelpReference, accountableRowsHtml,
-      dcsData.metadataAgency, headApproversHtml, ismApproversHtml, nowStr);
+      dcsData.metadataAgency, approvalHistoryHtml, nowStr);
 
     // ── Generate PDF ──
     var pdfBlob = Utilities.newBlob(htmlBody, MimeType.HTML, 'Certificate_' + sessionId + '.html')
@@ -4779,22 +4655,157 @@ function getOptionalUrl_(key) {
 }
 
 /*
+  Function: buildCertApprovalHistoryHtml_
+  LAYMAN:    Binubuo ang kumpletong "Complete Approval History" ng isang request para sa
+             certificate: bawat round, sino ang nag-desisyon, ano ang desisyon, kailan, ano
+             ang comment at ano ang na-flag. Ito na ang NAG-IISANG approver record ng
+             certificate (C8): tinanggal na ang dalawang summary table na inuulit lang ito.
+  TECHNICAL: C8 (2026-08-13, feedback batch 2). Admin's port of PIA's buildUnifiedHistoryHtml_
+             over Admin's own row-object reads (sheetToObjectsFiltered_, header-keyed). Reads
+             ALL rounds from the three workflow sheets (the cert is history, not routing, so
+             keepCurrentRoundRows_ deliberately NOT used), keeps DECIDED rows only (a Pending
+             row is a live ladder slot, not history; matches PIA's includePending=false cert),
+             groups by RoundNumber (blank = 1), renders heads+divhead then ISM sub-groups per
+             round. Same visual contract as PIA: green current-round pill (#f0fdf4/#bbf7d0/
+             #15803d), flags before comment, "Comments:" label, near-black body, NO per-row
+             routing (the Implementation Routing block prints the one destination).
+             Email-safe: inline styles, plain string concatenation.
+  PARAMS:    - ss: the spreadsheet handle.  - sessionId: the PIA session id.
+  RETURNS:   HTML string ('' when nothing decided yet).
+*/
+function buildCertApprovalHistoryHtml_(ss, sessionId) {
+  function rowRound(o) {
+    var n = Number(o && o.RoundNumber);
+    return (isFinite(n) && n >= 1) ? Math.floor(n) : 1;
+  }
+  function isDecided(o) {
+    var st = String((o && o.Status) || '').trim();
+    return st !== '' && st !== 'Pending';
+  }
+  function fmtDate(raw) {
+    if (!raw) return '';
+    try {
+      var d = new Date(raw);
+      return isNaN(d.getTime()) ? String(raw) : d.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+    } catch (e) { return String(raw); }
+  }
+  function labelFor(status) {
+    var s = String(status || '');
+    if (/Approved/i.test(s)) return 'Approved';
+    if (/Return|Reject/i.test(s)) return 'Returned to Requestor';
+    if (/Deny|Denied/i.test(s)) return 'Denied';
+    if (/Escalat/i.test(s)) return 'Escalated to Division Head';
+    return s;
+  }
+  function colorFor(status) {
+    var s = String(status || '');
+    if (/Approved/i.test(s)) return '#065f46';
+    if (/Return|Reject/i.test(s)) return '#92400e';
+    if (/Deny|Denied/i.test(s)) return '#991b1b';
+    if (/Escalat/i.test(s)) return '#1e40af';
+    return '#6b7280';
+  }
+  function renderDecision(d) {
+    var flags = '';
+    var flagKeys = [];
+    try {
+      var parsed = d.FlaggedFields ? JSON.parse(d.FlaggedFields) : {};
+      if (parsed && typeof parsed === 'object') flagKeys = Object.keys(parsed);
+      if (flagKeys.length) {
+        flags = '<div style="font-size:11.5px;color:#92400e;margin-top:3px;">Flagged: ' + flagKeys.map(function (k) {
+          var reason = parsed[k];
+          return escapeHtml_(k) + (reason && reason !== true ? ' (' + escapeHtml_(String(reason)) + ')' : '');
+        }).join(', ') + '</div>';
+      }
+    } catch (e) { flags = ''; }
+    var dateStr = fmtDate(d.DecisionDate);
+    var comment = String(d.Comments || '').trim();
+    return '<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f0f0f0;">' +
+      '<div style="font-size:13px;color:#111827;"><strong>' + escapeHtml_(d.__name) + '</strong> <span style="color:#4b5563;">(' + escapeHtml_(d.__role) + ')</span>: <span style="color:' + colorFor(d.Status) + ';font-weight:600;">' + escapeHtml_(labelFor(d.Status)) + '</span></div>' +
+      (dateStr ? '<div style="font-size:11px;color:#6b7280;margin-top:2px;">' + escapeHtml_(dateStr) + '</div>' : '') +
+      flags +
+      (comment ? '<div style="font-size:12.5px;color:#111827;margin-top:3px;">Comments: "' + escapeHtml_(comment) + '"</div>' : '') +
+      '</div>';
+  }
+  function subHeader(label) {
+    return '<div style="font-size:10px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin:8px 0 6px;">' + escapeHtml_(label) + '</div>';
+  }
+
+  var byRound = {};
+  var maxRound = 1;
+  function collect(sheetKey, stage, nameFn, roleFn) {
+    var sheet = ss.getSheetByName(sheetKey);
+    if (!sheet) return;
+    var rows = sheetToObjectsFiltered_(sheet, 'SessionID', sessionId);
+    for (var i = 0; i < rows.length; i++) {
+      var r = rowRound(rows[i]);
+      if (r > maxRound) maxRound = r;   // pendings still advance the round marker
+      if (!isDecided(rows[i])) continue;
+      rows[i].__stage = stage;
+      rows[i].__name = nameFn(rows[i]);
+      rows[i].__role = roleFn(rows[i]);
+      if (!byRound[r]) byRound[r] = [];
+      byRound[r].push(rows[i]);
+    }
+  }
+  try {
+    collect(SHEET_NAMES.APPROVAL_WORKFLOW, 'head',
+      function (o) { return o.ApproverName || o.ApproverEmail || 'Approver'; },
+      function (o) {
+        var s = Number(o.CurrentStep || 0);
+        return s === 1 ? 'Immediate Head' : s === 2 ? 'Department Head' : 'Head';
+      });
+    collect(SHEET_NAMES.DIVHEAD_APPROVAL, 'head',
+      function (o) { return o.DivHead_Email || 'Division Head'; },
+      function () { return 'Division Head'; });
+    collect(SHEET_NAMES.ISM_APPROVAL, 'ism',
+      function (o) { return o.ISM_Member_Name || o.ISM_Member_Email || 'InfoSec Reviewer'; },
+      function () { return 'InfoSec Reviewer'; });
+  } catch (e) {
+    Logger.log('buildCertApprovalHistoryHtml_ failed: ' + e.toString());
+    return '';
+  }
+
+  var roundKeys = Object.keys(byRound).map(Number).sort(function (a, b) { return a - b; });
+  if (!roundKeys.length) return '';
+
+  var html = '<div style="font-family: sans-serif;">';
+  roundKeys.forEach(function (r) {
+    var ds = byRound[r];
+    var heads = ds.filter(function (d) { return d.__stage === 'head'; });
+    var ism = ds.filter(function (d) { return d.__stage === 'ism'; });
+    var decisions = '';
+    if (heads.length) decisions += subHeader('Department / Division Approvals') + heads.map(renderDecision).join('');
+    if (ism.length) decisions += subHeader('ISM InfoSec Approvals') + ism.map(renderDecision).join('');
+    var isCur = (r === maxRound);
+    var headerLabel = 'Round ' + r + (isCur ? ' (Current)' : '');
+    var headerHtml = isCur
+      ? '<div style="margin-bottom:6px;"><span style="display:inline-block;font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:3px 12px;text-transform:uppercase;letter-spacing:0.05em;">' + escapeHtml_(headerLabel) + '</span></div>'
+      : '<div style="font-size:12px;font-weight:700;color:#4b5563;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">' + escapeHtml_(headerLabel) + '</div>';
+    html += '<div style="margin-bottom:16px;">' + headerHtml + decisions + '</div>';
+  });
+  return html + '</div>';
+}
+
+/*
   Function: buildCertificateHtml_
   LAYMAN:    Builds the full "Certificate of Approval" HTML, the formal document
-             showing the request brief, agency info, and every approver who signed off.
-             Shared by both the reroute-email and download-PDF paths.
+             showing the request brief, agency info, and the complete round-grouped
+             approval history. Shared by both the reroute-email and download-PDF paths.
   TECHNICAL: Pure string builder. Renders an application-brief table, an optional
-             agency section (only if metadataAgency has keys), and pre-built approver
-             table bodies (headApproversHtml, ismApproversHtml). Escapes all dynamic
-             text via escapeHtml_.
+             agency section (only if metadataAgency has keys), and the pre-built
+             round-grouped history (buildCertApprovalHistoryHtml_). C8 (2026-08-13):
+             the two per-stage summary tables are deleted; the history is the single
+             approver record, matching PIA's certificate. Escapes all dynamic text
+             via escapeHtml_.
   PARAMS:    - sessionId, pia1, linkedReqId, applicantEmail, requestorName, department,
              accessNeeded, iHelpReference, accountableRowsHtml, metadataAgency,
-             headApproversHtml, ismApproversHtml, nowStr.
+             approvalHistoryHtml, nowStr.
   RETURNS:   HTML string for the certificate body.
 */
 function buildCertificateHtml_(sessionId, pia1, linkedReqId, applicantEmail,
   requestorName, department, accessNeeded, iHelpReference, accountableRowsHtml,
-  metadataAgency, headApproversHtml, ismApproversHtml, nowStr) {
+  metadataAgency, approvalHistoryHtml, nowStr) {
 
   var isAgency = metadataAgency && typeof metadataAgency === 'object' && Object.keys(metadataAgency).length > 0;
 
@@ -4833,18 +4844,12 @@ function buildCertificateHtml_(sessionId, pia1, linkedReqId, applicantEmail,
     accountableRowsHtml +
     '</table></div>' +
     agencySection +
-    // Head Approvers
+    // Complete Approval History: the single, round-grouped approver record (C8)
+    (approvalHistoryHtml ?
     '<div style="margin-bottom: 30px;">' +
-    '<h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Department / Division Approvals</h2>' +
-    '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">' +
-    '<thead><tr><th style="text-align:left;padding:8px 0;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;width:45%;">Approver</th><th style="text-align:center;padding:8px 0;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;width:25%;">Status</th><th style="text-align:right;padding:8px 0;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;width:30%;">Date & Time of Approval</th></tr></thead>' +
-    '<tbody>' + headApproversHtml + '</tbody></table></div>' +
-    // ISM Approvers
-    '<div style="margin-bottom: 30px;">' +
-    '<h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">ISM InfoSec Approvals</h2>' +
-    '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">' +
-    '<thead><tr><th style="text-align:left;padding:8px 0;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;width:45%;">Approver</th><th style="text-align:center;padding:8px 0;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;width:25%;">Status</th><th style="text-align:right;padding:8px 0;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;width:30%;">Date & Time of Approval</th></tr></thead>' +
-    '<tbody>' + ismApproversHtml + '</tbody></table></div>' +
+    '<h2 style="color: #1a3a5c; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 15px;">Complete Approval History</h2>' +
+    approvalHistoryHtml + '</div>'
+    : '<div style="margin-bottom: 30px; color:#6b7280; font-style:italic; font-size:13px;">No approval decisions recorded.</div>') +
     // Routing Information
     '<div style="margin-top: 40px; padding-top: 25px; border-top: 2px solid #2a5285; text-align: center;">' +
     '<p style="margin: 0; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Implementation Routing</p>' +

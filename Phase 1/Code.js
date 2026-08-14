@@ -2883,8 +2883,25 @@ function getApprovalHistoryRounds_(ss, piaSessionId) {
       }
     });
 
-    return Object.keys(byRound).map(function (k) { return byRound[k]; })
-      .sort(function (a, b) { return a.round - b.round; });
+    // B4 fix (2026-08-13, feedback batch 2): a Pending row in a CLOSED round is an abandoned
+    // ladder slot (the approver a round-1 Return never reached), not someone awaiting action.
+    // Drop pending rows from every round below the highest; keep them in the current round,
+    // where "Pending review" is genuinely true. Mirrors PIA's collectAllRoundDecisions_ rule.
+    const allRounds = Object.keys(byRound).map(Number);
+    const maxRound = allRounds.length ? Math.max.apply(null, allRounds) : 1;
+    return allRounds
+      .sort(function (a, b) { return a - b; })
+      .map(function (k) {
+        const r = byRound[k];
+        if (r.round < maxRound) {
+          r.decisions = r.decisions.filter(function (d) {
+            const st = String(d.status || '');
+            return st !== '' && st !== 'Pending';
+          });
+        }
+        return r;
+      })
+      .filter(function (r) { return r.decisions.length > 0; });
   } catch (e) {
     Logger.log('getApprovalHistoryRounds_ failed (non-blocking): ' + e.message);
     return [];
@@ -3317,9 +3334,10 @@ function computeIntegrityHash_(dcsReqId, piaSessionId) {
 
 // ============================================================
 // 10b. SECURE DOCUMENT ACCESS
-//   Uploaded documents are PRIVATE in Drive (see uploadProxy_ Step 5). The only read path is
-//   apiDownloadDcsFile below, which re-authorizes the caller server-side and streams the bytes
-//   back as base64, the browser never receives a Drive URL.
+//   Uploaded documents are PRIVATE in Drive (see uploadProxy_ Step 5). Two read paths, both
+//   behind the same four gates (authorizeDcsFileAccess_): apiDownloadDcsFile streams bytes
+//   back as base64 (Download), and apiGetDcsFileViewUrl (2026-08-13, B1) lazily elevates the
+//   one requested file to DOMAIN_WITH_LINK and returns its Drive viewer URL (View).
 // ============================================================
 
 /*
@@ -3428,44 +3446,73 @@ function collectRequestFileIds_(values) {
     apiDownloadDcsFile('DCS-000007', '<a file belonging to DCS-000009>')
       -> { ok: false, message: 'Document not available.' }
 */
-function apiDownloadDcsFile(reqId, fileId) {
-  const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024; // 8 MB decoded; ~10.7 MB once base64-encoded
+/*
+  Function: authorizeDcsFileAccess_
+
+  LAYMAN (Tropang Ex):
+  Yung apat na security gate na dating nasa loob mismo ng apiDownloadDcsFile, hinugot para
+  magamit din ng apiGetDcsFileViewUrl. Parehong tanong pa rin: corporate account ka ba, sayo ba
+  yung request, at kabilang ba talaga yung file sa request na yun.
+
+  TECHNICAL:
+  The shared authorization front-end of both document endpoints. Gates, in order, each failing
+  before any Drive I/O: (1) corporate domain, (2) request ownership (F-04 mirror, opaque
+  failure), (3) file membership via collectRequestFileIds_ (anti-confused-deputy). Extracted
+  2026-08-13 (feedback batch 2, B1) verbatim from apiDownloadDcsFile so the two endpoints can
+  never drift on authorization.
+
+  PARAMS:
+    - reqId: the DCS Request ID that owns the document.
+    - fileId: the Drive file ID being requested. Validated against reqId, never trusted alone.
+  RETURNS:   { ok: true, fileId: '<trimmed id>' } or the opaque DENIED shape.
+*/
+function authorizeDcsFileAccess_(reqId, fileId) {
   // One opaque message for every authorization failure, never reveal which gate rejected.
   const DENIED = { ok: false, message: 'Document not available.' };
 
+  /* Step 1: Domain + argument gate. */
+  const me = Session.getActiveUser().getEmail();
+  if (!isAuthorizedDomain_(me)) return DENIED;
+  if (!reqId || !fileId) return DENIED;
+
+  /* Step 2: Resolve the request row; the LAST match is the newest revision. */
+  const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
+  const sheet = ss.getSheetByName(DC_SHEET_NAME);
+  const finder = sheet.getRange('B:B')
+    .createTextFinder(String(reqId))
+    .matchEntireCell(true)
+    .findAll();
+  if (!finder || finder.length === 0) return DENIED;
+
+  const row    = finder[finder.length - 1].getRow();
+  const values = sheet.getRange(row, 1, 1, Math.max(DC_COL.METADATA_AGENCY, 11)).getValues()[0];
+
+  /* Step 3: Ownership gate (mirrors the F-04 guard; same opaque failure as "not found"). */
+  if (String(values[DC_COL.USER_EMAIL - 1] || '').toLowerCase() !== String(me || '').toLowerCase()) {
+    return DENIED;
+  }
+
+  /* Step 4: File-membership gate: the fileId must belong to THIS request. */
+  const allowed = collectRequestFileIds_(values);
+  if (!allowed[String(fileId).trim()]) {
+    console.warn('SECURITY ALERT: ' + me + ' requested file ' + fileId +
+                 ' which does not belong to ' + reqId);
+    return DENIED;
+  }
+
+  return { ok: true, fileId: String(fileId).trim() };
+}
+
+function apiDownloadDcsFile(reqId, fileId) {
+  const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024; // 8 MB decoded; ~10.7 MB once base64-encoded
+
   try {
-    /* Step 1: Domain + argument gate. */
-    const me = Session.getActiveUser().getEmail();
-    if (!isAuthorizedDomain_(me)) return DENIED;
-    if (!reqId || !fileId) return DENIED;
-
-    /* Step 2: Resolve the request row; the LAST match is the newest revision. */
-    const ss    = getCachedSpreadsheet_(getProp_('DB_ID'));
-    const sheet = ss.getSheetByName(DC_SHEET_NAME);
-    const finder = sheet.getRange('B:B')
-      .createTextFinder(String(reqId))
-      .matchEntireCell(true)
-      .findAll();
-    if (!finder || finder.length === 0) return DENIED;
-
-    const row    = finder[finder.length - 1].getRow();
-    const values = sheet.getRange(row, 1, 1, Math.max(DC_COL.METADATA_AGENCY, 11)).getValues()[0];
-
-    /* Step 3: Ownership gate (mirrors the F-04 guard; same opaque failure as "not found"). */
-    if (String(values[DC_COL.USER_EMAIL - 1] || '').toLowerCase() !== String(me || '').toLowerCase()) {
-      return DENIED;
-    }
-
-    /* Step 4: File-membership gate: the fileId must belong to THIS request. */
-    const allowed = collectRequestFileIds_(values);
-    if (!allowed[String(fileId).trim()]) {
-      console.warn('SECURITY ALERT: ' + me + ' requested file ' + fileId +
-                   ' which does not belong to ' + reqId);
-      return DENIED;
-    }
+    /* Steps 1-4: the shared authorization gates (see authorizeDcsFileAccess_). */
+    const authz = authorizeDcsFileAccess_(reqId, fileId);
+    if (!authz.ok) return authz;
 
     /* Step 5: Size gate, then read and encode. */
-    const file  = DriveApp.getFileById(String(fileId).trim());
+    const file  = DriveApp.getFileById(authz.fileId);
     const blob  = file.getBlob();
     const bytes = blob.getBytes();
     if (bytes.length > MAX_DOWNLOAD_BYTES) {
@@ -3489,6 +3536,52 @@ function apiDownloadDcsFile(reqId, fileId) {
   } catch (e) {
     // Generic to the caller, specific to the log: Drive errors echo resource IDs.
     console.error('apiDownloadDcsFile failed for ' + reqId + '/' + fileId + ': ' + e.message);
+    return { ok: false, message: 'Could not open this document. Please try again or contact ISM.' };
+  }
+}
+
+/*
+  Function: apiGetDcsFileViewUrl
+
+  LAYMAN (Tropang Ex):
+  Kapag pinindot mo ang "View" sa isang dokumento, ito ang tinatawag: chine-check muna kung may
+  karapatan ka sa file (parehong apat na gate ng download), tapos binubuksan ang file sa loob ng
+  Megaworld domain at ibinabalik ang Google Drive link para mabuksa sa Drive viewer. Ang Drive na
+  ang nagre-render ng PDF/DOCX, hindi na yung in-page preview na hindi gumagana sa sandbox.
+
+  TECHNICAL:
+  DELIBERATE DECISION (2026-08-13, feedback batch 2, B1): in-browser preview of blob: bytes is
+  impossible inside Apps Script's sandboxed iframe (Chrome refuses blob: PDFs in <iframe> AND
+  <object>; both were tried and failed on the deployed app). The agreed fallback is the Drive
+  viewer. This NARROWS the 2026-08-11 "uploaded documents are PRIVATE" rule rather than
+  reverting it: files stay owner-only at upload; a file is elevated to DOMAIN_WITH_LINK (never
+  ANYONE_WITH_LINK) lazily, only when an authorized viewer actually opens it, through the same
+  four gates as apiDownloadDcsFile. Same elevation level as the certificate's
+  getAndShareDCSFiles_ precedent in pia_code.js. PIA carries a sibling endpoint
+  (apiGetDcsFileViewUrl(sessionId, fileId)); keep the two aligned on elevation level.
+
+  PARAMS:
+    - reqId: the DCS Request ID that owns the document.
+    - fileId: the Drive file ID being requested. Validated against reqId, never trusted alone.
+  RETURNS:   { ok:true, url:'https://drive.google.com/file/d/<id>/view' } or an opaque failure.
+*/
+function apiGetDcsFileViewUrl(reqId, fileId) {
+  try {
+    const authz = authorizeDcsFileAccess_(reqId, fileId);
+    if (!authz.ok) return authz;
+
+    const file = DriveApp.getFileById(authz.fileId);
+    try {
+      file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {
+      // Elevation can fail on Drive propagation hiccups; the URL may still work for the
+      // owner, so log and continue rather than blocking the view.
+      console.warn('apiGetDcsFileViewUrl: could not domain-share ' + authz.fileId + ': ' + shareErr.message);
+    }
+    return { ok: true, url: 'https://drive.google.com/file/d/' + authz.fileId + '/view' };
+  } catch (e) {
+    // Generic to the caller, specific to the log: Drive errors echo resource IDs.
+    console.error('apiGetDcsFileViewUrl failed for ' + reqId + '/' + fileId + ': ' + e.message);
     return { ok: false, message: 'Could not open this document. Please try again or contact ISM.' };
   }
 }
