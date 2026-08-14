@@ -2132,52 +2132,6 @@
             </div>
           </div>
 
-          <!-- Delegation / Out-of-office. ISM-managed only: an approver cannot appoint their
-               own stand-in. The routing half lives in Phase 2/pia_code.js (resolveDelegate_).
-               D3 DECISION (2026-08-13, feedback batch 2): the entry point is HIDDEN, not
-               removed. With an empty Delegations sheet, resolveDelegate_ fails open to "no
-               delegate" and canActAs_ collapses to a plain identity check, so the system
-               behaves as if the feature does not exist. The backend (resolveDelegate_,
-               canActAs_, recipientFor_, ACTED_BY, adminApi_*Delegation*) stays intact because
-               removing it would re-open the F-02 guard and the token path across two
-               independently-deployed apps. To re-enable: delete display:none below and
-               restore the loadDelegations() call (search for D3). -->
-          <div class="settings-card" style="display:none;">
-            <div class="settings-card-header">
-              <svg><use href="#ic-users"/></svg> Approver Delegation
-            </div>
-            <div class="settings-card-body">
-              <div style="font-size:12px;color:#6b7280;line-height:1.6;margin-bottom:14px;">
-                When an approver is on leave, their requests stop moving. Add a delegation and the
-                review emails, the reminder nudges and the approval link all go to the delegate
-                instead. The decision is still recorded against the original approver, with a note
-                showing who actually acted.
-                <div style="margin-top:6px;">
-                  <strong>Not retroactive.</strong> Emails already sent keep pointing at the original
-                  approver, because a review link is signed when it is sent. For a request already
-                  sitting in someone's inbox, use Email Routing → Resend after adding the delegation.
-                </div>
-              </div>
-              <div id="delegationList" style="margin-bottom:12px;font-size:12.5px;">
-                <span style="color:var(--color-text-3);">Loading…</span>
-              </div>
-              <div class="divider"></div>
-              <div class="form-group row-group">
-                <div class="col"><label for="del-from">Approver going away</label><input type="email" id="del-from" placeholder="jane@..."></div>
-                <div class="col"><label for="del-to">Acts on their behalf</label><input type="email" id="del-to" placeholder="carlo@..."></div>
-              </div>
-              <div class="form-group row-group">
-                <div class="col"><label for="del-start">Start (optional)</label><input type="date" id="del-start"></div>
-                <div class="col"><label for="del-end">End (optional)</label><input type="date" id="del-end"></div>
-              </div>
-              <div class="form-group">
-                <label for="del-reason">Reason (shown to the delegate)</label>
-                <input type="text" id="del-reason" maxlength="200" placeholder="Annual leave">
-              </div>
-              <button class="btn btn-outline btn-sm" onclick="saveDelegation()" id="btnAddDelegation">Add delegation</button>
-            </div>
-          </div>
-
           <!-- Data Retention: ships OFF. See the block comment above runRetentionSweep_
                in admin_code.js before enabling anything here. -->
           <div class="settings-card">
@@ -6799,9 +6753,6 @@ function loadSettings(force) {
       if (!result.ok) { showToast('Error loading settings: ' + result.message, 'error'); return; }
       settingsLoaded = true;
       disableSettingsFields();
-      // D3 (2026-08-13, feedback batch 2): the Delegation card is hidden (see the settings-card
-      // comment), so its loader is skipped too. Restore this call together with the card.
-      // loadDelegations();
       if (result.sys) result.sys.forEach(function(r) { var el = document.getElementById('cfg-' + r.Configuration_Key); if (el) el.value = r.Value || ''; });
       if (result.info) result.info.forEach(function(r) {
         var nameEl = document.getElementById('info-name-' + r.Member_ID);
@@ -6893,114 +6844,6 @@ function saveRetentionSettings(done) {
     })
     .withFailureHandler(function(e) { showToast('Retention settings error: ' + String(e), 'error'); })
     .adminApi_setRetentionConfig(payload);
-}
-
-/*
-  Function: loadDelegations
-  LAYMAN: Kinukuha yung kasalukuyang listahan ng mga kapalit at ipinapakita.
-  TECHNICAL: Calls adminApi_getDelegations. The server precomputes `active` (the flag AND the
-    date window) so the UI never re-implements the in-effect rule that resolveDelegate_ owns,
-    two implementations of that would drift and disagree about who is covering today.
-  PARAMS: (none)  RETURNS: undefined (async).
-*/
-function loadDelegations() {
-  var host = document.getElementById('delegationList');
-  if (!host) return;
-  google.script.run
-    .withSuccessHandler(function(r) {
-      if (!r || !r.ok) {
-        host.innerHTML = '<span style="color:var(--color-danger);">' +
-          esc((r && r.message) || 'Could not load delegations.') + '</span>';
-        return;
-      }
-      if (!r.data || r.data.length === 0) {
-        host.innerHTML = '<span style="color:var(--color-text-3);">' +
-          'No delegations configured. Approvers receive their own requests directly.</span>';
-        return;
-      }
-      var h = '<div class="table-scroll" style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:520px;">';
-      r.data.forEach(function(d) {
-        var window_ = (d.start || d.end)
-          ? ((d.start || 'now') + ' → ' + (d.end || 'open-ended'))
-          : 'no date limit';
-        var badge = d.active
-          ? '<span style="color:var(--color-success);font-weight:600;">in effect</span>'
-          : '<span style="color:var(--color-text-3);">' + (d.isActive ? 'outside window' : 'paused') + '</span>';
-        h += '<tr style="border-top:1px solid var(--color-border);">' +
-          '<td style="padding:7px 8px 7px 0;">' + esc(d.from) +
-            '<div style="font-size:11px;color:var(--color-text-3);">covered by ' + esc(d.to) + '</div></td>' +
-          '<td style="padding:7px 8px;color:var(--color-text-2);">' + esc(window_) +
-            (d.reason ? '<div style="font-size:11px;color:var(--color-text-3);">' + esc(d.reason) + '</div>' : '') + '</td>' +
-          '<td style="padding:7px 8px;">' + badge + '</td>' +
-          '<td style="padding:7px 0;text-align:right;"><button class="btn btn-ghost btn-sm" ' +
-            'onclick="removeDelegation(\'' + escAttr(d.id) + '\')">Remove</button></td>' +
-        '</tr>';
-      });
-      h += '</table></div>';
-      host.innerHTML = h;
-    })
-    .withFailureHandler(function(e) {
-      host.innerHTML = '<span style="color:var(--color-danger);">' + esc(String(e)) + '</span>';
-    })
-    .adminApi_getDelegations();
-}
-
-/*
-  Function: saveDelegation
-  LAYMAN: Nagdadagdag ng bagong kapalit mula sa form sa ibaba ng card.
-  TECHNICAL: Posts to adminApi_saveDelegation, which does the real validation (same-domain,
-    not self, end >= start). The client does not pre-validate beyond emptiness on purpose,
-    one authority for the rules, and it is the one that can actually enforce them.
-  PARAMS: (none)  RETURNS: undefined (async).
-*/
-function saveDelegation() {
-  var btn = document.getElementById('btnAddDelegation');
-  var payload = {
-    from:   (document.getElementById('del-from')   || {}).value || '',
-    to:     (document.getElementById('del-to')     || {}).value || '',
-    start:  (document.getElementById('del-start')  || {}).value || '',
-    end:    (document.getElementById('del-end')    || {}).value || '',
-    reason: (document.getElementById('del-reason') || {}).value || ''
-  };
-  if (!payload.from.trim() || !payload.to.trim()) {
-    showToast('Both the approver and the delegate email are required.', 'error');
-    return;
-  }
-  if (btn) btn.disabled = true;
-  google.script.run
-    .withSuccessHandler(function(r) {
-      if (btn) btn.disabled = false;
-      if (r && r.ok) {
-        showToast('Delegation saved.', 'success');
-        ['del-from','del-to','del-start','del-end','del-reason'].forEach(function(id) {
-          var el = document.getElementById(id); if (el) el.value = '';
-        });
-        loadDelegations();
-      } else {
-        showToast((r && r.message) || 'Could not save the delegation.', 'error');
-      }
-    })
-    .withFailureHandler(function(e) { if (btn) btn.disabled = false; showToast(String(e), 'error'); })
-    .adminApi_saveDelegation(payload);
-}
-
-/*
-  Function: removeDelegation
-  LAYMAN: Tinatanggal ang isang kapalit. Pagkatapos, yung orihinal na approver na ulit ang
-    tatanggap ng mga susunod na email.
-  TECHNICAL: Confirms first (this changes who receives approval authority, so it is not a
-    silent click), then calls adminApi_deleteDelegation and reloads the list.
-  PARAMS: - id: the Delegation_ID.  RETURNS: undefined (async).
-*/
-function removeDelegation(id) {
-  if (!window.confirm('Remove this delegation? Future emails will go back to the original approver.')) return;
-  google.script.run
-    .withSuccessHandler(function(r) {
-      if (r && r.ok) { showToast('Delegation removed.', 'success'); loadDelegations(); }
-      else showToast((r && r.message) || 'Could not remove the delegation.', 'error');
-    })
-    .withFailureHandler(function(e) { showToast(String(e), 'error'); })
-    .adminApi_deleteDelegation(id);
 }
 
 /*

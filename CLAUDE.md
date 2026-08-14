@@ -1074,12 +1074,25 @@ carries no personal data.
   their own row; the final reviewer's pick routes the request. If reviewers disagreed, the
   finalize path writes a `Routing Disagreement` row to `Risk_Audit`. Whether to block instead is
   an open ISM policy call, do not silently change the winner.
-- **Delegation is HIDDEN, not removed (D3).** The Admin settings card has `display:none` and
-  `loadDelegations()` is commented out (both marked D3). The entire backend (resolveDelegate_,
-  canActAs_, recipientFor_, ACTED_BY, adminApi_*Delegation*) is intact; with an empty
-  `Delegations` sheet it degrades to plain identity checks. Removing it for real would re-open
-  the F-02 guard and the token path across two independently-deployed apps; decision recorded as
-  reversible instead.
+- **🚩 Delegation: the WRITE path is DELETED, the read path is inert (D3, revised 2026-08-14).**
+  ISM decided the responsibility sits outside an admin's scope. `adminApi_getDelegations` /
+  `adminApi_saveDelegation` / `adminApi_deleteDelegation`, `getDelegationsSheetAdmin_`,
+  `DELEGATION_HEADERS` and the whole Settings card + its three client functions are **gone**, so
+  no delegation can be created by any path. The PIA read-side helpers (`resolveDelegate_`,
+  `canActAs_`, `recipientFor_`, `delegatorsFor_`, `writeActedBy_`, `delegationNoticeHtml_`) and
+  the `ACTED_BY` columns are **deliberately kept**: `canActAs_` IS the widened F-02 identity
+  guard on all three decision mutators, and rewriting the system's most security-sensitive
+  predicate to save five dead helpers is a bad trade. With a permanently empty `Delegations`
+  sheet, `resolveDelegate_` fails open to "no delegate" and `canActAs_` collapses to a plain
+  identity check, which is exactly the pre-delegation behaviour.
+  - ⛔ **Do not "finish the job" by gutting `canActAs_`.** Wrong in one direction locks out every
+    approver; wrong in the other lets the wrong person record a decision, silently.
+  - ⚠️ **Known gap this leaves:** heads are applicant-named in PIA1, so an absent head can be
+    routed around by filing a new request. **ISM reviewers cannot be**: they come from
+    `InfoSec_Email_Config` (`Role=InfoSec`, `IsActive=YES`), so a new request reaches the same
+    two people, and flipping `IsActive` does not rescue an already-Pending row because the email
+    is denormalized into `ISM_Approval_Workflow` at seed time. A request stuck on an absent ISM
+    reviewer waits for them. Accepted, recorded here so nobody rediscovers it as a bug.
 - **A DCS-only Return still requires a PIA resubmit, by design (D1).** The ladder lives in PIA;
   a Return resolves the old round, so a new round must exist for anyone to act. The
   "Revision Ready" screen now says so when no `PIA-` prefixed flag exists ("Nothing in your
